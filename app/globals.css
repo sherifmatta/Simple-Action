@@ -1,4 +1,185 @@
 @import "tailwindcss";
 
-/* Story 1.2 transcribes DESIGN.md into the Tailwind v4 @theme block here.
-   It is the sole transcription of the design tokens (AD-13). */
+/* ---------------------------------------------------------------------------
+   AD-13 — the design tokens are transcribed exactly once, here.
+
+   Every value below is transcribed verbatim from the frontmatter of
+   docs/planning-artifacts/ux-designs/ux-simple-action-2026-09-20/DESIGN.md,
+   carrying its original token name. No hex literal and no Tailwind
+   arbitrary-value class may appear anywhere else in the codebase; a value not
+   present in this block must be added here — with its DESIGN.md token name —
+   before it can be used.
+
+   `@theme static` (rather than plain `@theme`) is deliberate: it emits every
+   token as a custom property whether or not a utility currently consumes it,
+   so the design system is wholly present at runtime from this story onward.
+   --------------------------------------------------------------------------- */
+
+@theme static {
+  /* -- typeface (DESIGN.md `typography.*.fontFamily`) ----------------------
+     The one family string in the product, transcribed once. `--font-poppins`
+     is declared by next/font/google in app/layout.tsx and resolves to
+     `"Poppins", "Poppins Fallback"` — the webfont followed by the
+     metric-adjusted fallback face next/font synthesises, which is what makes
+     the swap contribute zero layout shift. DESIGN.md's remaining fallback
+     stack follows it, in order.
+
+     The stack is composed here rather than through next/font's `fallback`
+     option because Turbopack treats the two as mutually exclusive: passing
+     `fallback` switches it to a manual fallback and suppresses the
+     metric-adjusted face entirely. Composing here yields the identical
+     family list with the metric adjustment retained — and keeps the token in
+     the one file AD-13 allows it in. See app/layout.tsx.
+
+     Mapping it onto `--font-sans` makes it the document default through
+     Tailwind's preflight. */
+  --font-sans: var(--font-poppins), "Century Gothic", "Futura", "Avenir Next",
+    -apple-system, "Segoe UI", system-ui, sans-serif;
+
+  /* -- colors (DESIGN.md `colors`, 21 tokens) ------------------------------ */
+  --color-ground: #E7EAF6;
+  --color-card: #FFFFFF;
+  --color-row-active: #FFFFFF;
+  --color-row-complete: #C3E9D7;
+  --color-accent: #2680EB;
+  --color-accent-deep: #1B65C2;
+  --color-on-accent: #FFFFFF;
+  --color-text-primary: #24243A;
+  --color-text-muted: #5A5A75;
+  --color-text-completed: #5F5F7A;
+  --color-text-placeholder: #71718B;
+  --color-hairline: #E3E2F0;
+  --color-border-control: #8C8BAC;
+  --color-danger-bg: #F6E7E1;
+  --color-danger-border: #E6CCC0;
+  --color-danger-text: #8E3B22;
+  --color-danger-fill: #8E3B22;
+  --color-on-danger-fill: #FFFFFF;
+  --color-tab-track: #EDEEF7;
+  --color-tab-selected-bg: #FFFFFF;
+  --color-tab-selected-text: #1B65C2;
+
+  /* -- rounded (DESIGN.md `rounded`, 4 tokens) -----------------------------
+     Verified against a build: in Tailwind 4.3.3 the `--radius-full` theme key
+     wins over the historically hardcoded `rounded-full` special case, so
+     `rounded-full` compiles to `var(--radius-full)` = 999px, not 9999px. No
+     rename is needed; all four radii keep their DESIGN.md names. */
+  --radius-sm: 7px;
+  --radius-md: 14px;
+  --radius-lg: 18px;
+  --radius-full: 999px;
+
+  /* -- spacing (DESIGN.md `spacing`, 8 numbered + 6 named = 14 tokens) ------ */
+  --spacing-1: 4px;
+  --spacing-2: 6px;
+  --spacing-3: 9px;
+  --spacing-4: 12px;
+  --spacing-5: 14px;
+  --spacing-6: 18px;
+  --spacing-7: 22px;
+  --spacing-8: 32px;
+  --spacing-row-gap: 9px;
+  --spacing-row-padding: 14px;
+  --spacing-gutter: 18px;
+  --spacing-margin-phone: 18px;
+  --spacing-touch-target-min: 44px;
+  --spacing-card-max-width: 640px;
+
+  /* -- elevation (DESIGN.md §Elevation & Depth) ----------------------------
+     Two shadow recipes and only two, plus the green re-tint a Completed row
+     swaps to so the mint surface's shadow belongs to it rather than sitting
+     under it as a lavender bruise. Shadows are tinted with the ground's
+     blue-violet, never neutral black, and elevation never encodes state. */
+  --shadow-card: 0 18px 46px -18px rgba(37, 44, 74, 0.18), 0 2px 10px -4px rgba(37, 44, 74, 0.06);
+  --shadow-row: 0 8px 22px -12px rgba(37, 44, 74, 0.2), 0 1px 3px rgba(37, 44, 74, 0.04);
+  --shadow-row-complete: 0 8px 22px -14px rgba(37, 74, 58, 0.34);
+
+  /* -- focus ring (DESIGN.md §Elevation & Depth) ---------------------------
+     A soft glow, not a shadow: one 1px accent edge plus a 4px low-opacity
+     bloom. One variant: on a Completed row the hue steps down to
+     `accent-deep`, because `accent` on mint is 2.97:1 and fails WCAG 1.4.11.
+     Geometry, blur and opacity are identical in both — only the hue differs.
+     Never suppressed for aesthetics. */
+  --shadow-focus: 0 0 0 1px var(--color-accent), 0 0 0 5px rgba(38, 128, 235, 0.3);
+  --shadow-focus-on-complete: 0 0 0 1px var(--color-accent-deep), 0 0 0 5px rgba(27, 101, 194, 0.3);
+}
+
+/* ---------------------------------------------------------------------------
+   Typography roles (DESIGN.md `typography`, 10 roles).
+
+   A role is four properties — family, size, weight, line-height — not one
+   Tailwind namespace pair, so each is a custom utility rather than a theme
+   key. Every role references `--font-sans` — the one shared token above that
+   carries the Poppins variable — instead of repeating the family string ten
+   times.
+   --------------------------------------------------------------------------- */
+
+@utility text-dialog-title {
+  font-family: var(--font-sans);
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+@utility text-todo-text {
+  font-family: var(--font-sans);
+  font-size: 14.5px;
+  font-weight: 400;
+  line-height: 1.45;
+}
+
+@utility text-input-text {
+  font-family: var(--font-sans);
+  font-size: 14.5px;
+  font-weight: 400;
+  line-height: 1.45;
+}
+
+@utility text-empty-message {
+  font-family: var(--font-sans);
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.5;
+}
+
+@utility text-empty-sub {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.5;
+}
+
+@utility text-banner-message {
+  font-family: var(--font-sans);
+  font-size: 13.5px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+@utility text-tab-label {
+  font-family: var(--font-sans);
+  font-size: 12.5px;
+  font-weight: 500;
+  line-height: 1;
+}
+
+@utility text-tab-label-selected {
+  font-family: var(--font-sans);
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+@utility text-button-label {
+  font-family: var(--font-sans);
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+@utility text-counter {
+  font-family: var(--font-sans);
+  font-size: 11.5px;
+  font-weight: 500;
+  line-height: 1.3;
+}
