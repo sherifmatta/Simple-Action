@@ -16,6 +16,7 @@
     "db:push": "drizzle-kit push"
   },
   "dependencies": {
+    "@neondatabase/serverless": "1.1.0",
     "drizzle-orm": "0.45.3",
     "next": "16.3.5",
     "react": "19.3.0",

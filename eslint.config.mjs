@@ -73,6 +73,14 @@ const noDrizzleClientImport = {
     "@vercel/postgres",
     "@vercel/postgres/**",
     // This project's own client module, by alias or by any relative path.
+    // It lives at `src/server/repository/client` (Story 1.4) — `db/client` is
+    // kept denied so the specifier is walled wherever it might be moved to.
+    // Re-exporting `db` is the last way around this wall, and only the
+    // repository can do it, which is what the whole boundary is for.
+    "@/server/repository/client",
+    "@/server/repository/client.*",
+    "**/repository/client",
+    "**/repository/client.*",
     "@/server/db/client",
     "@/server/db/client.*",
     "**/db/client",
@@ -87,7 +95,11 @@ const noDrizzleClientImport = {
 const noDrizzleDynamicImport = [
   {
     selector:
-      "ImportExpression[source.value=/^(drizzle-orm\\/|pg$|postgres$|@neondatabase\\/|@vercel\\/postgres$)|db\\/client$/]",
+      // The `client` tail makes the extension optional, mirroring the
+      // `client.*` static patterns: a dynamically imported
+      // `@/server/repository/client.js` is the same reach as the
+      // extensionless form.
+      "ImportExpression[source.value=/^(drizzle-orm\\/|pg$|postgres$|@neondatabase\\/|@vercel\\/postgres$)|(db|repository)\\/client(\\.[a-z]+)?$/]",
     message: AD_2,
   },
   {

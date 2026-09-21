@@ -1,17 +1,43 @@
 import { fileURLToPath } from "node:url";
+// `loadEnv` is Vite's, re-exported nowhere by `vitest/config`; Vite is already
+// present as Vitest's own dependency, so this adds none.
+import { loadEnv } from "vite";
 import { defineConfig } from "vitest/config";
 
-export default defineConfig({
-  resolve: {
-    alias: {
-      "@": fileURLToPath(new URL("./src", import.meta.url)),
+export default defineConfig(({ mode }) => {
+  // The repository tests query the live Neon branch, so the test process needs
+  // `DATABASE_URL`. Vitest reads no `.env` of its own — Next.js loads it for
+  // `next dev` and `next build`, and nothing loads it here. A value already in
+  // `process.env` (CI, a shell export) wins over the file.
+  //
+  // `loadEnv`'s third argument is a *prefix*, matched with `startsWith`, not an
+  // allow-list: `"DATABASE_URL"` would also let a sibling such as Neon's own
+  // `DATABASE_URL_UNPOOLED` through. Picking the one key out below is what
+  // keeps every other variable in `.env` out of the test process. The guard
+  // matters too — passing `undefined` would land the string `"undefined"` in
+  // `process.env`, which is truthy, and the client's clear failure would become
+  // a connection error instead.
+  const { DATABASE_URL } = loadEnv(mode, process.cwd(), "DATABASE_URL");
+
+  return {
+    resolve: {
+      alias: {
+        "@": fileURLToPath(new URL("./src", import.meta.url)),
+      },
     },
-  },
-  test: {
-    environment: "node",
-    // No DOM environment is installed, so `.test.tsx` is deliberately absent:
-    // a component test would fail on a missing document rather than be skipped.
-    // Epic 6 or the first component test adds jsdom and the glob together.
-    include: ["*.test.ts", "src/**/*.test.ts", "app/**/*.test.ts"],
-  },
+    test: {
+      environment: "node",
+      // No DOM environment is installed, so `.test.tsx` is deliberately absent:
+      // a component test would fail on a missing document rather than be skipped.
+      // Epic 6 or the first component test adds jsdom and the glob together.
+      include: ["*.test.ts", "src/**/*.test.ts", "app/**/*.test.ts"],
+      env: DATABASE_URL ? { DATABASE_URL } : {},
+      // Vitest's defaults are 5s per test and 10s per hook. A Neon branch that
+      // has auto-suspended takes several seconds to wake on the first query,
+      // which would make the live rows flaky rather than failing. Epics 2-5
+      // inherit this ceiling along with the live-test pattern.
+      testTimeout: 30_000,
+      hookTimeout: 30_000,
+    },
+  };
 });
