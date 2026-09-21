@@ -1,0 +1,615 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Simple Action — key screen: the list at rest</title>
+<style>
+/* ==========================================================================
+   SIMPLE ACTION — KEY SCREEN 1 of 3 · THE LIST AT REST
+   Static mock. No JavaScript, no network requests, no font link — renders
+   fully offline. Every state below is a separately labelled panel; nothing
+   on this page responds to interaction.
+
+   --------------------------------------------------------------------------
+   SPINE SECTIONS GOVERNING THIS SCREEN
+   --------------------------------------------------------------------------
+   DESIGN.md      § Colour & Tokens ........ locked globals + Lavender Mist ramp
+                                             + border-control (WCAG 1.4.11)
+   DESIGN.md      § Type & Density ......... Poppins stack, airy row rhythm
+   DESIGN.md      § Surface & Elevation .... card / row sub-surface / shadows
+   DESIGN.md      § Component Patterns ..... Add input (pinned), Filter tabs
+                                             (inset segmented, with counts),
+                                             Todo row, Checkbox, Delete
+                                             affordance (hover)
+   EXPERIENCE.md  § State Patterns ......... Resting · populated
+                                             Resting · completed row present
+                                             Row hover (pointer devices)
+   EXPERIENCE.md  § Key Flows .............. UJ-1 Dana clears the morning list
+                                             from her phone (Active view)
+                                             UJ-2 Sam adds at a laptop and finds
+                                             it after a refresh (desktop frame)
+
+   --------------------------------------------------------------------------
+   TOKENS — Lavender Mist (variation 4), locked globals plus the two
+   accessibility tokens added at Finalize.
+   --------------------------------------------------------------------------
+   Locked   ground #E7EAF6 · card #FFFFFF · row-active #FFFFFF
+            row-complete #C3E9D7 · accent #2680EB · accent-deep #1B65C2
+            radii card 18 / row 14 / pills 999 · light mode only
+   v4 ramp  text-primary #24243A · text-muted #5A5A75 · text-completed #5F5F7A
+            text-placeholder #71718B · hairline #E3E2F0
+   v4 tabs  track #EDEEF7 (inset) · selected chip #FFFFFF · label #1B65C2
+   NEW      border-control #8C8BAC — 3.28:1 on white. ALL component
+            boundaries: the unchecked checkbox border and the add-input
+            border. It replaces hairline #E3E2F0, which was 1.28:1 on white
+            and failed WCAG 1.4.11. hairline survives ONLY for purely
+            decorative dividers and for review chrome on this page.
+   NEW      danger-fill #8E3B22 / on-danger-fill #FFFFFF (~5.8:1) — the swipe
+            delete panel and the destructive dialog button, both in
+            key-delete.html. On this screen the clay is used as a FOREGROUND
+            only, for the hover delete icon.
+
+   WCAG 1.4.11 — THE THREE FIXES THAT CHANGE VISIBLE PIXELS
+   1. Component boundaries move from hairline #E3E2F0 (1.28:1) to
+      border-control #8C8BAC (3.28:1). Control borders read darker than the
+      import's airy treatment. Cost accepted.
+   2. The checked checkbox on a COMPLETED row uses accent-deep #1B65C2 on
+      mint #C3E9D7 = 4.33:1. The old accent #2680EB on mint was 2.97:1 and
+      failed the 3:1 non-text floor. On an ACTIVE row the checked fill stays
+      #2680EB on white.
+   3. The FOCUS RING on a COMPLETED row takes the same step-down for the same
+      reason — #2680EB on mint is the same 2.97:1 failure, and a focus
+      indicator is a non-text graphic identifying a control, so 1.4.11 applies.
+      On mint the ring is
+      box-shadow: 0 0 0 1px #1B65C2, 0 0 0 5px rgba(27,101,194,.30) = 4.33:1.
+      Geometry, blur and opacity are unchanged; only the hue value steps down,
+      and the 4px bloom is not treated as rescuing the failing variant. On an
+      ACTIVE row, and on every control not sitting on mint, the ring stays
+      0 0 0 1px #2680EB, 0 0 0 5px rgba(38,128,235,.30). This page renders the
+      screen AT REST, so no focus ring is drawn on it; both variants are
+      rendered in key-states.html panel G3.
+
+   --------------------------------------------------------------------------
+   COPY — every visible product string traces to the memlog voice decision
+   --------------------------------------------------------------------------
+   "what needs doing?"  placeholder
+   "All" / "Active" / "Completed"  filter view names, matching Completion
+   Status values exactly. Synonyms for Completed are banned anywhere in the
+   interface — the filter view name is the only word used for that state.
+   Filter tab counts are bare numerals — 4 / 2 / 2 — with no unit and no
+   label, and each count sits inside the tab's accessible name
+   (aria-label="Active, 2 Todos") rather than beside it as a loose number.
+   NO WORDMARK. The card opens straight into the input; the product name
+   lives in the browser tab title only. Nothing to read before working.
+   Todo text shown: book dentist / pick up rice / send invoice /
+   create monthly deck. Newest-first by creation timestamp.
+   Text outside the device frames is review chrome, not product copy.
+
+   --------------------------------------------------------------------------
+   THE RULES THIS SCREEN ENCODES
+   --------------------------------------------------------------------------
+   · Filter tab counts are derived locally from the loaded list. They fire no
+     network request and they show 0 rather than hiding.
+   · Completed rows NEVER reorder. Ordering is newest-first by creation
+     timestamp in every Filter View; Completion Status never moves a row.
+     The All view below is deliberately interleaved — active, completed,
+     active, completed — so that this is visible rather than asserted.
+   · Desktop card ceiling is 640px, centred in the lavender field. One column
+     at every breakpoint; below ~640px the card fills the viewport less the
+     phone margin.
+
+   --------------------------------------------------------------------------
+   OPEN QUESTIONS — NOTED, NOT INVENTED
+   --------------------------------------------------------------------------
+   The four questions previously listed here — wordmark, tab counts, ordering
+   of completed rows, desktop measure — are all closed. One remains:
+   1. The count must be visually subordinate to the tab label, but no exact
+      type step is fixed by the spine. Rendered here at 11px / 500 in
+      text-muted #5A5A75 beside a 12.5px label. The relationship is
+      specified; the numbers are not. OPEN.
+   ========================================================================== */
+
+/* ---------- LOCKED GLOBALS ---------- */
+:root{
+  --ground:#E7EAF6;
+  --card:#FFFFFF;
+  --row-active:#FFFFFF;
+  --row-complete:#C3E9D7;
+  --accent:#2680EB;
+  --accent-deep:#1B65C2;
+  --r-card:18px;
+  --r-row:14px;
+  --shadow-card:0 18px 46px -18px rgba(37,44,74,.18), 0 2px 10px -4px rgba(37,44,74,.06);
+  --shadow-row:0 8px 22px -12px rgba(37,44,74,.20), 0 1px 3px rgba(37,44,74,.04);
+  --font:"Poppins","Century Gothic","Futura","Avenir Next",-apple-system,"Segoe UI",system-ui,sans-serif;
+
+  /* Lavender Mist (variation 4) */
+  --text-primary:#24243A;
+  --text-muted:#5A5A75;
+  --text-completed:#5F5F7A;
+  --text-placeholder:#71718B;
+  --hairline:#E3E2F0;          /* decorative dividers and review chrome ONLY */
+  --tab-track:#EDEEF7;
+  --tab-sel-bg:#FFFFFF;
+  --tab-sel-text:#1B65C2;
+
+  /* added at Finalize */
+  --border-control:#8C8BAC;    /* 3.28:1 on white — all component boundaries */
+  --danger-text:#8E3B22;       /* foreground only on this screen */
+}
+
+*,*::before,*::after{ box-sizing:border-box; }
+html{ -webkit-text-size-adjust:100%; }
+body{
+  margin:0;
+  font-family:var(--font);
+  background:var(--ground);
+  color:var(--text-primary);
+  font-weight:400;
+  line-height:1.5;
+  overflow-x:hidden;              /* page body never scrolls sideways */
+}
+
+/* ---------- REVIEW CHROME (not product) ---------- */
+.sheet-head{ max-width:1180px; margin:0 auto; padding:40px 28px 6px; }
+.sheet-head h1{ font-size:25px; font-weight:600; letter-spacing:-.02em; margin:0 0 6px; }
+.sheet-head p{ margin:0 0 6px; font-size:13.5px; color:var(--text-muted); max-width:78ch; }
+.sheet-head .mini{ font-size:11.5px; color:var(--text-muted); }
+
+.section-head{ max-width:1180px; margin:0 auto; padding:34px 28px 0; }
+.eyebrow{
+  font-size:10.5px; font-weight:600; letter-spacing:.14em; text-transform:uppercase;
+  color:var(--text-muted); margin:0 0 4px;
+}
+.section-head h2{ font-size:19px; font-weight:600; letter-spacing:-.015em; margin:0 0 5px; }
+.section-head p{ margin:0; font-size:13px; color:var(--text-muted); max-width:78ch; }
+
+/* wide content scrolls inside its own container, never the body */
+.rail{
+  display:flex; gap:34px; align-items:flex-start;
+  overflow-x:auto; overflow-y:hidden;
+  padding:22px 28px 34px;
+  -webkit-overflow-scrolling:touch;
+}
+.rail::-webkit-scrollbar{ height:10px; }
+.rail::-webkit-scrollbar-track{ background:transparent; }
+.rail::-webkit-scrollbar-thumb{ background:#CBD3E8; border-radius:999px; border:3px solid var(--ground); }
+
+.framewrap{ flex:0 0 auto; }
+.framecap{
+  font-size:10.5px; font-weight:600; letter-spacing:.13em; text-transform:uppercase;
+  color:var(--text-muted); margin:0 0 10px 4px;
+}
+.framenote{ font-size:11.5px; color:var(--text-muted); margin:10px 4px 0; max-width:52ch; line-height:1.5; }
+
+/* callout marker used to point at a state inside a frame */
+.marker{
+  display:inline-flex; align-items:center; gap:6px;
+  font-size:10.5px; font-weight:600; letter-spacing:.06em; text-transform:uppercase;
+  color:var(--accent-deep); background:#FFFFFF; border:1px solid var(--hairline);
+  border-radius:999px; padding:3px 9px;
+}
+
+/* ---------- DEVICE FRAMES ---------- */
+.phone{
+  width:390px;
+  background:#24243A;
+  border-radius:46px;
+  padding:12px;
+  box-shadow:0 30px 70px -28px rgba(37,44,74,.45), 0 4px 14px -6px rgba(37,44,74,.20);
+}
+.phone-screen{
+  background:var(--ground);
+  border-radius:35px;
+  padding:16px 14px 22px;
+  min-height:734px;
+}
+.phone-bar{ height:22px; display:flex; align-items:center; justify-content:center; }
+.phone-bar i{ display:block; width:96px; height:5px; border-radius:999px; background:rgba(36,36,58,.16); }
+
+.desktop{
+  width:900px;
+  background:#FFFFFF;
+  border-radius:16px;
+  box-shadow:0 30px 70px -28px rgba(37,44,74,.42), 0 4px 14px -6px rgba(37,44,74,.18);
+  overflow:hidden;
+  border:1px solid rgba(36,36,58,.08);
+}
+.desktop-chrome{
+  display:flex; align-items:center; gap:14px;
+  background:#F3F4FB; border-bottom:1px solid var(--hairline);
+  padding:11px 14px;
+}
+.dots{ display:flex; gap:6px; }
+.dots i{ width:10px; height:10px; border-radius:999px; background:#D7D8E8; display:block; }
+/* address field left intentionally blank — no URL is specified anywhere */
+.addressbar{ flex:1 1 auto; height:26px; border-radius:999px; background:#FFFFFF; border:1px solid var(--hairline); }
+.desktop-viewport{ background:var(--ground); padding:34px 28px 40px; }
+/* DESKTOP CARD CEILING — 640px, centred in the lavender field.
+   The browser frame widens the ground, never the card. */
+.desktop-measure{ max-width:640px; margin:0 auto; }
+
+/* ==========================================================================
+   THE PRODUCT SURFACE
+   ========================================================================== */
+.card{
+  background:var(--card);
+  border-radius:var(--r-card);
+  box-shadow:var(--shadow-card);
+  padding:18px 16px 22px;
+}
+.desktop .card{ padding:22px 22px 26px; }
+
+/* --- add input, pinned to the top of the card. No wordmark above it. --- */
+.addbar{
+  display:flex; align-items:center; gap:10px;
+  background:var(--card);
+  border:1.5px solid var(--border-control);   /* 1.4.11 fix — was hairline */
+  border-radius:var(--r-row);
+  padding:12px 13px;
+  box-shadow:var(--shadow-row);
+  min-height:50px;
+}
+.addbar .plus{ flex:0 0 auto; color:var(--accent); display:block; }
+.addbar .ph{ font-size:14.5px; color:var(--text-placeholder); }
+.addbar .typed{ font-size:14.5px; color:var(--text-primary); }
+.addbar .caret{
+  display:inline-block; width:1.5px; height:17px; background:var(--accent);
+  vertical-align:-3px; margin-left:1px;
+}
+
+/* --- filter tabs: v4 inset segmented control, now carrying counts --- */
+.tabs{
+  display:flex; align-items:center; gap:2px;
+  margin:18px 0 12px;
+  background:var(--tab-track); border-radius:999px; padding:4px;
+  box-shadow:inset 0 1px 3px rgba(36,36,58,.10);
+}
+.tab{
+  flex:1 1 auto; text-align:center; white-space:nowrap;
+  font-family:inherit; font-size:12.5px; font-weight:500; line-height:1;
+  border:0; background:transparent; color:var(--text-muted);
+  padding:10px 6px; border-radius:999px; min-height:36px;
+}
+.tab[aria-selected="true"]{
+  background:var(--tab-sel-bg); color:var(--tab-sel-text); font-weight:600;
+  box-shadow:0 2px 6px -2px rgba(36,36,58,.22), 0 1px 1px rgba(36,36,58,.05);
+}
+/* the count is secondary information, not a badge: no pill, no fill, no
+   border. One step down in size, one step down in weight, held at
+   text-muted so it never competes with the view name. 5.77:1 on the
+   recessed track, 6.66:1 on the selected white chip. */
+.tab .n{
+  margin-left:5px;
+  font-size:11px; font-weight:500; color:var(--text-muted);
+  font-variant-numeric:tabular-nums;
+}
+.tab[aria-selected="true"] .n{ font-weight:500; color:var(--text-muted); }
+
+/* --- rows --- */
+.rows{ list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:9px; }
+.row{
+  position:relative;
+  display:flex; align-items:center; gap:12px;
+  background:var(--row-active);
+  border-radius:var(--r-row);
+  padding:14px;
+  min-height:50px;                      /* parity with the skeleton row shape */
+  box-shadow:var(--shadow-row);
+}
+.row .label{ font-size:14.5px; color:var(--text-primary); }
+.box{
+  flex:0 0 auto; width:22px; height:22px; border-radius:7px;
+  border:1.75px solid var(--border-control);  /* 1.4.11 fix — was hairline */
+  background:#fff;
+  display:flex; align-items:center; justify-content:center;
+}
+/* trailing delete icon — pointer devices only, revealed on row hover.
+   Touch uses swipe-to-reveal (see key-delete.html). Keyboard has its own path. */
+.del{
+  margin-left:auto; flex:0 0 auto;
+  width:34px; height:34px; border-radius:999px;
+  display:flex; align-items:center; justify-content:center;
+  color:var(--text-muted); background:transparent; border:0;
+  opacity:0;                            /* at rest: hidden */
+}
+.row.is-hover{
+  box-shadow:0 12px 28px -14px rgba(37,44,74,.28), 0 1px 3px rgba(37,44,74,.05);
+}
+.row.is-hover .del{ opacity:1; color:var(--danger-text); }
+
+/* completed row: mint fill + filled checkmark + strikethrough in muted text.
+   Three redundant cues; colour never carries the meaning alone.
+   The checked box takes accent-deep #1B65C2 here — 4.33:1 on mint. */
+.row.complete{ background:var(--row-complete); box-shadow:0 8px 22px -14px rgba(37,74,58,.34); }
+.row.complete .box{ background:var(--accent-deep); border-color:var(--accent-deep); }
+.row.complete .box svg{ color:#fff; display:block; }
+.row.complete .label{
+  color:var(--text-completed);
+  text-decoration:line-through;
+  text-decoration-thickness:1.5px;
+  text-decoration-color:var(--text-completed);
+}
+
+/* checkbox contrast reference strip — review chrome, not product */
+.cmp{ display:flex; gap:26px; flex-wrap:wrap; margin-top:12px; }
+.cmp .one{ display:flex; align-items:center; gap:10px; }
+.cmp .swatch{
+  width:22px; height:22px; border-radius:7px;
+  display:flex; align-items:center; justify-content:center; color:#fff;
+}
+.cmp .cap{ font-size:11.5px; color:var(--text-muted); }
+.cmp .cap b{ color:var(--text-primary); font-weight:600; }
+
+/* ---------- legend strip ---------- */
+.legend{ max-width:1180px; margin:0 auto; padding:8px 28px 56px; }
+.legend ul{ margin:10px 0 0; padding-left:18px; }
+.legend li{ font-size:12.5px; color:var(--text-muted); margin-bottom:5px; line-height:1.55; }
+.legend b{ color:var(--text-primary); font-weight:600; }
+.legend code{ font-size:11.5px; background:#FFFFFF; border:1px solid var(--hairline); border-radius:6px; padding:1px 5px; }
+
+@media (max-width:760px){
+  .sheet-head,.section-head,.legend{ padding-left:18px; padding-right:18px; }
+  .rail{ padding-left:18px; padding-right:18px; }
+}
+</style>
+</head>
+<body>
+
+<header class="sheet-head">
+  <h1>Simple Action — key screen: the list at rest</h1>
+  <p>The canonical single screen, rendered 1:1 in a phone frame and a desktop browser frame with identical content. Static mock: nothing here responds to interaction, and each state is labelled. Tokens are Lavender Mist (variation 4) plus the two accessibility tokens added at Finalize.</p>
+  <p class="mini">Section A — Active filter selected · Section B — All filter selected, completed Todos present and interleaved.</p>
+</header>
+
+<!-- ================================================================
+     SECTION A — RESTING, ACTIVE FILTER
+     ================================================================ -->
+<div class="section-head">
+  <p class="eyebrow">Section A</p>
+  <h2>At rest · Active selected · counts on all three tabs</h2>
+  <p>The card opens straight into the input — there is no wordmark and no header. Inset segmented filter tabs sit below it, each carrying its count, and the rows run newest-first beneath. The second row carries the pointer-device hover state, where the trailing delete icon is revealed.</p>
+</div>
+
+<div class="rail" tabindex="0" role="region" aria-label="Phone and desktop frames, Active filter. Scroll sideways.">
+
+  <!-- ---------- PHONE ---------- -->
+  <div class="framewrap">
+    <p class="framecap">Phone · 390&nbsp;pt viewport</p>
+    <div class="phone">
+      <div class="phone-screen">
+        <div class="phone-bar"><i></i></div>
+
+        <div class="card">
+          <!-- input, pinned top — nothing above it -->
+          <div class="addbar">
+            <svg class="plus" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+            <span class="ph">what needs doing?</span>
+          </div>
+
+          <!-- filter tabs, each count inside the tab's accessible name -->
+          <div class="tabs" role="tablist" aria-label="Filter">
+            <span class="tab" role="tab" aria-selected="false" aria-label="All, 4 Todos">All<span class="n">4</span></span>
+            <span class="tab" role="tab" aria-selected="true" aria-label="Active, 2 Todos">Active<span class="n">2</span></span>
+            <span class="tab" role="tab" aria-selected="false" aria-label="Completed, 2 Todos">Completed<span class="n">2</span></span>
+          </div>
+
+          <!-- rows, newest-first by creation timestamp -->
+          <ul class="rows">
+            <li class="row">
+              <span class="box"></span>
+              <span class="label">book dentist</span>
+            </li>
+            <li class="row">
+              <span class="box"></span>
+              <span class="label">send invoice</span>
+            </li>
+          </ul>
+        </div>
+      </div>
+    </div>
+    <p class="framenote">UJ-1: Dana opens Active on her phone and sees only what is still open — two of four. One-handed reach: the input is at the top, the list runs down from it, nothing is pinned to the bottom edge. The input does not autofocus on touch, so a keyboard never buries the list before she has read it.</p>
+  </div>
+
+  <!-- ---------- DESKTOP ---------- -->
+  <div class="framewrap">
+    <p class="framecap">Desktop browser · card at the 640px ceiling</p>
+    <div class="desktop">
+      <div class="desktop-chrome">
+        <span class="dots"><i></i><i></i><i></i></span>
+        <span class="addressbar"></span>
+      </div>
+      <div class="desktop-viewport">
+        <div class="desktop-measure">
+          <div class="card">
+            <div class="addbar">
+              <svg class="plus" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+              <span class="ph">what needs doing?</span>
+            </div>
+
+            <div class="tabs" role="tablist" aria-label="Filter">
+              <span class="tab" role="tab" aria-selected="false" aria-label="All, 4 Todos">All<span class="n">4</span></span>
+              <span class="tab" role="tab" aria-selected="true" aria-label="Active, 2 Todos">Active<span class="n">2</span></span>
+              <span class="tab" role="tab" aria-selected="false" aria-label="Completed, 2 Todos">Completed<span class="n">2</span></span>
+            </div>
+
+            <ul class="rows">
+              <li class="row">
+                <span class="box"></span>
+                <span class="label">book dentist</span>
+              </li>
+              <!-- POINTER HOVER STATE — trailing delete icon revealed -->
+              <li class="row is-hover">
+                <span class="box"></span>
+                <span class="label">send invoice</span>
+                <span class="del" aria-label="Delete">
+                  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16"/><path d="M9.5 7V5.4A1.4 1.4 0 0 1 10.9 4h2.2a1.4 1.4 0 0 1 1.4 1.4V7"/><path d="M6.6 7l.8 11.3A1.8 1.8 0 0 0 9.2 20h5.6a1.8 1.8 0 0 0 1.8-1.7L17.4 7"/><path d="M10.5 11v5M13.5 11v5"/></svg>
+                </span>
+              </li>
+            </ul>
+          </div>
+          <p style="margin:14px 2px 0;font-size:11.5px;color:var(--text-muted);">
+            <span class="marker">Hover</span>
+            &nbsp;Row 2 — pointer over the row reveals the trailing delete icon in clay&nbsp;#8E3B22. All other rows sit at rest with the icon absent.
+          </p>
+        </div>
+      </div>
+    </div>
+    <p class="framenote">UJ-2: Sam adds from a laptop. The card is capped at <b>640px and centred in the lavender field</b> — the desktop frame widens the ground, not the list. One column at every width, no horizontal scroll. The input <b>does</b> autofocus here, where Sam types straight in.</p>
+  </div>
+</div>
+
+<!-- ================================================================
+     SECTION B — RESTING, ALL FILTER, COMPLETED ROWS PRESENT
+     ================================================================ -->
+<div class="section-head">
+  <p class="eyebrow">Section B</p>
+  <h2>At rest · All selected · completed Todos in creation order</h2>
+  <p>The completed row carries three redundant cues at once: mint surface #C3E9D7, a filled checkmark in accent-deep #1B65C2, and strikethrough in muted #5F5F7A. Colour alone never signals completion. The four rows are interleaved — active, completed, active, completed — because <b>completed rows never reorder</b>.</p>
+</div>
+
+<div class="rail" tabindex="0" role="region" aria-label="Phone and desktop frames, All filter. Scroll sideways.">
+
+  <div class="framewrap">
+    <p class="framecap">Phone · All selected</p>
+    <div class="phone">
+      <div class="phone-screen">
+        <div class="phone-bar"><i></i></div>
+
+        <div class="card">
+          <div class="addbar">
+            <svg class="plus" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+            <span class="ph">what needs doing?</span>
+          </div>
+
+          <div class="tabs" role="tablist" aria-label="Filter">
+            <span class="tab" role="tab" aria-selected="true" aria-label="All, 4 Todos">All<span class="n">4</span></span>
+            <span class="tab" role="tab" aria-selected="false" aria-label="Active, 2 Todos">Active<span class="n">2</span></span>
+            <span class="tab" role="tab" aria-selected="false" aria-label="Completed, 2 Todos">Completed<span class="n">2</span></span>
+          </div>
+
+          <ul class="rows">
+            <li class="row">
+              <span class="box"></span>
+              <span class="label">book dentist</span>
+            </li>
+            <!-- COMPLETED ROW: mint + filled checkmark + strikethrough + muted text -->
+            <li class="row complete">
+              <span class="box">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7"/></svg>
+              </span>
+              <span class="label">pick up rice</span>
+            </li>
+            <li class="row">
+              <span class="box"></span>
+              <span class="label">send invoice</span>
+            </li>
+            <li class="row complete">
+              <span class="box">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7"/></svg>
+              </span>
+              <span class="label">create monthly deck</span>
+            </li>
+          </ul>
+        </div>
+      </div>
+    </div>
+    <p class="framenote"><b>Completed rows never reorder.</b> Ordering is newest-first by creation timestamp in every Filter View, and Completion Status never moves a row: <code>pick up rice</code> stays second and <code>create monthly deck</code> stays last, exactly where they were created. Nothing sinks to the bottom.</p>
+  </div>
+
+  <div class="framewrap">
+    <p class="framecap">Desktop browser · All selected · 640px card</p>
+    <div class="desktop">
+      <div class="desktop-chrome">
+        <span class="dots"><i></i><i></i><i></i></span>
+        <span class="addressbar"></span>
+      </div>
+      <div class="desktop-viewport">
+        <div class="desktop-measure">
+          <div class="card">
+            <div class="addbar">
+              <svg class="plus" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+              <span class="ph">what needs doing?</span>
+            </div>
+
+            <div class="tabs" role="tablist" aria-label="Filter">
+              <span class="tab" role="tab" aria-selected="true" aria-label="All, 4 Todos">All<span class="n">4</span></span>
+              <span class="tab" role="tab" aria-selected="false" aria-label="Active, 2 Todos">Active<span class="n">2</span></span>
+              <span class="tab" role="tab" aria-selected="false" aria-label="Completed, 2 Todos">Completed<span class="n">2</span></span>
+            </div>
+
+            <ul class="rows">
+              <li class="row">
+                <span class="box"></span>
+                <span class="label">book dentist</span>
+              </li>
+              <li class="row complete">
+                <span class="box">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7"/></svg>
+                </span>
+                <span class="label">pick up rice</span>
+              </li>
+              <li class="row">
+                <span class="box"></span>
+                <span class="label">send invoice</span>
+              </li>
+              <!-- COMPLETED ROW with the pointer hover state also shown -->
+              <li class="row complete is-hover">
+                <span class="box">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7"/></svg>
+                </span>
+                <span class="label">create monthly deck</span>
+                <span class="del" aria-label="Delete">
+                  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16"/><path d="M9.5 7V5.4A1.4 1.4 0 0 1 10.9 4h2.2a1.4 1.4 0 0 1 1.4 1.4V7"/><path d="M6.6 7l.8 11.3A1.8 1.8 0 0 0 9.2 20h5.6a1.8 1.8 0 0 0 1.8-1.7L17.4 7"/><path d="M10.5 11v5M13.5 11v5"/></svg>
+                </span>
+              </li>
+            </ul>
+          </div>
+          <p style="margin:14px 2px 0;font-size:11.5px;color:var(--text-muted);">
+            <span class="marker">Hover</span>
+            &nbsp;The delete icon behaves the same on a completed row — the mint surface does not change the affordance.
+          </p>
+
+          <!-- checkbox contrast reference — review chrome -->
+          <div class="cmp">
+            <div class="one">
+              <span class="swatch" style="background:#2680EB">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7"/></svg>
+              </span>
+              <span class="cap"><b>Checked · Active row</b><br>accent #2680EB on white — 3.91:1</span>
+            </div>
+            <div class="one">
+              <span class="swatch" style="background:#1B65C2">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7"/></svg>
+              </span>
+              <span class="cap"><b>Checked · Completed row</b><br>accent-deep #1B65C2 on mint — 4.33:1</span>
+            </div>
+            <div class="one">
+              <span class="swatch" style="background:#FFFFFF;border:1.75px solid #8C8BAC"></span>
+              <span class="cap"><b>Unchecked</b><br>border-control #8C8BAC on white — 3.28:1</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <p class="framenote">Struck completed text #5F5F7A on mint #C3E9D7 is 4.69:1 — the tightest pair in the theme. Do not darken the mint or lighten that grey.</p>
+  </div>
+</div>
+
+<div class="legend">
+  <p class="eyebrow">What this screen fixes</p>
+  <ul>
+    <li><b>No wordmark</b> — the card opens straight into the input. The product name lives in the browser tab title only; there is nothing to read before working.</li>
+    <li><b>Input pinned top</b> — placeholder <code>what needs doing?</code>, thin rounded plus icon in accent #2680EB, row-radius 14px, border <code>border-control #8C8BAC</code>, its own soft shadow so it reads as a sub-surface of the card.</li>
+    <li><b>Filter tabs with counts</b> — inset segmented control: recessed track #EDEEF7, raised white selected chip, label #1B65C2. Each tab carries a bare count — <code>All 4</code> / <code>Active 2</code> / <code>Completed 2</code> — one type step down, one weight step down, in text-muted, so the count reads as secondary to the view name rather than as a badge. Counts are derived locally from the loaded list, fire no network request, and show <code>0</code> rather than hiding. Each count sits inside the tab's accessible name: <code>aria-label="Active, 2 Todos"</code>.</li>
+    <li><b>Rows</b> — each Todo is its own sub-surface, radius 14px, 9px gutter, 50px minimum height. Newest-first by creation timestamp, and <b>completed rows never reorder</b>.</li>
+    <li><b>Completed</b> — mint #C3E9D7 + filled checkmark in accent-deep #1B65C2 (4.33:1 on mint) + strikethrough in #5F5F7A, all three at once. The checkmark on an Active row stays #2680EB on white.</li>
+    <li><b>Desktop ceiling</b> — the card caps at 640px and centres in the lavender field. One column at every breakpoint.</li>
+    <li><b>Delete on pointer devices</b> — trailing icon revealed on row hover only. Touch uses swipe-to-reveal; both are mirrored by a keyboard path. See <code>key-delete.html</code>.</li>
+    <li><b>Banned</b> — no synonym for Completed appears anywhere; the filter view name matches the Completion Status value exactly. No wordmark, greeting header, stat tiles, categories, sub-tasks, notification bell, timestamps, FAB or second screen.</li>
+  </ul>
+</div>
+
+</body>
+</html>

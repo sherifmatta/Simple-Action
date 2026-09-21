@@ -1,0 +1,915 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Simple Action — Colour theme comparison (4 variations)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+/* ==========================================================================
+   SIMPLE ACTION — COLOUR THEME COMPARISON SHEET
+   Generated 2026-09-20 for a UX review session.
+
+   GOVERNING IDEA: a deliberately small product can still feel finished.
+
+   --------------------------------------------------------------------------
+   LOCKED TOKENS — IDENTICAL IN ALL FOUR VARIATIONS. DO NOT VARY.
+   --------------------------------------------------------------------------
+   --ground            #E7EAF6   pale lavender page ground
+   --card              #FFFFFF   floating white card container
+   --row-active        #FFFFFF   active todo sub-surface
+   --row-complete      #C3E9D7   completed todo sub-surface (mint)
+   --accent            #2680EB   single action accent (fills, strokes, icons)
+   --accent-deep       #1B65C2   DERIVED from --accent purely so accent-coloured
+                                 TEXT and white-on-accent text clear 4.5:1.
+                                 (#2680EB vs #FFFFFF = 3.91:1 — fails for text,
+                                 fine for >=3:1 non-text strokes/fills.)
+                                 #1B65C2 vs #FFFFFF = 5.70:1  PASS
+   Type: Poppins (Google Fonts) -> geometric sans fallback stack.
+   Radii: card 18px, rows 14px, badges/tabs fully pill. Light mode only.
+
+   --------------------------------------------------------------------------
+   WHAT VARIES: (1) neutral/text ramp  (2) danger hue  (3) filter-tab treatment
+                (4) focus ring
+   --------------------------------------------------------------------------
+
+   ==========================================================================
+   VARIATION 1 — "COOL SLATE"      register: calm, clinical, quietly competent
+   ==========================================================================
+   NEUTRAL RAMP (cool blue-grey)
+     --text-primary      #1F2733    15.04:1 on #FFFFFF   |  11.43:1 on #C3E9D7
+     --text-muted        #5C6879     5.66:1 on #FFFFFF   |   4.71:1 on #E7EAF6
+     --text-completed    #55616F     4.80:1 on #C3E9D7  (strikethrough copy)
+     --text-placeholder  #6B7789     4.54:1 on #FFFFFF
+     --hairline          #DDE3EE    non-text
+   DANGER — soft desaturated rose, stays inside the pastel family
+     --danger-bg         #FBE9EC
+     --danger-border     #F0CDD5
+     --danger-text       #A3253C     6.22:1 on #FBE9EC   PASS
+   FILTER TAB (selected) — filled pastel pill
+     --tab-sel-bg        #DCE4F7
+     --tab-sel-text      #2F4A7A     6.92:1 on #DCE4F7   PASS
+   FOCUS RING — dual ring: 2px #FFFFFF gap, then 2px #2680EB halo outside it
+     box-shadow: 0 0 0 2px #FFFFFF, 0 0 0 4px #2680EB
+
+   ==========================================================================
+   VARIATION 2 — "WARM INK"        register: friendly, handwritten, low-stakes
+   ==========================================================================
+   NEUTRAL RAMP (warm brown-grey)
+     --text-primary      #2B2724    14.81:1 on #FFFFFF   |  11.25:1 on #C3E9D7
+     --text-muted        #6E655D     5.70:1 on #FFFFFF   |   4.75:1 on #E7EAF6
+     --text-completed    #645B53     5.04:1 on #C3E9D7
+     --text-placeholder  #7A7067     4.84:1 on #FFFFFF
+     --hairline          #EAE4DD    non-text
+   DANGER — warm amber / burnt coral, reads as "hiccup", not "alarm"
+     --danger-bg         #FDEDE0
+     --danger-border     #F5D3B6
+     --danger-text       #9A4A12     5.46:1 on #FDEDE0   PASS
+   FILTER TAB (selected) — solid blue-filled pill, white label
+     --tab-sel-bg        #1B65C2    (accent-deep, so the label clears AA)
+     --tab-sel-text      #FFFFFF     5.70:1 on #1B65C2   PASS
+   FOCUS RING — single heavy 3px #2680EB outline hugging the shape, no offset
+     outline: 3px solid #2680EB; outline-offset: 0
+
+   ==========================================================================
+   VARIATION 3 — "GRAPHITE PRINT"  register: crisp, editorial, black-ink honest
+   ==========================================================================
+   NEUTRAL RAMP (near-black + pure achromatic greys)
+     --text-primary      #111111    18.88:1 on #FFFFFF   |  14.35:1 on #C3E9D7
+     --text-muted        #565656     7.34:1 on #FFFFFF   |   6.12:1 on #E7EAF6
+     --text-completed    #606060     4.78:1 on #C3E9D7
+     --text-placeholder  #6B6B6B     5.33:1 on #FFFFFF
+     --hairline          #E4E4E4    non-text
+   DANGER — conventional saturated red, unambiguous
+     --danger-bg         #FDECEA
+     --danger-border     #F6C9C4
+     --danger-text       #B3261E     5.72:1 on #FDECEA   PASS
+   FILTER TAB (selected) — no fill; near-black label + 2.5px #2680EB underline
+     --tab-sel-bg        transparent
+     --tab-sel-text      #111111    18.88:1 on #FFFFFF   PASS
+     underline           #2680EB     3.91:1 vs #FFFFFF (non-text, >=3:1 PASS)
+   FOCUS RING — offset halo: 2px #2680EB ring held 3px off the shape
+     outline: 2px solid #2680EB; outline-offset: 3px
+
+   ==========================================================================
+   VARIATION 4 — "LAVENDER MIST"   register: soft, tonal, dissolves into the page
+   ==========================================================================
+   NEUTRAL RAMP (lavender-tinted grey, keyed to the #E7EAF6 ground)
+     --text-primary      #24243A    15.12:1 on #FFFFFF   |  11.49:1 on #C3E9D7
+     --text-muted        #5A5A75     6.66:1 on #FFFFFF   |   5.55:1 on #E7EAF6
+     --text-completed    #5F5F7A     4.69:1 on #C3E9D7
+     --text-placeholder  #71718B     4.73:1 on #FFFFFF
+     --hairline          #E3E2F0    non-text
+   DANGER — muted clay / terracotta, earthy and de-escalated
+     --danger-bg         #F6E7E1
+     --danger-border     #E6CCC0
+     --danger-text       #8E3B22     6.23:1 on #F6E7E1   PASS
+   FILTER TAB (selected) — inset segmented control: recessed track, raised chip
+     --tab-track         #EDEEF7    (recessed track)
+     --tab-sel-bg        #FFFFFF    (raised selected chip + soft shadow)
+     --tab-sel-text      #1B65C2     5.70:1 on #FFFFFF   PASS
+   FOCUS RING — soft glow: 1px #2680EB edge + 4px rgba(38,128,235,0.30) bloom
+     box-shadow: 0 0 0 1px #2680EB, 0 0 0 5px rgba(38,128,235,0.30)
+
+   ==========================================================================
+   All ratios above computed with the WCAG 2.x relative-luminance formula
+   (sRGB, 8-bit, no alpha compositing — every pair is opaque on opaque).
+   ========================================================================== */
+
+/* ---------- LOCKED GLOBALS ---------- */
+:root{
+  --ground:#E7EAF6;
+  --card:#FFFFFF;
+  --row-active:#FFFFFF;
+  --row-complete:#C3E9D7;
+  --accent:#2680EB;
+  --accent-deep:#1B65C2;
+  --r-card:18px;
+  --r-row:14px;
+  --shadow-card:0 18px 46px -18px rgba(37,44,74,.18), 0 2px 10px -4px rgba(37,44,74,.06);
+  --shadow-row:0 8px 22px -12px rgba(37,44,74,.20), 0 1px 3px rgba(37,44,74,.04);
+  --font:"Poppins","Century Gothic","Futura","Avenir Next",-apple-system,"Segoe UI",system-ui,sans-serif;
+}
+
+*,*::before,*::after{box-sizing:border-box;}
+html{ -webkit-text-size-adjust:100%; }
+body{
+  margin:0;
+  font-family:var(--font);
+  background:var(--ground);
+  color:#1F2733;
+  font-weight:400;
+  line-height:1.5;
+  overflow-x:hidden;            /* page body must never scroll sideways */
+}
+
+/* ---------- SHEET CHROME ---------- */
+.sheet-head{
+  max-width:1180px;
+  margin:0 auto;
+  padding:40px 28px 10px;
+}
+.sheet-head h1{
+  font-size:26px; font-weight:600; letter-spacing:-.02em; margin:0 0 6px;
+  color:#1F2733;
+}
+.sheet-head p{ margin:0 0 4px; font-size:14px; color:#5C6879; max-width:74ch; }
+.sheet-head .locked{
+  margin-top:14px; font-size:12.5px; color:#5C6879;
+  display:flex; flex-wrap:wrap; gap:8px; align-items:center;
+}
+.lockchip{
+  display:inline-flex; align-items:center; gap:7px;
+  background:#fff; border:1px solid #DDE3EE; border-radius:999px;
+  padding:5px 11px 5px 7px; font-size:11.5px; color:#1F2733; font-weight:500;
+}
+.lockchip i{ width:13px; height:13px; border-radius:4px; display:block; border:1px solid rgba(31,39,51,.10); }
+.lockchip b{ font-weight:400; color:#5C6879; font-variant-numeric:tabular-nums; }
+
+/* ---------- SIDE-BY-SIDE RAIL ---------- */
+.rail-wrap{ padding:18px 0 56px; }
+.rail{
+  display:flex;
+  gap:26px;
+  align-items:flex-start;
+  overflow-x:auto;              /* horizontal scroll lives HERE, not on body */
+  overflow-y:hidden;
+  padding:10px 28px 26px;
+  scroll-snap-type:x proximity;
+  -webkit-overflow-scrolling:touch;
+}
+.rail::-webkit-scrollbar{ height:10px; }
+.rail::-webkit-scrollbar-track{ background:transparent; }
+.rail::-webkit-scrollbar-thumb{ background:#CBD3E8; border-radius:999px; border:3px solid var(--ground); }
+.col{ flex:0 0 392px; width:392px; scroll-snap-align:start; }
+
+/* ---------- VARIATION HEADER ---------- */
+.vhead{ padding:0 2px 14px; }
+.vnum{
+  display:inline-block; font-size:11px; font-weight:600; letter-spacing:.14em;
+  text-transform:uppercase; color:var(--text-muted); margin-bottom:3px;
+}
+.vname{ font-size:19px; font-weight:600; letter-spacing:-.015em; margin:0 0 2px; color:var(--text-primary); }
+.vreg{ font-size:13px; margin:0; color:var(--text-muted); font-style:italic; }
+
+/* ==========================================================================
+   THE SCREEN
+   ========================================================================== */
+.screen{
+  background:var(--card);
+  border-radius:var(--r-card);
+  box-shadow:var(--shadow-card);
+  padding:20px 18px 22px;
+}
+.app-top{ display:flex; align-items:baseline; justify-content:space-between; margin:2px 2px 15px; }
+.app-title{ font-size:16px; font-weight:600; letter-spacing:-.01em; color:var(--text-primary); }
+.app-sub{ font-size:12px; color:var(--text-muted); }
+
+/* --- input pinned at top --- */
+.addbar{
+  display:flex; align-items:center; gap:10px;
+  background:var(--card);
+  border:1.5px solid var(--hairline);
+  border-radius:var(--r-row);
+  padding:12px 13px;
+  box-shadow:var(--shadow-row);
+}
+.addbar .plus{ flex:0 0 auto; color:var(--accent); display:block; }
+.addbar .ph{ font-size:14.5px; color:var(--text-placeholder); font-weight:400; }
+.addbar .enter{
+  margin-left:auto; font-size:10.5px; letter-spacing:.04em; color:var(--text-muted);
+  border:1px solid var(--hairline); border-radius:999px; padding:2px 9px;
+}
+
+/* --- error banner region, directly below input --- */
+.banner{
+  display:flex; align-items:center; gap:10px;
+  margin-top:10px;
+  background:var(--danger-bg);
+  border:1px solid var(--danger-border);
+  border-radius:var(--r-row);
+  padding:11px 12px;
+}
+.banner svg{ flex:0 0 auto; color:var(--danger-text); }
+.banner .msg{ font-size:13.5px; color:var(--danger-text); font-weight:500; }
+.banner .retry{
+  margin-left:auto;
+  font-size:12.5px; font-weight:600; color:var(--danger-text);
+  background:transparent; border:1.5px solid var(--danger-text);
+  border-radius:999px; padding:4px 13px; cursor:pointer; font-family:inherit;
+  line-height:1.3;
+}
+
+/* --- filter tabs (treatment overridden per variation) --- */
+.tabs{ display:flex; align-items:center; gap:6px; margin:18px 2px 12px; }
+.tab{
+  font-family:inherit; font-size:12.5px; font-weight:500; line-height:1;
+  border:0; background:transparent; cursor:pointer;
+  color:var(--text-muted); padding:8px 15px; border-radius:999px;
+}
+.tabcount{ margin-left:auto; font-size:11.5px; color:var(--text-muted); }
+
+/* --- rows --- */
+.rows{ list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:9px; }
+.row{
+  display:flex; align-items:center; gap:12px;
+  background:var(--row-active);
+  border-radius:var(--r-row);
+  padding:14px 14px;
+  box-shadow:var(--shadow-row);
+}
+.row .label{ font-size:14.5px; color:var(--text-primary); font-weight:400; }
+.row .meta{ margin-left:auto; font-size:11px; color:var(--text-muted); }
+.box{
+  flex:0 0 auto; width:21px; height:21px; border-radius:7px;
+  border:1.75px solid var(--hairline); background:#fff;
+  display:flex; align-items:center; justify-content:center;
+}
+.row.done{ background:var(--row-complete); box-shadow:0 8px 22px -14px rgba(37,74,58,.34); }
+.row.done .box{ background:var(--accent); border-color:var(--accent); }
+.row.done .box svg{ color:#fff; display:block; }
+.row.done .label{
+  color:var(--text-completed);
+  text-decoration:line-through;
+  text-decoration-thickness:1.5px;
+  text-decoration-color:var(--text-completed);
+}
+.row.done .meta{ color:var(--text-completed); }
+
+/* ---------- EMPTY-STATE PANEL ---------- */
+.panel{
+  margin-top:16px;
+  background:var(--card);
+  border-radius:var(--r-card);
+  box-shadow:var(--shadow-card);
+  padding:16px 18px 20px;
+}
+.panel-cap{
+  font-size:10.5px; font-weight:600; letter-spacing:.13em; text-transform:uppercase;
+  color:var(--text-muted); margin-bottom:12px;
+}
+.empty{
+  border:1.5px dashed var(--hairline);
+  border-radius:var(--r-row);
+  padding:26px 16px;
+  text-align:center;
+}
+.empty .ring{
+  width:38px; height:38px; margin:0 auto 10px;
+  border-radius:999px; background:var(--row-complete);
+  display:flex; align-items:center; justify-content:center; color:var(--text-completed);
+}
+.empty .line{ font-size:14px; color:var(--text-muted); }
+
+/* ---------- FOCUS-RING DEMO STRIP ---------- */
+.focusdemo{
+  margin-top:16px; background:var(--card); border-radius:var(--r-card);
+  box-shadow:var(--shadow-card); padding:16px 18px 20px;
+}
+.fd-row{ display:flex; align-items:center; gap:14px; flex-wrap:wrap; margin-top:4px; padding:6px 2px; }
+.fd-input{
+  flex:1 1 150px; min-width:150px;
+  border:1.5px solid var(--hairline); border-radius:var(--r-row);
+  padding:10px 12px; font-size:13px; color:var(--text-placeholder); background:#fff;
+}
+.fd-btn{
+  font-family:inherit; font-size:12.5px; font-weight:600; color:#fff;
+  background:var(--accent-deep); border:0; border-radius:999px; padding:9px 18px; cursor:pointer;
+}
+.fd-cap{ font-size:11px; color:var(--text-muted); margin-top:10px; line-height:1.45; }
+
+/* ---------- TOKEN CHIPS ---------- */
+.tokens{
+  margin-top:16px; background:var(--card); border-radius:var(--r-card);
+  box-shadow:var(--shadow-card); padding:16px 18px 18px;
+}
+.tokens h3{
+  font-size:10.5px; font-weight:600; letter-spacing:.13em; text-transform:uppercase;
+  color:var(--text-muted); margin:0 0 11px;
+}
+.tokens h3 + .tokens h3{ margin-top:16px; }
+.tokgrid{ display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+.tok{
+  display:flex; align-items:center; gap:9px;
+  border:1px solid var(--hairline); border-radius:10px; padding:7px 9px;
+  min-width:0;
+}
+.tok i{
+  flex:0 0 auto; width:20px; height:20px; border-radius:6px; display:block;
+  border:1px solid rgba(31,39,51,.12);
+}
+.tok span{ display:block; min-width:0; }
+.tok .role{ font-size:10.5px; color:var(--text-muted); line-height:1.3; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.tok .hex{ font-size:11.5px; font-weight:600; color:var(--text-primary); letter-spacing:.01em; font-variant-numeric:tabular-nums; }
+.tokfull{ grid-column:1 / -1; }
+.subhead{
+  font-size:10.5px; font-weight:600; letter-spacing:.13em; text-transform:uppercase;
+  color:var(--text-muted); margin:16px 0 11px;
+}
+
+/* ---------- CONTRAST READOUT ---------- */
+.ratios{
+  margin-top:16px; background:var(--card); border-radius:var(--r-card);
+  box-shadow:var(--shadow-card); padding:16px 18px 18px;
+}
+.ratios h3{
+  font-size:10.5px; font-weight:600; letter-spacing:.13em; text-transform:uppercase;
+  color:var(--text-muted); margin:0 0 10px;
+}
+.ratios dl{ margin:0; display:grid; grid-template-columns:1fr auto; gap:7px 12px; align-items:baseline; }
+.ratios dt{ font-size:11.5px; color:var(--text-muted); line-height:1.35; }
+.ratios dt b{ color:var(--text-primary); font-weight:500; }
+.ratios dd{
+  margin:0; font-size:12px; font-weight:600; color:var(--text-primary);
+  font-variant-numeric:tabular-nums; white-space:nowrap;
+}
+.ratios dd em{
+  font-style:normal; font-weight:600; font-size:9.5px; letter-spacing:.08em;
+  color:#1F6B47; background:#DCF0E5; border-radius:999px; padding:2px 6px; margin-left:5px;
+}
+.ratios .note{ font-size:10.5px; color:var(--text-muted); margin-top:11px; line-height:1.45; }
+
+/* ==========================================================================
+   VARIATION 1 — COOL SLATE
+   ========================================================================== */
+.v1{
+  --text-primary:#1F2733;
+  --text-muted:#5C6879;
+  --text-completed:#55616F;
+  --text-placeholder:#6B7789;
+  --hairline:#DDE3EE;
+  --danger-bg:#FBE9EC;
+  --danger-border:#F0CDD5;
+  --danger-text:#A3253C;
+  --tab-sel-bg:#DCE4F7;
+  --tab-sel-text:#2F4A7A;
+}
+/* filter tab: filled pastel pill */
+.v1 .tab[aria-selected="true"]{
+  background:var(--tab-sel-bg); color:var(--tab-sel-text); font-weight:600;
+}
+/* focus ring: dual ring — white gap then blue halo */
+.v1 .tab:focus-visible,.v1 .retry:focus-visible,.v1 .fd-btn:focus-visible,
+.v1 .fd-input:focus-visible,.v1 .box:focus-visible,.v1 .addbar:focus-within,
+.v1 .is-focus{
+  outline:none;
+  box-shadow:0 0 0 2px #FFFFFF, 0 0 0 4px var(--accent);
+}
+
+/* ==========================================================================
+   VARIATION 2 — WARM INK
+   ========================================================================== */
+.v2{
+  --text-primary:#2B2724;
+  --text-muted:#6E655D;
+  --text-completed:#645B53;
+  --text-placeholder:#7A7067;
+  --hairline:#EAE4DD;
+  --danger-bg:#FDEDE0;
+  --danger-border:#F5D3B6;
+  --danger-text:#9A4A12;
+  --tab-sel-bg:#1B65C2;
+  --tab-sel-text:#FFFFFF;
+}
+/* filter tab: solid blue-filled pill */
+.v2 .tab[aria-selected="true"]{
+  background:var(--tab-sel-bg); color:var(--tab-sel-text); font-weight:600;
+}
+/* focus ring: heavy 3px outline hugging the shape */
+.v2 .tab:focus-visible,.v2 .retry:focus-visible,.v2 .fd-btn:focus-visible,
+.v2 .fd-input:focus-visible,.v2 .box:focus-visible,.v2 .addbar:focus-within,
+.v2 .is-focus{
+  outline:3px solid var(--accent); outline-offset:0;
+}
+
+/* ==========================================================================
+   VARIATION 3 — GRAPHITE PRINT
+   ========================================================================== */
+.v3{
+  --text-primary:#111111;
+  --text-muted:#565656;
+  --text-completed:#606060;
+  --text-placeholder:#6B6B6B;
+  --hairline:#E4E4E4;
+  --danger-bg:#FDECEA;
+  --danger-border:#F6C9C4;
+  --danger-text:#B3261E;
+  --tab-sel-text:#111111;
+}
+/* filter tab: underline only, no fill */
+.v3 .tabs{ gap:2px; border-bottom:1px solid var(--hairline); padding-bottom:0; }
+.v3 .tab{ border-radius:0; padding:8px 12px 10px; position:relative; }
+.v3 .tab[aria-selected="true"]{ color:var(--tab-sel-text); font-weight:600; }
+.v3 .tab[aria-selected="true"]::after{
+  content:""; position:absolute; left:10px; right:10px; bottom:-1px;
+  height:2.5px; border-radius:2px; background:var(--accent);
+}
+.v3 .tabcount{ padding-bottom:8px; }
+/* focus ring: offset halo, 3px gap */
+.v3 .tab:focus-visible,.v3 .retry:focus-visible,.v3 .fd-btn:focus-visible,
+.v3 .fd-input:focus-visible,.v3 .box:focus-visible,.v3 .addbar:focus-within,
+.v3 .is-focus{
+  outline:2px solid var(--accent); outline-offset:3px;
+}
+
+/* ==========================================================================
+   VARIATION 4 — LAVENDER MIST
+   ========================================================================== */
+.v4{
+  --text-primary:#24243A;
+  --text-muted:#5A5A75;
+  --text-completed:#5F5F7A;
+  --text-placeholder:#71718B;
+  --hairline:#E3E2F0;
+  --danger-bg:#F6E7E1;
+  --danger-border:#E6CCC0;
+  --danger-text:#8E3B22;
+  --tab-track:#EDEEF7;
+  --tab-sel-bg:#FFFFFF;
+  --tab-sel-text:#1B65C2;
+}
+/* filter tab: inset segmented control — recessed track, raised selected chip */
+.v4 .tabs{
+  background:var(--tab-track); border-radius:999px; padding:4px; gap:2px;
+  box-shadow:inset 0 1px 3px rgba(36,36,58,.10);
+}
+.v4 .tab{ flex:1 1 auto; text-align:center; padding:8px 10px; }
+.v4 .tab[aria-selected="true"]{
+  background:var(--tab-sel-bg); color:var(--tab-sel-text); font-weight:600;
+  box-shadow:0 2px 6px -2px rgba(36,36,58,.22), 0 1px 1px rgba(36,36,58,.05);
+}
+.v4 .tabcount{ padding-right:10px; }
+/* focus ring: soft glow — 1px edge + wide low-opacity bloom */
+.v4 .tab:focus-visible,.v4 .retry:focus-visible,.v4 .fd-btn:focus-visible,
+.v4 .fd-input:focus-visible,.v4 .box:focus-visible,.v4 .addbar:focus-within,
+.v4 .is-focus{
+  outline:none;
+  box-shadow:0 0 0 1px var(--accent), 0 0 0 5px rgba(38,128,235,.30);
+}
+
+/* ---------- narrow screens: rail becomes a single scrolling column set ---------- */
+@media (max-width:760px){
+  .sheet-head{ padding:28px 18px 8px; }
+  .rail{ padding:10px 18px 26px; }
+  .col{ flex:0 0 340px; width:340px; }
+}
+</style>
+</head>
+<body>
+
+<header class="sheet-head">
+  <h1>Simple Action — colour theme comparison</h1>
+  <p>Four complete themes for the same single screen. The ground, the white card, the mint completed surface, the blue action accent, Poppins, the radii and the light-only mode are <strong>locked and identical</strong> in all four. What changes is the neutral/text ramp, the danger hue, the filter-tab treatment and the focus ring.</p>
+  <p>Every screen shows the same content in the same state: input pinned at top, a populated error banner beneath it, <em>Active</em> selected, three rows, and a separate empty-state panel for Completed.</p>
+  <div class="locked">
+    <span class="lockchip"><i style="background:#E7EAF6"></i>Ground <b>#E7EAF6</b></span>
+    <span class="lockchip"><i style="background:#FFFFFF"></i>Card / active row <b>#FFFFFF</b></span>
+    <span class="lockchip"><i style="background:#C3E9D7"></i>Completed row <b>#C3E9D7</b></span>
+    <span class="lockchip"><i style="background:#2680EB"></i>Action accent <b>#2680EB</b></span>
+    <span class="lockchip"><i style="background:#1B65C2"></i>Accent-deep (text-safe) <b>#1B65C2</b></span>
+    <span class="lockchip"><i style="background:linear-gradient(135deg,#fff 50%,#DDE3EE 50%)"></i>Poppins · 18/14/pill radii</span>
+  </div>
+</header>
+
+<div class="rail-wrap">
+<div class="rail" tabindex="0" role="region" aria-label="Four colour theme variations, scroll sideways to compare">
+
+  <!-- ================================================================
+       VARIATION 1 — COOL SLATE
+       ================================================================ -->
+  <section class="col v1" aria-labelledby="v1h">
+    <div class="vhead">
+      <div class="vnum">Variation 1</div>
+      <h2 class="vname" id="v1h">Cool Slate</h2>
+      <p class="vreg">Calm and clinical — the list feels like a well-kept instrument you can trust.</p>
+    </div>
+
+    <div class="screen">
+      <div class="app-top">
+        <div class="app-title">Simple Action</div>
+        <div class="app-sub">2 left</div>
+      </div>
+
+      <div class="addbar is-focus">
+        <svg class="plus" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+        <span class="ph">what needs doing?</span>
+        <span class="enter">Enter</span>
+      </div>
+
+      <div class="banner" role="alert">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7.5v5"/><path d="M12 16.2h.01"/></svg>
+        <span class="msg">Couldn&rsquo;t save that change.</span>
+        <button class="retry" type="button">Retry</button>
+      </div>
+
+      <div class="tabs" role="tablist">
+        <button class="tab" role="tab" aria-selected="false" type="button">All</button>
+        <button class="tab" role="tab" aria-selected="true" type="button">Active</button>
+        <button class="tab" role="tab" aria-selected="false" type="button">Completed</button>
+        <span class="tabcount">3 total</span>
+      </div>
+
+      <ul class="rows">
+        <li class="row"><span class="box"></span><span class="label">book dentist</span><span class="meta">today</span></li>
+        <li class="row"><span class="box"></span><span class="label">send invoice</span><span class="meta">today</span></li>
+        <li class="row done"><span class="box"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"/></svg></span><span class="label">pick up rice</span><span class="meta">done</span></li>
+      </ul>
+    </div>
+
+    <div class="panel">
+      <div class="panel-cap">Empty state · Completed</div>
+      <div class="empty">
+        <span class="ring"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"/></svg></span>
+        <div class="line">Nothing completed yet.</div>
+      </div>
+    </div>
+
+    <div class="focusdemo">
+      <div class="panel-cap">Focus ring · dual ring (white gap + blue halo)</div>
+      <div class="fd-row">
+        <span class="fd-input is-focus">what needs doing?</span>
+        <span class="box is-focus"></span>
+        <button class="tab is-focus" type="button" style="background:var(--tab-sel-bg);color:var(--tab-sel-text);font-weight:600">Active</button>
+        <button class="fd-btn is-focus" type="button">Retry</button>
+      </div>
+      <p class="fd-cap"><code>box-shadow: 0 0 0 2px #FFFFFF, 0 0 0 4px #2680EB</code> — reads on white rows and on the mint row alike because the white gap separates it from any surface.</p>
+    </div>
+
+    <div class="tokens">
+      <h3>Neutral / text ramp</h3>
+      <div class="tokgrid">
+        <div class="tok"><i style="background:#1F2733"></i><span><span class="role">text / primary</span><span class="hex">#1F2733</span></span></div>
+        <div class="tok"><i style="background:#5C6879"></i><span><span class="role">text / muted</span><span class="hex">#5C6879</span></span></div>
+        <div class="tok"><i style="background:#55616F"></i><span><span class="role">text / completed</span><span class="hex">#55616F</span></span></div>
+        <div class="tok"><i style="background:#6B7789"></i><span><span class="role">text / placeholder</span><span class="hex">#6B7789</span></span></div>
+        <div class="tok tokfull"><i style="background:#DDE3EE"></i><span><span class="role">hairline / border</span><span class="hex">#DDE3EE</span></span></div>
+      </div>
+      <div class="subhead">Danger · soft desaturated rose</div>
+      <div class="tokgrid">
+        <div class="tok"><i style="background:#FBE9EC"></i><span><span class="role">danger / surface</span><span class="hex">#FBE9EC</span></span></div>
+        <div class="tok"><i style="background:#F0CDD5"></i><span><span class="role">danger / border</span><span class="hex">#F0CDD5</span></span></div>
+        <div class="tok tokfull"><i style="background:#A3253C"></i><span><span class="role">danger / text + icon + Retry</span><span class="hex">#A3253C</span></span></div>
+      </div>
+      <div class="subhead">Filter tab · filled pastel pill</div>
+      <div class="tokgrid">
+        <div class="tok"><i style="background:#DCE4F7"></i><span><span class="role">tab / selected surface</span><span class="hex">#DCE4F7</span></span></div>
+        <div class="tok"><i style="background:#2F4A7A"></i><span><span class="role">tab / selected label</span><span class="hex">#2F4A7A</span></span></div>
+      </div>
+    </div>
+
+    <div class="ratios">
+      <h3>Computed contrast (WCAG 2.x)</h3>
+      <dl>
+        <dt><b>Body text on row</b> #1F2733 on #FFFFFF</dt><dd>15.04:1<em>AAA</em></dd>
+        <dt><b>Error text on banner</b> #A3253C on #FBE9EC</dt><dd>6.22:1<em>AA</em></dd>
+        <dt>Body text on completed row #1F2733 on #C3E9D7</dt><dd>11.43:1<em>AAA</em></dd>
+        <dt>Struck completed text #55616F on #C3E9D7</dt><dd>4.80:1<em>AA</em></dd>
+        <dt>Muted text #5C6879 on #FFFFFF</dt><dd>5.66:1<em>AA</em></dd>
+        <dt>Placeholder #6B7789 on #FFFFFF</dt><dd>4.54:1<em>AA</em></dd>
+        <dt>Selected tab label #2F4A7A on #DCE4F7</dt><dd>6.92:1<em>AA</em></dd>
+      </dl>
+      <p class="note">Completion is signalled three ways at once — mint surface, filled blue checkmark, strikethrough in muted text — so the mint never carries meaning alone.</p>
+    </div>
+  </section>
+
+  <!-- ================================================================
+       VARIATION 2 — WARM INK
+       ================================================================ -->
+  <section class="col v2" aria-labelledby="v2h">
+    <div class="vhead">
+      <div class="vnum">Variation 2</div>
+      <h2 class="vname" id="v2h">Warm Ink</h2>
+      <p class="vreg">Friendly and low-stakes — a paper notebook that happens to be a screen.</p>
+    </div>
+
+    <div class="screen">
+      <div class="app-top">
+        <div class="app-title">Simple Action</div>
+        <div class="app-sub">2 left</div>
+      </div>
+
+      <div class="addbar is-focus">
+        <svg class="plus" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+        <span class="ph">what needs doing?</span>
+        <span class="enter">Enter</span>
+      </div>
+
+      <div class="banner" role="alert">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7.5v5"/><path d="M12 16.2h.01"/></svg>
+        <span class="msg">Couldn&rsquo;t save that change.</span>
+        <button class="retry" type="button">Retry</button>
+      </div>
+
+      <div class="tabs" role="tablist">
+        <button class="tab" role="tab" aria-selected="false" type="button">All</button>
+        <button class="tab" role="tab" aria-selected="true" type="button">Active</button>
+        <button class="tab" role="tab" aria-selected="false" type="button">Completed</button>
+        <span class="tabcount">3 total</span>
+      </div>
+
+      <ul class="rows">
+        <li class="row"><span class="box"></span><span class="label">book dentist</span><span class="meta">today</span></li>
+        <li class="row"><span class="box"></span><span class="label">send invoice</span><span class="meta">today</span></li>
+        <li class="row done"><span class="box"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"/></svg></span><span class="label">pick up rice</span><span class="meta">done</span></li>
+      </ul>
+    </div>
+
+    <div class="panel">
+      <div class="panel-cap">Empty state · Completed</div>
+      <div class="empty">
+        <span class="ring"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"/></svg></span>
+        <div class="line">Nothing completed yet.</div>
+      </div>
+    </div>
+
+    <div class="focusdemo">
+      <div class="panel-cap">Focus ring · heavy hugging outline</div>
+      <div class="fd-row">
+        <span class="fd-input is-focus">what needs doing?</span>
+        <span class="box is-focus"></span>
+        <button class="tab is-focus" type="button" style="background:var(--tab-sel-bg);color:var(--tab-sel-text);font-weight:600">Active</button>
+        <button class="fd-btn is-focus" type="button">Retry</button>
+      </div>
+      <p class="fd-cap"><code>outline: 3px solid #2680EB; outline-offset: 0</code> — the ring becomes part of the shape's edge. Heaviest of the four; hardest to miss, slightly blunter.</p>
+    </div>
+
+    <div class="tokens">
+      <h3>Neutral / text ramp</h3>
+      <div class="tokgrid">
+        <div class="tok"><i style="background:#2B2724"></i><span><span class="role">text / primary</span><span class="hex">#2B2724</span></span></div>
+        <div class="tok"><i style="background:#6E655D"></i><span><span class="role">text / muted</span><span class="hex">#6E655D</span></span></div>
+        <div class="tok"><i style="background:#645B53"></i><span><span class="role">text / completed</span><span class="hex">#645B53</span></span></div>
+        <div class="tok"><i style="background:#7A7067"></i><span><span class="role">text / placeholder</span><span class="hex">#7A7067</span></span></div>
+        <div class="tok tokfull"><i style="background:#EAE4DD"></i><span><span class="role">hairline / border</span><span class="hex">#EAE4DD</span></span></div>
+      </div>
+      <div class="subhead">Danger · warm amber / burnt coral</div>
+      <div class="tokgrid">
+        <div class="tok"><i style="background:#FDEDE0"></i><span><span class="role">danger / surface</span><span class="hex">#FDEDE0</span></span></div>
+        <div class="tok"><i style="background:#F5D3B6"></i><span><span class="role">danger / border</span><span class="hex">#F5D3B6</span></span></div>
+        <div class="tok tokfull"><i style="background:#9A4A12"></i><span><span class="role">danger / text + icon + Retry</span><span class="hex">#9A4A12</span></span></div>
+      </div>
+      <div class="subhead">Filter tab · solid blue pill</div>
+      <div class="tokgrid">
+        <div class="tok"><i style="background:#1B65C2"></i><span><span class="role">tab / selected surface</span><span class="hex">#1B65C2</span></span></div>
+        <div class="tok"><i style="background:#FFFFFF"></i><span><span class="role">tab / selected label</span><span class="hex">#FFFFFF</span></span></div>
+      </div>
+    </div>
+
+    <div class="ratios">
+      <h3>Computed contrast (WCAG 2.x)</h3>
+      <dl>
+        <dt><b>Body text on row</b> #2B2724 on #FFFFFF</dt><dd>14.81:1<em>AAA</em></dd>
+        <dt><b>Error text on banner</b> #9A4A12 on #FDEDE0</dt><dd>5.46:1<em>AA</em></dd>
+        <dt>Body text on completed row #2B2724 on #C3E9D7</dt><dd>11.25:1<em>AAA</em></dd>
+        <dt>Struck completed text #645B53 on #C3E9D7</dt><dd>5.04:1<em>AA</em></dd>
+        <dt>Muted text #6E655D on #FFFFFF</dt><dd>5.70:1<em>AA</em></dd>
+        <dt>Placeholder #7A7067 on #FFFFFF</dt><dd>4.84:1<em>AA</em></dd>
+        <dt>Selected tab label #FFFFFF on #1B65C2</dt><dd>5.70:1<em>AA</em></dd>
+      </dl>
+      <p class="note">Note the pill fill is <b>#1B65C2</b>, not the raw <b>#2680EB</b>: white on #2680EB is only 3.91:1 and would fail for a 12.5px label. Raw #2680EB is still used for the plus icon, the checkmark fill and the focus ring, where 3:1 applies.</p>
+    </div>
+  </section>
+
+  <!-- ================================================================
+       VARIATION 3 — GRAPHITE PRINT
+       ================================================================ -->
+  <section class="col v3" aria-labelledby="v3h">
+    <div class="vhead">
+      <div class="vnum">Variation 3</div>
+      <h2 class="vname" id="v3h">Graphite Print</h2>
+      <p class="vreg">Crisp and editorial — black ink on the pastel, nothing hedged.</p>
+    </div>
+
+    <div class="screen">
+      <div class="app-top">
+        <div class="app-title">Simple Action</div>
+        <div class="app-sub">2 left</div>
+      </div>
+
+      <div class="addbar is-focus">
+        <svg class="plus" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+        <span class="ph">what needs doing?</span>
+        <span class="enter">Enter</span>
+      </div>
+
+      <div class="banner" role="alert">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7.5v5"/><path d="M12 16.2h.01"/></svg>
+        <span class="msg">Couldn&rsquo;t save that change.</span>
+        <button class="retry" type="button">Retry</button>
+      </div>
+
+      <div class="tabs" role="tablist">
+        <button class="tab" role="tab" aria-selected="false" type="button">All</button>
+        <button class="tab" role="tab" aria-selected="true" type="button">Active</button>
+        <button class="tab" role="tab" aria-selected="false" type="button">Completed</button>
+        <span class="tabcount">3 total</span>
+      </div>
+
+      <ul class="rows">
+        <li class="row"><span class="box"></span><span class="label">book dentist</span><span class="meta">today</span></li>
+        <li class="row"><span class="box"></span><span class="label">send invoice</span><span class="meta">today</span></li>
+        <li class="row done"><span class="box"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"/></svg></span><span class="label">pick up rice</span><span class="meta">done</span></li>
+      </ul>
+    </div>
+
+    <div class="panel">
+      <div class="panel-cap">Empty state · Completed</div>
+      <div class="empty">
+        <span class="ring"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"/></svg></span>
+        <div class="line">Nothing completed yet.</div>
+      </div>
+    </div>
+
+    <div class="focusdemo">
+      <div class="panel-cap">Focus ring · offset halo</div>
+      <div class="fd-row" style="gap:20px">
+        <span class="fd-input is-focus">what needs doing?</span>
+        <span class="box is-focus"></span>
+        <button class="tab is-focus" type="button" style="color:var(--tab-sel-text);font-weight:600;border-radius:4px">Active</button>
+        <button class="fd-btn is-focus" type="button">Retry</button>
+      </div>
+      <p class="fd-cap"><code>outline: 2px solid #2680EB; outline-offset: 3px</code> — the 3px gap keeps the ring legible against the mint row and lets the row's own corner radius stay readable.</p>
+    </div>
+
+    <div class="tokens">
+      <h3>Neutral / text ramp</h3>
+      <div class="tokgrid">
+        <div class="tok"><i style="background:#111111"></i><span><span class="role">text / primary</span><span class="hex">#111111</span></span></div>
+        <div class="tok"><i style="background:#565656"></i><span><span class="role">text / muted</span><span class="hex">#565656</span></span></div>
+        <div class="tok"><i style="background:#606060"></i><span><span class="role">text / completed</span><span class="hex">#606060</span></span></div>
+        <div class="tok"><i style="background:#6B6B6B"></i><span><span class="role">text / placeholder</span><span class="hex">#6B6B6B</span></span></div>
+        <div class="tok tokfull"><i style="background:#E4E4E4"></i><span><span class="role">hairline / border</span><span class="hex">#E4E4E4</span></span></div>
+      </div>
+      <div class="subhead">Danger · conventional saturated red</div>
+      <div class="tokgrid">
+        <div class="tok"><i style="background:#FDECEA"></i><span><span class="role">danger / surface</span><span class="hex">#FDECEA</span></span></div>
+        <div class="tok"><i style="background:#F6C9C4"></i><span><span class="role">danger / border</span><span class="hex">#F6C9C4</span></span></div>
+        <div class="tok tokfull"><i style="background:#B3261E"></i><span><span class="role">danger / text + icon + Retry</span><span class="hex">#B3261E</span></span></div>
+      </div>
+      <div class="subhead">Filter tab · underline, no fill</div>
+      <div class="tokgrid">
+        <div class="tok"><i style="background:#111111"></i><span><span class="role">tab / selected label</span><span class="hex">#111111</span></span></div>
+        <div class="tok"><i style="background:#2680EB"></i><span><span class="role">tab / underline 2.5px</span><span class="hex">#2680EB</span></span></div>
+      </div>
+    </div>
+
+    <div class="ratios">
+      <h3>Computed contrast (WCAG 2.x)</h3>
+      <dl>
+        <dt><b>Body text on row</b> #111111 on #FFFFFF</dt><dd>18.88:1<em>AAA</em></dd>
+        <dt><b>Error text on banner</b> #B3261E on #FDECEA</dt><dd>5.72:1<em>AA</em></dd>
+        <dt>Body text on completed row #111111 on #C3E9D7</dt><dd>14.35:1<em>AAA</em></dd>
+        <dt>Struck completed text #606060 on #C3E9D7</dt><dd>4.78:1<em>AA</em></dd>
+        <dt>Muted text #565656 on #FFFFFF</dt><dd>7.34:1<em>AAA</em></dd>
+        <dt>Placeholder #6B6B6B on #FFFFFF</dt><dd>5.33:1<em>AA</em></dd>
+        <dt>Selected tab label #111111 on #FFFFFF</dt><dd>18.88:1<em>AAA</em></dd>
+      </dl>
+      <p class="note">The underline is non-text at 3.91:1 against white, which clears the 3:1 non-text threshold — but selection is also carried by weight (600) and near-black label colour, so it is never colour alone.</p>
+    </div>
+  </section>
+
+  <!-- ================================================================
+       VARIATION 4 — LAVENDER MIST
+       ================================================================ -->
+  <section class="col v4" aria-labelledby="v4h">
+    <div class="vhead">
+      <div class="vnum">Variation 4</div>
+      <h2 class="vname" id="v4h">Lavender Mist</h2>
+      <p class="vreg">Soft and tonal — everything is keyed to the ground, nothing raises its voice.</p>
+    </div>
+
+    <div class="screen">
+      <div class="app-top">
+        <div class="app-title">Simple Action</div>
+        <div class="app-sub">2 left</div>
+      </div>
+
+      <div class="addbar is-focus">
+        <svg class="plus" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+        <span class="ph">what needs doing?</span>
+        <span class="enter">Enter</span>
+      </div>
+
+      <div class="banner" role="alert">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7.5v5"/><path d="M12 16.2h.01"/></svg>
+        <span class="msg">Couldn&rsquo;t save that change.</span>
+        <button class="retry" type="button">Retry</button>
+      </div>
+
+      <div class="tabs" role="tablist">
+        <button class="tab" role="tab" aria-selected="false" type="button">All</button>
+        <button class="tab" role="tab" aria-selected="true" type="button">Active</button>
+        <button class="tab" role="tab" aria-selected="false" type="button">Completed</button>
+      </div>
+
+      <ul class="rows">
+        <li class="row"><span class="box"></span><span class="label">book dentist</span><span class="meta">today</span></li>
+        <li class="row"><span class="box"></span><span class="label">send invoice</span><span class="meta">today</span></li>
+        <li class="row done"><span class="box"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"/></svg></span><span class="label">pick up rice</span><span class="meta">done</span></li>
+      </ul>
+    </div>
+
+    <div class="panel">
+      <div class="panel-cap">Empty state · Completed</div>
+      <div class="empty">
+        <span class="ring"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"/></svg></span>
+        <div class="line">Nothing completed yet.</div>
+      </div>
+    </div>
+
+    <div class="focusdemo">
+      <div class="panel-cap">Focus ring · soft glow</div>
+      <div class="fd-row">
+        <span class="fd-input is-focus">what needs doing?</span>
+        <span class="box is-focus"></span>
+        <button class="tab is-focus" type="button" style="background:var(--tab-sel-bg);color:var(--tab-sel-text);font-weight:600;box-shadow:0 0 0 1px var(--accent),0 0 0 5px rgba(38,128,235,.30)">Active</button>
+        <button class="fd-btn is-focus" type="button">Retry</button>
+      </div>
+      <p class="fd-cap"><code>box-shadow: 0 0 0 1px #2680EB, 0 0 0 5px rgba(38,128,235,.30)</code> — the 1px solid edge carries the required 3:1; the bloom is decoration, so the ring still passes if the glow is imperceptible.</p>
+    </div>
+
+    <div class="tokens">
+      <h3>Neutral / text ramp</h3>
+      <div class="tokgrid">
+        <div class="tok"><i style="background:#24243A"></i><span><span class="role">text / primary</span><span class="hex">#24243A</span></span></div>
+        <div class="tok"><i style="background:#5A5A75"></i><span><span class="role">text / muted</span><span class="hex">#5A5A75</span></span></div>
+        <div class="tok"><i style="background:#5F5F7A"></i><span><span class="role">text / completed</span><span class="hex">#5F5F7A</span></span></div>
+        <div class="tok"><i style="background:#71718B"></i><span><span class="role">text / placeholder</span><span class="hex">#71718B</span></span></div>
+        <div class="tok tokfull"><i style="background:#E3E2F0"></i><span><span class="role">hairline / border</span><span class="hex">#E3E2F0</span></span></div>
+      </div>
+      <div class="subhead">Danger · muted clay / terracotta</div>
+      <div class="tokgrid">
+        <div class="tok"><i style="background:#F6E7E1"></i><span><span class="role">danger / surface</span><span class="hex">#F6E7E1</span></span></div>
+        <div class="tok"><i style="background:#E6CCC0"></i><span><span class="role">danger / border</span><span class="hex">#E6CCC0</span></span></div>
+        <div class="tok tokfull"><i style="background:#8E3B22"></i><span><span class="role">danger / text + icon + Retry</span><span class="hex">#8E3B22</span></span></div>
+      </div>
+      <div class="subhead">Filter tab · inset segmented control</div>
+      <div class="tokgrid">
+        <div class="tok"><i style="background:#EDEEF7"></i><span><span class="role">tab / recessed track</span><span class="hex">#EDEEF7</span></span></div>
+        <div class="tok"><i style="background:#FFFFFF"></i><span><span class="role">tab / raised chip</span><span class="hex">#FFFFFF</span></span></div>
+        <div class="tok tokfull"><i style="background:#1B65C2"></i><span><span class="role">tab / selected label</span><span class="hex">#1B65C2</span></span></div>
+      </div>
+    </div>
+
+    <div class="ratios">
+      <h3>Computed contrast (WCAG 2.x)</h3>
+      <dl>
+        <dt><b>Body text on row</b> #24243A on #FFFFFF</dt><dd>15.12:1<em>AAA</em></dd>
+        <dt><b>Error text on banner</b> #8E3B22 on #F6E7E1</dt><dd>6.23:1<em>AA</em></dd>
+        <dt>Body text on completed row #24243A on #C3E9D7</dt><dd>11.49:1<em>AAA</em></dd>
+        <dt>Struck completed text #5F5F7A on #C3E9D7</dt><dd>4.69:1<em>AA</em></dd>
+        <dt>Muted text #5A5A75 on #FFFFFF</dt><dd>6.66:1<em>AAA</em></dd>
+        <dt>Placeholder #71718B on #FFFFFF</dt><dd>4.73:1<em>AA</em></dd>
+        <dt>Selected tab label #1B65C2 on #FFFFFF</dt><dd>5.70:1<em>AA</em></dd>
+      </dl>
+      <p class="note">This is the tightest of the four — the ramp is deliberately close to the ground, so the raised white chip and its shadow do most of the selection work, not colour distance.</p>
+    </div>
+  </section>
+
+</div>
+</div>
+
+</body>
+</html>

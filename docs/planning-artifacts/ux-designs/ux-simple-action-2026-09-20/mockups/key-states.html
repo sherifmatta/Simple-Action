@@ -1,0 +1,697 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Simple Action — key states: everything that is not at rest</title>
+<style>
+/* ==========================================================================
+   SIMPLE ACTION — KEY SCREEN 2 of 3 · NON-RESTING STATES
+   Static mock. No JavaScript, no network requests, no font link — renders
+   fully offline. Every state is a separately labelled panel; nothing on this
+   page responds to interaction. The skeleton pulse is the one motion present
+   and it is cut by prefers-reduced-motion.
+
+   --------------------------------------------------------------------------
+   SPINE SECTIONS GOVERNING THIS SCREEN
+   --------------------------------------------------------------------------
+   EXPERIENCE.md  § State Patterns ......... Loading (skeleton rows)
+                                             Empty · All
+                                             Empty · Active
+                                             Empty · Completed
+                                             Error · load failure
+                                             Error · save failure
+                                             Error · add failure + recovery
+                                             Input · approaching the ceiling
+                                             Focus · keyboard path
+   EXPERIENCE.md  § Key Flows .............. UJ-4 Dana's first ever session,
+                                             landing on the empty first-run
+                                             screen (panel B)
+   EXPERIENCE.md  § Accessibility .......... WCAG 2.2 AA floor: focus ring on
+                                             every interactive target, live
+                                             region on the banner, 44px targets,
+                                             1.4.11 non-text contrast
+   DESIGN.md      § Component Patterns ..... Skeleton row, Error banner region,
+                                             Empty state, Character counter,
+                                             Filter tabs (with counts),
+                                             Focus ring
+   DESIGN.md      § Colour & Tokens ........ Lavender Mist ramp + clay danger
+                                             + border-control + danger-fill
+
+   --------------------------------------------------------------------------
+   TOKENS — Lavender Mist (variation 4), plus the tokens added at Finalize.
+   Clay danger: bg #F6E7E1 · border #E6CCC0 · text #8E3B22 (6.23:1 on its own
+   surface). Focus ring is the soft glow:
+   box-shadow: 0 0 0 1px #2680EB, 0 0 0 5px rgba(38,128,235,.30)
+   ON A COMPLETED (mint) ROW the ring steps down to accent-deep:
+   box-shadow: 0 0 0 1px #1B65C2, 0 0 0 5px rgba(27,101,194,.30)
+
+   NEW  border-control #8C8BAC — 3.28:1 on white. ALL component boundaries:
+        the unchecked checkbox border and the add-input border. It replaces
+        hairline #E3E2F0, which was 1.28:1 on white and failed WCAG 1.4.11.
+        hairline survives ONLY for purely decorative boundaries — the dashed
+        empty-state container — and for review chrome on this page.
+   NEW  danger-fill #8E3B22 / on-danger-fill #FFFFFF (~5.8:1) — the swipe
+        delete panel and the destructive dialog button, both in
+        key-delete.html. On this screen the clay is a FOREGROUND only: banner
+        text, banner icon, the Retry outline.
+   NOTE The checked checkbox on a COMPLETED row takes accent-deep #1B65C2 on
+        mint #C3E9D7 = 4.33:1. The old accent #2680EB on mint was 2.97:1 and
+        failed the 3:1 non-text floor. Active rows keep #2680EB on white.
+   NOTE The FOCUS RING on a COMPLETED row takes the same step-down for the
+        same reason: #2680EB on mint is the same 2.97:1 failure, and a focus
+        indicator is a non-text graphic identifying a control, so 1.4.11
+        applies. On mint the ring is accent-deep #1B65C2 = 4.33:1. Geometry,
+        blur and opacity are unchanged — only the hue value steps down. The
+        4px bloom does not rescue the ring: at 30% opacity it is fainter than
+        the 1px edge that already fails. Active rows keep #2680EB on white.
+   NOTE The character counter is never given the danger ramp. It is not an
+        error and reports none; it holds text-muted #5A5A75 throughout.
+
+   --------------------------------------------------------------------------
+   COPY — every visible product string traces to the memlog voice decision:
+   "Nothing here yet." / "Type above to add your first Todo."
+   "Nothing active."
+   "Nothing completed yet."
+   "Couldn't load your Todos." + Retry      (load failure — its own string)
+   "Couldn't add that Todo." + Retry        (add failure — its own string)
+   "Couldn't save that change." + Retry     (toggle and delete failure)
+   "what needs doing?"   All / Active / Completed
+   Filter tab counts are bare numerals with no unit and no label, each one
+   inside its tab's accessible name (aria-label="Active, 2 Todos").
+   The character counter is a bare numeral too — 38, not "38 left".
+   NO WORDMARK anywhere. The card opens straight into the input.
+   Voice is plain and unadorned: short declaratives, no personality, no
+   encouragement, no exclamation marks. Synonyms for Completed are banned.
+   Text outside the panels is review chrome, not product copy.
+
+   --------------------------------------------------------------------------
+   THE RULES THESE PANELS ENCODE
+   --------------------------------------------------------------------------
+   · The card, the input and the filter tabs are ALREADY REAL AND INTERACTIVE
+     during load. Only the rows are skeletons, and they are the exact shape of
+     real rows (50px min-height, 22px checkbox, same 9px gutter) so content
+     landing causes zero layout shift. No blank screen, no flash of empty state.
+   · The error banner is ONE fixed region at the top of the card, directly
+     under the input. It owns every error — load, add, toggle, delete — and
+     always carries Retry. Accepted cost: it sits visually distant from the
+     row that failed.
+   · FOUR error kinds, THREE strings, one per thing that actually happened.
+     "Couldn't load your Todos." (load), "Couldn't add that Todo." (add), and
+     "Couldn't save that change." for a failed toggle or delete, which share
+     a string because they share a shape. None is ever substituted for another.
+   · ADD failure removes the optimistically added Todo from the list and
+     returns the typed text to the input, so nothing the user typed is lost.
+   · Filter tab counts are derived locally from the loaded list. They fire no
+     network request and show 0 rather than hiding — which is why the load,
+     first-run and load-failure panels all read 0.
+   · Completed rows never reorder. Ordering is newest-first by creation
+     timestamp in every Filter View.
+   · The remaining-character count is ABSENT below ~450 characters and fades
+     in past it. The ceiling is 500. The hard stop is never mysterious.
+
+   --------------------------------------------------------------------------
+   OPEN QUESTIONS — NOTED, NOT INVENTED
+   --------------------------------------------------------------------------
+   1. Empty-state glyph: a thin rounded mark on a mint disc, carried over from
+      the import's surface language. Whether the empty state carries any glyph
+      at all is not decided. OPEN.
+   2. Whether the filter tabs are disabled or merely inert during the skeleton
+      load is not stated. Rendered as live, matching "already interactive".
+      Related: the counts read 0 during load and after a failed load, because
+      the rule is show-0-rather-than-hide and nothing has loaded. Whether they
+      should instead be absent until the first successful load is not stated.
+      OPEN.
+   3. Whether the input grows to fit long text (as drawn in panel F2) or caps
+      its height and scrolls internally is not stated. OPEN.
+   4. Number of skeleton rows shown during load: three here. Not fixed
+      anywhere. OPEN.
+   5. Whether focus returns to the input when the typed text is restored after
+      an add failure is not stated. Drawn with a caret, no ring. OPEN.
+   ========================================================================== */
+
+/* ---------- LOCKED GLOBALS ---------- */
+:root{
+  --ground:#E7EAF6;
+  --card:#FFFFFF;
+  --row-active:#FFFFFF;
+  --row-complete:#C3E9D7;
+  --accent:#2680EB;
+  --accent-deep:#1B65C2;
+  --r-card:18px;
+  --r-row:14px;
+  --shadow-card:0 18px 46px -18px rgba(37,44,74,.18), 0 2px 10px -4px rgba(37,44,74,.06);
+  --shadow-row:0 8px 22px -12px rgba(37,44,74,.20), 0 1px 3px rgba(37,44,74,.04);
+  --font:"Poppins","Century Gothic","Futura","Avenir Next",-apple-system,"Segoe UI",system-ui,sans-serif;
+
+  /* Lavender Mist (variation 4) */
+  --text-primary:#24243A;
+  --text-muted:#5A5A75;
+  --text-completed:#5F5F7A;
+  --text-placeholder:#71718B;
+  --hairline:#E3E2F0;          /* decorative boundaries and review chrome ONLY */
+  --danger-bg:#F6E7E1;
+  --danger-border:#E6CCC0;
+  --danger-text:#8E3B22;
+  --tab-track:#EDEEF7;
+  --tab-sel-bg:#FFFFFF;
+  --tab-sel-text:#1B65C2;
+  --focus:0 0 0 1px var(--accent), 0 0 0 5px rgba(38,128,235,.30);
+  /* 1.4.11 fix 3 — the ring on a mint Completed row: #2680EB on mint is
+     2.97:1, accent-deep #1B65C2 on mint is 4.33:1. Same geometry, deeper hue. */
+  --focus-complete:0 0 0 1px var(--accent-deep), 0 0 0 5px rgba(27,101,194,.30);
+
+  /* added at Finalize */
+  --border-control:#8C8BAC;    /* 3.28:1 on white — all component boundaries */
+  --danger-fill:#8E3B22;       /* fills, with on-danger-fill on top (~5.8:1) */
+  --on-danger-fill:#FFFFFF;
+}
+
+*,*::before,*::after{ box-sizing:border-box; }
+html{ -webkit-text-size-adjust:100%; }
+body{
+  margin:0;
+  font-family:var(--font);
+  background:var(--ground);
+  color:var(--text-primary);
+  font-weight:400;
+  line-height:1.5;
+  overflow-x:hidden;              /* page body never scrolls sideways */
+}
+
+/* ---------- REVIEW CHROME (not product) ---------- */
+.sheet-head{ max-width:1240px; margin:0 auto; padding:40px 28px 4px; }
+.sheet-head h1{ font-size:25px; font-weight:600; letter-spacing:-.02em; margin:0 0 6px; }
+.sheet-head p{ margin:0 0 6px; font-size:13.5px; color:var(--text-muted); max-width:78ch; }
+
+.grid{
+  max-width:1240px; margin:0 auto;
+  padding:18px 28px 56px;
+  display:grid;
+  grid-template-columns:repeat(auto-fit, minmax(min(330px, 100%), 1fr));
+  gap:26px;
+  align-items:start;
+}
+.panel{ min-width:0; }
+.panel.wide{ grid-column:1 / -1; }
+.panel-cap{
+  font-size:10.5px; font-weight:600; letter-spacing:.13em; text-transform:uppercase;
+  color:var(--text-muted); margin:0 0 3px 2px;
+}
+.panel-title{ font-size:15.5px; font-weight:600; letter-spacing:-.01em; margin:0 0 5px 2px; }
+.panel-note{ font-size:11.5px; color:var(--text-muted); margin:11px 2px 0; line-height:1.55; }
+.panel-note b{ color:var(--text-primary); font-weight:600; }
+code{ font-size:11px; background:#FFFFFF; border:1px solid var(--hairline); border-radius:6px; padding:1px 5px; }
+.marker{
+  display:inline-flex; align-items:center; gap:6px;
+  font-size:10.5px; font-weight:600; letter-spacing:.06em; text-transform:uppercase;
+  color:var(--accent-deep); background:#FFFFFF; border:1px solid var(--hairline);
+  border-radius:999px; padding:3px 9px;
+}
+
+/* ==========================================================================
+   THE PRODUCT SURFACE
+   ========================================================================== */
+.card{
+  background:var(--card);
+  border-radius:var(--r-card);
+  box-shadow:var(--shadow-card);
+  padding:18px 16px 22px;
+}
+
+/* --- add input, pinned top. No wordmark above it. --- */
+.addbar{
+  display:flex; align-items:center; gap:10px;
+  background:var(--card);
+  border:1.5px solid var(--border-control);   /* 1.4.11 fix — was hairline */
+  border-radius:var(--r-row);
+  padding:12px 13px;
+  box-shadow:var(--shadow-row);
+  min-height:50px;
+}
+.addbar.tall{ align-items:flex-start; }
+.addbar .plus{ flex:0 0 auto; color:var(--accent); display:block; }
+.addbar .ph{ font-size:14.5px; color:var(--text-placeholder); }
+.addbar .typed{ font-size:14.5px; color:var(--text-primary); min-width:0; overflow-wrap:anywhere; }
+.addbar .caret{
+  display:inline-block; width:1.5px; height:16px; background:var(--accent);
+  vertical-align:-3px; margin-left:1px;
+}
+.addbar.is-focus{ border-color:var(--accent); box-shadow:var(--focus); }
+
+/* remaining-character count: absent below ~450, present past it.
+   A bare numeral — no unit, no label. Never takes the danger ramp: it is
+   not an error and reports none. */
+.counter{
+  flex:0 0 auto; align-self:flex-end;
+  font-size:11.5px; font-weight:600; color:var(--text-muted);
+  font-variant-numeric:tabular-nums; padding-left:8px;
+}
+
+/* --- error banner: one fixed region directly under the input --- */
+.banner{
+  display:flex; align-items:center; gap:10px;
+  margin-top:10px;
+  background:var(--danger-bg);
+  border:1px solid var(--danger-border);
+  border-radius:var(--r-row);
+  padding:11px 12px;
+  min-height:48px;
+}
+.banner svg{ flex:0 0 auto; color:var(--danger-text); }
+.banner .msg{ font-size:13.5px; color:var(--danger-text); font-weight:500; }
+.banner .retry{
+  margin-left:auto;
+  font-family:inherit; font-size:12.5px; font-weight:600; color:var(--danger-text);
+  background:transparent; border:1.5px solid var(--danger-text);
+  border-radius:999px; padding:6px 14px; line-height:1.3; min-height:32px;
+}
+
+/* --- filter tabs: v4 inset segmented control, carrying counts --- */
+.tabs{
+  display:flex; align-items:center; gap:2px;
+  margin:18px 0 12px;
+  background:var(--tab-track); border-radius:999px; padding:4px;
+  box-shadow:inset 0 1px 3px rgba(36,36,58,.10);
+}
+.tab{
+  flex:1 1 auto; text-align:center; white-space:nowrap;
+  font-family:inherit; font-size:12.5px; font-weight:500; line-height:1;
+  border:0; background:transparent; color:var(--text-muted);
+  padding:10px 6px; border-radius:999px; min-height:36px;
+}
+.tab[aria-selected="true"]{
+  background:var(--tab-sel-bg); color:var(--tab-sel-text); font-weight:600;
+  box-shadow:0 2px 6px -2px rgba(36,36,58,.22), 0 1px 1px rgba(36,36,58,.05);
+}
+/* the count is secondary information, not a badge: no pill, no fill, no
+   border — one type step down, one weight step down, held at text-muted */
+.tab .n{
+  margin-left:5px;
+  font-size:11px; font-weight:500; color:var(--text-muted);
+  font-variant-numeric:tabular-nums;
+}
+.tab[aria-selected="true"] .n{ font-weight:500; color:var(--text-muted); }
+.tab.is-focus{ box-shadow:var(--focus); }
+.tab[aria-selected="true"].is-focus{
+  box-shadow:0 2px 6px -2px rgba(36,36,58,.22), var(--focus);
+}
+
+/* --- rows --- */
+.rows{ list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:9px; }
+.row{
+  display:flex; align-items:center; gap:12px;
+  background:var(--row-active);
+  border-radius:var(--r-row);
+  padding:14px;
+  min-height:50px;
+  box-shadow:var(--shadow-row);
+}
+.row .label{ font-size:14.5px; color:var(--text-primary); }
+.box{
+  flex:0 0 auto; width:22px; height:22px; border-radius:7px;
+  border:1.75px solid var(--border-control);  /* 1.4.11 fix — was hairline */
+  background:#fff;
+  display:flex; align-items:center; justify-content:center;
+}
+.box.is-focus{ box-shadow:var(--focus); }
+/* checked box on a COMPLETED row: accent-deep #1B65C2 on mint = 4.33:1 */
+.row.complete{ background:var(--row-complete); box-shadow:0 8px 22px -14px rgba(37,74,58,.34); }
+.row.complete .box{ background:var(--accent-deep); border-color:var(--accent-deep); }
+.row.complete .box svg{ color:#fff; display:block; }
+/* focus ring on a COMPLETED row: accent-deep #1B65C2 on mint = 4.33:1.
+   Applies to every focusable control inside a mint row — checkbox and the
+   row's delete control alike. */
+.row.complete .is-focus{ box-shadow:var(--focus-complete); }
+.row.complete .label{
+  color:var(--text-completed);
+  text-decoration:line-through; text-decoration-thickness:1.5px;
+  text-decoration-color:var(--text-completed);
+}
+
+/* --- skeleton rows: the exact shape of real rows --- */
+.row.skeleton{ box-shadow:var(--shadow-row); }
+.row.skeleton .sk-box{
+  flex:0 0 auto; width:22px; height:22px; border-radius:7px; background:#EDEEF7;
+}
+.row.skeleton .sk-line{
+  height:12px; border-radius:999px; background:#EDEEF7;
+}
+.row.skeleton .sk-line.w70{ width:70%; }
+.row.skeleton .sk-line.w52{ width:52%; }
+.row.skeleton .sk-line.w61{ width:61%; }
+.row.skeleton .sk-box,
+.row.skeleton .sk-line{ animation:pulse 1.6s ease-in-out infinite; }
+.row.skeleton:nth-child(2) .sk-box,
+.row.skeleton:nth-child(2) .sk-line{ animation-delay:.12s; }
+.row.skeleton:nth-child(3) .sk-box,
+.row.skeleton:nth-child(3) .sk-line{ animation-delay:.24s; }
+@keyframes pulse{ 0%,100%{ opacity:1 } 50%{ opacity:.52 } }
+@media (prefers-reduced-motion: reduce){
+  .row.skeleton .sk-box,
+  .row.skeleton .sk-line{ animation:none; opacity:.78; }
+}
+
+/* --- empty state. The dashed edge is decorative, not a control boundary,
+       so it keeps hairline: 1.4.11 does not apply to it. --- */
+.empty{
+  border:1.5px dashed var(--hairline);
+  border-radius:var(--r-row);
+  padding:30px 18px;
+  text-align:center;
+}
+.empty .ring{
+  width:40px; height:40px; margin:0 auto 12px;
+  border-radius:999px; background:var(--row-complete);
+  display:flex; align-items:center; justify-content:center; color:var(--text-completed);
+}
+.empty .line{ font-size:14px; color:var(--text-primary); }
+.empty .sub{ font-size:13px; color:var(--text-muted); margin-top:3px; }
+
+/* the ceiling check must happen at PHONE width — Poppins' wide round forms
+   against long Todo text on a narrow column is the case the memlog flagged */
+.card.ceiling{ max-width:362px; }
+
+/* --- focus demo strip --- */
+.focusgrid{ display:grid; gap:20px; }
+.focusitem{ padding:6px 2px 0; }
+.focusitem .lab{
+  font-size:10.5px; font-weight:600; letter-spacing:.11em; text-transform:uppercase;
+  color:var(--text-muted); margin-bottom:12px;
+}
+.focusitem .swatchrow{ display:flex; align-items:center; gap:14px; flex-wrap:wrap; }
+.focusitem .codeline{ font-size:11px; color:var(--text-muted); margin-top:14px; }
+
+@media (max-width:760px){
+  .sheet-head,.grid{ padding-left:18px; padding-right:18px; }
+}
+</style>
+</head>
+<body>
+
+<header class="sheet-head">
+  <h1>Simple Action — key states</h1>
+  <p>Every non-resting state of the single screen, each as its own labelled panel. Static mock: nothing here responds to interaction. Tokens are Lavender Mist (variation 4) plus the Finalize additions — <code>border-control #8C8BAC</code> on every component boundary, <code>accent-deep</code> on the checked box of a completed row, and the clay danger ramp on the one banner region.</p>
+  <p>Load failure and save failure are <b>separate states with separate words</b> (E1, E2), and add failure is a third with its own recovery (E3).</p>
+</header>
+
+<div class="grid">
+
+  <!-- ============================================================
+       (a) INITIAL LOAD — SKELETON ROWS
+       ============================================================ -->
+  <section class="panel">
+    <p class="panel-cap">State A</p>
+    <h2 class="panel-title">Initial load · skeleton rows</h2>
+    <div class="card">
+      <div class="addbar">
+        <svg class="plus" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+        <span class="ph">what needs doing?</span>
+      </div>
+
+      <div class="tabs" role="tablist" aria-label="Filter">
+        <span class="tab" role="tab" aria-selected="false" aria-label="All, 0 Todos">All<span class="n">0</span></span>
+        <span class="tab" role="tab" aria-selected="true" aria-label="Active, 0 Todos">Active<span class="n">0</span></span>
+        <span class="tab" role="tab" aria-selected="false" aria-label="Completed, 0 Todos">Completed<span class="n">0</span></span>
+      </div>
+
+      <ul class="rows" aria-busy="true">
+        <li class="row skeleton"><span class="sk-box"></span><span class="sk-line w70"></span></li>
+        <li class="row skeleton"><span class="sk-box"></span><span class="sk-line w52"></span></li>
+        <li class="row skeleton"><span class="sk-box"></span><span class="sk-line w61"></span></li>
+      </ul>
+    </div>
+    <p class="panel-note"><b>Card, input and filter tabs are already real and interactive.</b> Only the rows are placeholders, and they are the exact shape of real rows — same 50px minimum height, same 22px checkbox, same 9px gutter — so content landing shifts nothing. Gentle pulse; cut entirely under <code>prefers-reduced-motion</code>. No blank screen, no flash of empty state.</p>
+    <p class="panel-note">The counts read <b>0</b> because they are derived locally from the loaded list and nothing has loaded yet. They fire no network request of their own, and they show 0 rather than hiding.</p>
+  </section>
+
+  <!-- ============================================================
+       (b) EMPTY — ALL
+       ============================================================ -->
+  <section class="panel">
+    <p class="panel-cap">State B</p>
+    <h2 class="panel-title">Empty · All (first run)</h2>
+    <div class="card">
+      <div class="addbar">
+        <svg class="plus" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+        <span class="ph">what needs doing?</span>
+      </div>
+
+      <div class="tabs" role="tablist" aria-label="Filter">
+        <span class="tab" role="tab" aria-selected="true" aria-label="All, 0 Todos">All<span class="n">0</span></span>
+        <span class="tab" role="tab" aria-selected="false" aria-label="Active, 0 Todos">Active<span class="n">0</span></span>
+        <span class="tab" role="tab" aria-selected="false" aria-label="Completed, 0 Todos">Completed<span class="n">0</span></span>
+      </div>
+
+      <div class="empty">
+        <span class="ring" aria-hidden="true">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+        </span>
+        <div class="line">Nothing here yet.</div>
+        <div class="sub">Type above to add your first Todo.</div>
+      </div>
+    </div>
+    <p class="panel-note">UJ-4 — Dana's first ever session lands here. No wordmark, no greeting: the card opens straight into the input. All three filter views are present from first run and all three read 0; the empty view points at the input and nothing else. No tour, no tooltip, nothing to dismiss.</p>
+  </section>
+
+  <!-- ============================================================
+       (c) EMPTY — ACTIVE
+       ============================================================ -->
+  <section class="panel">
+    <p class="panel-cap">State C</p>
+    <h2 class="panel-title">Empty · Active</h2>
+    <div class="card">
+      <div class="addbar">
+        <svg class="plus" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+        <span class="ph">what needs doing?</span>
+      </div>
+
+      <div class="tabs" role="tablist" aria-label="Filter">
+        <span class="tab" role="tab" aria-selected="false" aria-label="All, 2 Todos">All<span class="n">2</span></span>
+        <span class="tab" role="tab" aria-selected="true" aria-label="Active, 0 Todos">Active<span class="n">0</span></span>
+        <span class="tab" role="tab" aria-selected="false" aria-label="Completed, 2 Todos">Completed<span class="n">2</span></span>
+      </div>
+
+      <div class="empty">
+        <span class="ring" aria-hidden="true">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"/></svg>
+        </span>
+        <div class="line">Nothing active.</div>
+      </div>
+    </div>
+    <p class="panel-note">End of UJ-1: Dana has cleared the morning list and the Active view is empty. One line, no second line, no encouragement. The count reads <b>0</b> rather than disappearing — and the other two tabs still show what is there.</p>
+  </section>
+
+  <!-- ============================================================
+       (d) EMPTY — COMPLETED
+       ============================================================ -->
+  <section class="panel">
+    <p class="panel-cap">State D</p>
+    <h2 class="panel-title">Empty · Completed</h2>
+    <div class="card">
+      <div class="addbar">
+        <svg class="plus" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+        <span class="ph">what needs doing?</span>
+      </div>
+
+      <div class="tabs" role="tablist" aria-label="Filter">
+        <span class="tab" role="tab" aria-selected="false" aria-label="All, 2 Todos">All<span class="n">2</span></span>
+        <span class="tab" role="tab" aria-selected="false" aria-label="Active, 2 Todos">Active<span class="n">2</span></span>
+        <span class="tab" role="tab" aria-selected="true" aria-label="Completed, 0 Todos">Completed<span class="n">0</span></span>
+      </div>
+
+      <div class="empty">
+        <span class="ring" aria-hidden="true">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"/></svg>
+        </span>
+        <div class="line">Nothing completed yet.</div>
+      </div>
+    </div>
+    <p class="panel-note">The view name is <b>Completed</b>, matching the Completion Status value exactly. No synonym for it is permitted anywhere in the interface — not in the tab, not in the empty line, not in the count's accessible name.</p>
+  </section>
+
+  <!-- ============================================================
+       (e1) ERROR BANNER — LOAD FAILURE  (its own string)
+       ============================================================ -->
+  <section class="panel">
+    <p class="panel-cap">State E1 · error 1 of 3</p>
+    <h2 class="panel-title">Load failure · &ldquo;Couldn&rsquo;t load your Todos.&rdquo;</h2>
+    <div class="card">
+      <div class="addbar">
+        <svg class="plus" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+        <span class="ph">what needs doing?</span>
+      </div>
+
+      <div class="banner" role="alert" aria-live="polite">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7.5v5"/><path d="M12 16.2h.01"/></svg>
+        <span class="msg">Couldn&rsquo;t load your Todos.</span>
+        <button class="retry" type="button">Retry</button>
+      </div>
+
+      <div class="tabs" role="tablist" aria-label="Filter">
+        <span class="tab" role="tab" aria-selected="false" aria-label="All, 0 Todos">All<span class="n">0</span></span>
+        <span class="tab" role="tab" aria-selected="true" aria-label="Active, 0 Todos">Active<span class="n">0</span></span>
+        <span class="tab" role="tab" aria-selected="false" aria-label="Completed, 0 Todos">Completed<span class="n">0</span></span>
+      </div>
+
+      <ul class="rows">
+        <!-- no rows, and no empty state either: with the request failed the
+             list's contents are unknown rather than known-empty. The card,
+             input and tabs stay real, so the screen is never blank. -->
+      </ul>
+    </div>
+    <p class="panel-note"><b>The list could not be read at all</b>, so the words say so. <code>Couldn&rsquo;t load your Todos.</code> is its own string and is never swapped for the save-failure wording in E2. Retry re-requests the list and returns to the State&nbsp;A skeleton while it runs.</p>
+    <p class="panel-note">The list region shows neither rows nor the empty state — <code>Nothing here yet.</code> would be a lie when the contents are unknown. Counts read 0 for the same reason nothing is listed. Banner text #8E3B22 on clay #F6E7E1 is 6.23:1, announced through a live region.</p>
+  </section>
+
+  <!-- ============================================================
+       (e2) ERROR BANNER — SAVE FAILURE  (toggle / delete)
+       ============================================================ -->
+  <section class="panel">
+    <p class="panel-cap">State E2 · error 2 of 3</p>
+    <h2 class="panel-title">Save failure · &ldquo;Couldn&rsquo;t save that change.&rdquo;</h2>
+    <div class="card">
+      <div class="addbar">
+        <svg class="plus" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+        <span class="ph">what needs doing?</span>
+      </div>
+
+      <div class="banner" role="alert" aria-live="polite">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7.5v5"/><path d="M12 16.2h.01"/></svg>
+        <span class="msg">Couldn&rsquo;t save that change.</span>
+        <button class="retry" type="button">Retry</button>
+      </div>
+
+      <div class="tabs" role="tablist" aria-label="Filter">
+        <span class="tab" role="tab" aria-selected="false" aria-label="All, 4 Todos">All<span class="n">4</span></span>
+        <span class="tab" role="tab" aria-selected="true" aria-label="Active, 2 Todos">Active<span class="n">2</span></span>
+        <span class="tab" role="tab" aria-selected="false" aria-label="Completed, 2 Todos">Completed<span class="n">2</span></span>
+      </div>
+
+      <ul class="rows">
+        <li class="row"><span class="box"></span><span class="label">book dentist</span></li>
+        <li class="row"><span class="box"></span><span class="label">send invoice</span></li>
+      </ul>
+    </div>
+    <p class="panel-note"><b>The list loaded; a change to it did not stick.</b> A failed toggle restores the previous Completion Status on screen and a failed delete returns the Todo to its original position — then this banner reports it. <code>book dentist</code> here is back to Active after a toggle that failed, and the counts have gone back with it.</p>
+    <p class="panel-note"><b>One banner region owns every error.</b> Accepted cost: the banner sits at the top of the card, visually distant from the row that actually failed.</p>
+  </section>
+
+  <!-- ============================================================
+       (e3) ERROR BANNER — ADD FAILURE + RECOVERY  (new panel)
+       ============================================================ -->
+  <section class="panel">
+    <p class="panel-cap">State E3 · error 3 of 3</p>
+    <h2 class="panel-title">Add failure · &ldquo;Couldn&rsquo;t add that Todo.&rdquo; · the typed text comes back</h2>
+    <div class="card">
+      <!-- THE RECOVERY: the text the user typed is returned to the input -->
+      <div class="addbar">
+        <svg class="plus" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+        <span class="typed">pay water bill<span class="caret"></span></span>
+      </div>
+
+      <div class="banner" role="alert" aria-live="polite">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7.5v5"/><path d="M12 16.2h.01"/></svg>
+        <span class="msg">Couldn&rsquo;t add that Todo.</span>
+        <button class="retry" type="button">Retry</button>
+      </div>
+
+      <div class="tabs" role="tablist" aria-label="Filter">
+        <span class="tab" role="tab" aria-selected="false" aria-label="All, 4 Todos">All<span class="n">4</span></span>
+        <span class="tab" role="tab" aria-selected="true" aria-label="Active, 2 Todos">Active<span class="n">2</span></span>
+        <span class="tab" role="tab" aria-selected="false" aria-label="Completed, 2 Todos">Completed<span class="n">2</span></span>
+      </div>
+
+      <!-- THE REMOVAL: the optimistically added row is gone from the list.
+           It would have sat above book dentist as the newest Todo. -->
+      <ul class="rows">
+        <li class="row"><span class="box"></span><span class="label">book dentist</span></li>
+        <li class="row"><span class="box"></span><span class="label">send invoice</span></li>
+      </ul>
+    </div>
+    <p class="panel-note"><span class="marker">Input populated</span>&nbsp;The add was optimistic: <code>pay water bill</code> appeared at the top of the list the moment it was submitted. The save failed, so it has been <b>removed from the list</b> and its text has been <b>returned to the input</b> — shown here populated, not empty. Nothing the user typed is lost, and the counts have gone back to 4 / 2 / 2.</p>
+    <p class="panel-note">Three recoveries, one region: load re-requests, toggle and delete restore the row, add restores the text. <b>Add failure has its own string</b> — <code>Couldn&rsquo;t add that Todo.</code> — and never borrows the save-failure wording in E2. An add is not a change to something that exists; it is a thing that failed to come into being, and the user is looking at their own text back in the input, not at a row that reverted. Four error kinds, three strings: load, add, and one shared by toggle and delete, which share a shape.</p>
+  </section>
+
+  <!-- ============================================================
+       (f) CHARACTER COUNTER
+       ============================================================ -->
+  <section class="panel wide">
+    <p class="panel-cap">State F</p>
+    <h2 class="panel-title">Input approaching the 500-character ceiling</h2>
+    <div class="card ceiling">
+
+      <!-- BELOW ~450: counter absent -->
+      <p class="panel-cap" style="margin:2px 0 8px">F1 · 19 of 500 characters typed — counter absent</p>
+      <div class="addbar">
+        <svg class="plus" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+        <span class="typed">create monthly deck<span class="caret"></span></span>
+      </div>
+
+      <!-- PAST ~450: counter present, a bare numeral -->
+      <p class="panel-cap" style="margin:22px 0 8px">F2 · 462 of 500 characters typed — remaining count faded in</p>
+      <div class="addbar tall">
+        <svg class="plus" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" style="margin-top:2px" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+        <span class="typed">create monthly deck for the sales review and pull in the pipeline numbers, the churn chart, the three case studies from last quarter, the revised pricing table and the headcount plan, then send it to finance for a sanity check before the board meeting, and book a follow-up slot with the ops team to walk through anything they flag in the appendix or in the forecast tab, plus whatever the support team raises about renewals and the two open questions on pricing<span class="caret"></span></span>
+        <span class="counter">38</span>
+      </div>
+
+    </div>
+    <p class="panel-note">Rendered at <b>phone width (362px card)</b> on purpose: this is the check the memlog called for — Poppins' wide round forms against long Todo text on a narrow column. At 14.5px the text stays legible, wraps, and never forces the page sideways.</p>
+    <p class="panel-note">The counter is a <b>bare numeral</b> — <code>38</code>, no unit and no label. Not "38 left", not "462/500": no new word enters the interface. It holds text-muted #5A5A75 throughout and never takes the danger ramp, because it is not an error and reports none. There is no appearance change at exactly 500 — the count simply reaches 0 and keystrokes stop.</p>
+    <p class="panel-note">The ceiling is 500 characters. The remaining count is <b>absent below ~450</b> and fades in past it, so the hard stop at 500 is never mysterious. Whether the input <b>grows to fit</b> (as drawn here) or caps its height and scrolls internally is <b>not decided</b> — see open question 3.</p>
+  </section>
+
+  <!-- ============================================================
+       (g) KEYBOARD FOCUS
+       ============================================================ -->
+  <section class="panel wide">
+    <p class="panel-cap">State G</p>
+    <h2 class="panel-title">Keyboard focus · soft-glow ring</h2>
+    <div class="card">
+      <div class="focusgrid">
+
+        <div class="focusitem">
+          <div class="lab">G1 · Input focused</div>
+          <div class="addbar is-focus">
+            <svg class="plus" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+            <span class="ph">what needs doing?<span class="caret"></span></span>
+          </div>
+        </div>
+
+        <div class="focusitem">
+          <div class="lab">G2 · Filter tab focused (Active, selected)</div>
+          <div class="tabs" role="tablist" aria-label="Filter" style="margin:0">
+            <span class="tab" role="tab" aria-selected="false" aria-label="All, 4 Todos">All<span class="n">4</span></span>
+            <span class="tab is-focus" role="tab" aria-selected="true" aria-label="Active, 2 Todos">Active<span class="n">2</span></span>
+            <span class="tab" role="tab" aria-selected="false" aria-label="Completed, 2 Todos">Completed<span class="n">2</span></span>
+          </div>
+        </div>
+
+        <div class="focusitem">
+          <div class="lab">G3 · Checkbox focused — on an active row (#2680EB) and on a completed row (accent-deep #1B65C2 on mint)</div>
+          <ul class="rows">
+            <li class="row">
+              <span class="box is-focus"></span>
+              <span class="label">book dentist</span>
+            </li>
+            <li class="row complete">
+              <span class="box is-focus">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7"/></svg>
+              </span>
+              <span class="label">pick up rice</span>
+            </li>
+          </ul>
+        </div>
+
+      </div>
+    </div>
+    <p class="panel-note">Ring is <code>box-shadow: 0 0 0 1px #2680EB, 0 0 0 5px rgba(38,128,235,.30)</code> — a 1px accent edge plus a 4px bloom — on the white card, on a white row and on every control not sitting on mint. It never changes the size of the element it surrounds. Every interactive target keeps a 44px minimum hit area even where the painted control is smaller.</p>
+    <p class="panel-note"><b>The ring steps down on mint.</b> #2680EB on <code>row-complete #C3E9D7</code> is <b>2.97:1</b> — the identical failure that moved the checked checkbox — and a focus indicator is a non-text graphic identifying a control, so 1.4.11 applies to it too. The bloom does not rescue it: at 30% opacity it is fainter than the edge that already fails. On a completed row the ring is <code>box-shadow: 0 0 0 1px #1B65C2, 0 0 0 5px rgba(27,101,194,.30)</code> — <b>4.33:1</b>. Same geometry, same blur, same opacity; only the hue value changes, so focus never reads as two different things. The second row in G3 is drawn with it.</p>
+    <p class="panel-note">Both boundaries in G3 are on the 1.4.11 floor: the <b>unchecked</b> box is <code>border-control #8C8BAC</code> at 3.28:1 on white, and the <b>checked</b> box on the completed row is <code>accent-deep #1B65C2</code> at 4.33:1 on mint. On an active row the checked fill and the ring both stay #2680EB on white.</p>
+  </section>
+
+</div>
+
+</body>
+</html>

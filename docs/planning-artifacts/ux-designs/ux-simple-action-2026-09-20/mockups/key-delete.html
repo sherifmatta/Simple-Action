@@ -1,0 +1,540 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Simple Action — key flow: delete a Todo</title>
+<style>
+/* ==========================================================================
+   SIMPLE ACTION — KEY SCREEN 3 of 3 · THE DELETE FLOW
+   Static mock. No JavaScript, no network requests, no font link — renders
+   fully offline. Each step of the flow is a separately labelled panel frozen
+   at one moment; nothing on this page responds to interaction, and no panel
+   animates. Timings are annotated, not played.
+
+   --------------------------------------------------------------------------
+   SPINE SECTIONS GOVERNING THIS SCREEN
+   --------------------------------------------------------------------------
+   EXPERIENCE.md  § Key Flows .............. UJ-3 Dana removes something she no
+                                             longer needs (rest -> swipe ->
+                                             confirm -> gone)
+   EXPERIENCE.md  § State Patterns ......... Row · at rest (touch)
+                                             Row · mid-swipe, action revealed
+                                             Dialog · delete confirmation
+                                             First-run · swipe nudge (once ever)
+   EXPERIENCE.md  § Accessibility .......... focus-trapped dialog, Cancel takes
+                                             initial focus, focus ring on the
+                                             dialog buttons, keyboard
+                                             equivalent for the swipe gesture,
+                                             prefers-reduced-motion
+   DESIGN.md      § Component Patterns ..... Swipe action panel, Confirmation
+                                             dialog, Scrim, Danger buttons,
+                                             Filter tabs (with counts)
+   DESIGN.md      § Colour & Tokens ........ clay danger bg #F6E7E1 /
+                                             border #E6CCC0 / text #8E3B22
+                                             + danger-fill + border-control
+
+   --------------------------------------------------------------------------
+   TOKENS — Lavender Mist (variation 4), plus the tokens added at Finalize.
+   Focus ring is the soft glow:
+   box-shadow: 0 0 0 1px #2680EB, 0 0 0 5px rgba(38,128,235,.30)
+
+   NOTE ON A COMPLETED (mint) ROW the ring steps down to accent-deep:
+        box-shadow: 0 0 0 1px #1B65C2, 0 0 0 5px rgba(27,101,194,.30)
+        #2680EB on mint #C3E9D7 is 2.97:1 and fails the 3:1 non-text floor;
+        #1B65C2 on mint is 4.33:1. A focus indicator is a non-text graphic
+        identifying a control, so 1.4.11 applies to it as it does to the
+        checked checkbox. Geometry, blur and opacity are unchanged — only the
+        hue value steps down. A Todo can be deleted in either Completion
+        Status, so the row's delete control is reachable on mint and takes the
+        stepped-down ring there. Every row drawn on THIS page is Active, so
+        every ring rendered here is the #2680EB variant; the rule is carried
+        in --focus-complete below so a mint row cannot be drawn without it.
+
+   NEW  danger-fill #8E3B22 / on-danger-fill #FFFFFF (~5.8:1). The swipe
+        delete panel and the destructive dialog button are FILLS, and they now
+        take a named token instead of reusing the danger TEXT colour ad hoc.
+        danger-text #8E3B22 stays a foreground: banner copy, the Retry
+        outline, the hover and keyboard delete icon.
+   NEW  border-control #8C8BAC — 3.28:1 on white. ALL component boundaries:
+        the unchecked checkbox border, the add-input border, the Cancel
+        button's outline. It replaces hairline #E3E2F0, which was 1.28:1 on
+        white and failed WCAG 1.4.11. hairline survives ONLY for purely
+        decorative boundaries — the sub-surface that names the Todo inside
+        the dialog — and for review chrome on this page.
+
+   --------------------------------------------------------------------------
+   COPY — every visible product string traces to the memlog voice decision
+   --------------------------------------------------------------------------
+   "Delete this Todo?"   dialog title
+   "Cancel" / "Delete"   dialog buttons; "Delete" also labels the swipe action
+   "All" / "Active" / "Completed"  filter view names, each carrying a bare
+   count inside its accessible name (aria-label="Active, 2 Todos").
+   NO WORDMARK. The card opens straight into the input.
+   The Todo is named in the dialog by showing its own text — no new sentence
+   is introduced to do it. No undo toast in v1. Voice stays plain: no
+   personality, no exclamation marks. Synonyms for Completed are banned.
+   Text outside the panels is review chrome, not product copy.
+
+   --------------------------------------------------------------------------
+   WHAT THIS FLOW COMMITS TO
+   --------------------------------------------------------------------------
+   · Delete is confirmed by a dialog, exactly as specified. No undo toast.
+     Accepted cost: with no text editing, fixing a typo stays a three-
+     interaction operation.
+   · CANCEL TAKES INITIAL FOCUS, not Delete. Destructive-default convention,
+     consistent with nothing ever being lost by accident.
+   · Affordance is swipe-to-reveal on touch and a trailing icon on hover for
+     pointer devices (see key-main.html). A keyboard equivalent is required
+     regardless and reaches the same dialog.
+   · Swipe is a hidden gesture, and no tour, tooltip or onboarding is allowed.
+     The mitigation is motion: on a first-ever visit ONLY, the topmost row
+     slides ~24px to expose a sliver of the Delete action and settles back
+     over ~600ms. It fires once ever, has nothing to dismiss, and is skipped
+     entirely under prefers-reduced-motion.
+   · Ordering is newest-first by creation timestamp and completed rows never
+     reorder, so deleting a row closes a gap — it never re-sorts the list.
+
+   --------------------------------------------------------------------------
+   OPEN QUESTIONS — NOTED, NOT INVENTED
+   --------------------------------------------------------------------------
+   The question of which dialog button holds initial focus is closed: Cancel.
+   Three remain:
+   1. Full reveal width (96px here) and the swipe distance that latches the
+      action open are not fixed anywhere. OPEN.
+   2. Whether a full-length swipe past the latch deletes directly (still via
+      the dialog) or only latches open is not stated. Rendered as latch-only.
+      OPEN.
+   3. Dialog width on desktop is not fixed; 400px used here. OPEN.
+   ========================================================================== */
+
+/* ---------- LOCKED GLOBALS ---------- */
+:root{
+  --ground:#E7EAF6;
+  --card:#FFFFFF;
+  --row-active:#FFFFFF;
+  --row-complete:#C3E9D7;
+  --accent:#2680EB;
+  --accent-deep:#1B65C2;
+  --r-card:18px;
+  --r-row:14px;
+  --shadow-card:0 18px 46px -18px rgba(37,44,74,.18), 0 2px 10px -4px rgba(37,44,74,.06);
+  --shadow-row:0 8px 22px -12px rgba(37,44,74,.20), 0 1px 3px rgba(37,44,74,.04);
+  --font:"Poppins","Century Gothic","Futura","Avenir Next",-apple-system,"Segoe UI",system-ui,sans-serif;
+
+  /* Lavender Mist (variation 4) */
+  --text-primary:#24243A;
+  --text-muted:#5A5A75;
+  --text-completed:#5F5F7A;
+  --text-placeholder:#71718B;
+  --hairline:#E3E2F0;          /* decorative boundaries and review chrome ONLY */
+  --danger-bg:#F6E7E1;
+  --danger-border:#E6CCC0;
+  --danger-text:#8E3B22;       /* foreground */
+  --tab-track:#EDEEF7;
+  --tab-sel-bg:#FFFFFF;
+  --tab-sel-text:#1B65C2;
+  --focus:0 0 0 1px var(--accent), 0 0 0 5px rgba(38,128,235,.30);
+  /* 1.4.11 fix 3 — the ring on a mint Completed row: #2680EB on mint is
+     2.97:1, accent-deep #1B65C2 on mint is 4.33:1. Same geometry, deeper hue. */
+  --focus-complete:0 0 0 1px var(--accent-deep), 0 0 0 5px rgba(27,101,194,.30);
+
+  /* added at Finalize */
+  --border-control:#8C8BAC;    /* 3.28:1 on white — all component boundaries */
+  --danger-fill:#8E3B22;       /* fills only */
+  --on-danger-fill:#FFFFFF;    /* ~5.8:1 on danger-fill */
+}
+
+*,*::before,*::after{ box-sizing:border-box; }
+html{ -webkit-text-size-adjust:100%; }
+body{
+  margin:0;
+  font-family:var(--font);
+  background:var(--ground);
+  color:var(--text-primary);
+  font-weight:400;
+  line-height:1.5;
+  overflow-x:hidden;              /* page body never scrolls sideways */
+}
+
+/* ---------- REVIEW CHROME (not product) ---------- */
+.sheet-head{ max-width:1240px; margin:0 auto; padding:40px 28px 4px; }
+.sheet-head h1{ font-size:25px; font-weight:600; letter-spacing:-.02em; margin:0 0 6px; }
+.sheet-head p{ margin:0 0 6px; font-size:13.5px; color:var(--text-muted); max-width:78ch; }
+
+.grid{
+  max-width:1240px; margin:0 auto;
+  padding:18px 28px 56px;
+  display:grid;
+  grid-template-columns:repeat(auto-fit, minmax(min(330px, 100%), 1fr));
+  gap:26px;
+  align-items:start;
+}
+.panel{ min-width:0; }
+.panel-cap{
+  font-size:10.5px; font-weight:600; letter-spacing:.13em; text-transform:uppercase;
+  color:var(--text-muted); margin:0 0 3px 2px;
+}
+.panel-title{ font-size:15.5px; font-weight:600; letter-spacing:-.01em; margin:0 0 5px 2px; }
+.panel-note{ font-size:11.5px; color:var(--text-muted); margin:11px 2px 0; line-height:1.55; }
+.panel-note b{ color:var(--text-primary); font-weight:600; }
+code{ font-size:11px; background:#FFFFFF; border:1px solid var(--hairline); border-radius:6px; padding:1px 5px; }
+
+/* callout marker — review chrome, not product */
+.marker{
+  display:inline-flex; align-items:center; gap:6px;
+  font-size:10.5px; font-weight:600; letter-spacing:.06em; text-transform:uppercase;
+  color:var(--accent-deep); background:#FFFFFF; border:1px solid var(--hairline);
+  border-radius:999px; padding:3px 9px;
+}
+
+/* timing annotation strip — review chrome, not product */
+.timing{
+  margin:12px 2px 0; background:#FFFFFF; border:1px solid var(--hairline);
+  border-radius:12px; padding:12px 13px;
+}
+.timing .tl{ display:flex; align-items:stretch; height:22px; border-radius:6px; overflow:hidden; }
+.timing .tl i{ display:block; height:100%; }
+.timing .out{ flex:0 0 40%; background:#D9E6FA; }
+.timing .hold{ flex:0 0 12%; background:#BFD8F7; }
+.timing .back{ flex:0 0 48%; background:#EDEEF7; }
+.timing .keys{ display:flex; gap:14px; flex-wrap:wrap; margin-top:9px; }
+.timing .keys span{ font-size:10.5px; color:var(--text-muted); display:inline-flex; align-items:center; gap:6px; }
+.timing .keys i{ width:10px; height:10px; border-radius:3px; display:block; }
+.timing .total{ font-size:11px; color:var(--text-primary); font-weight:600; margin-top:9px; }
+
+/* ==========================================================================
+   THE PRODUCT SURFACE
+   ========================================================================== */
+.card{
+  background:var(--card);
+  border-radius:var(--r-card);
+  box-shadow:var(--shadow-card);
+  padding:18px 16px 22px;
+}
+/* add input, pinned top. Nothing above it — no wordmark. */
+.addbar{
+  display:flex; align-items:center; gap:10px;
+  background:var(--card);
+  border:1.5px solid var(--border-control);   /* 1.4.11 fix — was hairline */
+  border-radius:var(--r-row); padding:12px 13px;
+  box-shadow:var(--shadow-row); min-height:50px;
+}
+.addbar .plus{ flex:0 0 auto; color:var(--accent); display:block; }
+.addbar .ph{ font-size:14.5px; color:var(--text-placeholder); }
+
+/* filter tabs: v4 inset segmented control, carrying counts */
+.tabs{
+  display:flex; align-items:center; gap:2px; margin:18px 0 12px;
+  background:var(--tab-track); border-radius:999px; padding:4px;
+  box-shadow:inset 0 1px 3px rgba(36,36,58,.10);
+}
+.tab{
+  flex:1 1 auto; text-align:center; white-space:nowrap;
+  font-family:inherit; font-size:12.5px; font-weight:500; line-height:1;
+  border:0; background:transparent; color:var(--text-muted);
+  padding:10px 6px; border-radius:999px; min-height:36px;
+}
+.tab[aria-selected="true"]{
+  background:var(--tab-sel-bg); color:var(--tab-sel-text); font-weight:600;
+  box-shadow:0 2px 6px -2px rgba(36,36,58,.22), 0 1px 1px rgba(36,36,58,.05);
+}
+/* the count is secondary information, not a badge: one type step down, one
+   weight step down, held at text-muted so it never competes with the name */
+.tab .n{
+  margin-left:5px;
+  font-size:11px; font-weight:500; color:var(--text-muted);
+  font-variant-numeric:tabular-nums;
+}
+.tab[aria-selected="true"] .n{ font-weight:500; color:var(--text-muted); }
+
+.rows{ list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:9px; }
+.row{
+  display:flex; align-items:center; gap:12px;
+  background:var(--row-active); border-radius:var(--r-row);
+  padding:14px; min-height:50px; box-shadow:var(--shadow-row);
+}
+.row .label{ font-size:14.5px; color:var(--text-primary); }
+.box{
+  flex:0 0 auto; width:22px; height:22px; border-radius:7px;
+  border:1.75px solid var(--border-control);  /* 1.4.11 fix — was hairline */
+  background:#fff;
+  display:flex; align-items:center; justify-content:center;
+}
+
+/* --- swipe lane: the Delete action sits under the row and is uncovered
+       as the row travels left. No transition is declared — every panel on
+       this page is frozen at one moment. --- */
+.lane{ position:relative; border-radius:var(--r-row); }
+/* only a lane whose row has travelled needs to clip — everywhere else the
+   row keeps its full soft shadow. The inset shading on the left edge shows
+   that the row is passing under an edge, not that its text is broken. */
+.lane.mid, .lane.nudge{ overflow:hidden; }
+.lane.mid::before, .lane.nudge::before{
+  content:""; position:absolute; inset:0 auto 0 0; width:14px; z-index:2;
+  border-radius:var(--r-row) 0 0 var(--r-row);
+  background:linear-gradient(to right, rgba(36,36,58,.16), rgba(36,36,58,0));
+  pointer-events:none;
+}
+.lane .action{
+  position:absolute; inset:0 0 0 auto;
+  width:96px;                                   /* full reveal — see open Q1 */
+  background:var(--danger-fill);                /* named token, not a reused
+                                                   foreground colour */
+  /* square on the leading edge so a partial reveal shows a clean vertical
+     band rather than a rounded blob; the trailing edge keeps the row radius */
+  border-radius:0 var(--r-row) var(--r-row) 0;
+  display:flex; flex-direction:column; align-items:center; justify-content:center;
+  gap:3px; color:var(--on-danger-fill);
+}
+.lane .action .txt{ font-size:11.5px; font-weight:600; letter-spacing:.01em; }
+.lane .row{ position:relative; }
+.lane.mid .row{ transform:translateX(-96px); }
+.lane.nudge .row{ transform:translateX(-24px); }   /* first-run peek, ~24px */
+
+/* --- dimmed screen + confirmation dialog --- */
+.stage{ position:relative; border-radius:var(--r-card); overflow:hidden; }
+.scrim{ position:absolute; inset:0; background:rgba(36,36,58,.44); }
+.dialogwrap{
+  position:absolute; inset:0;
+  display:flex; align-items:center; justify-content:center; padding:18px;
+}
+.dialog{
+  width:100%; max-width:400px;
+  background:var(--card); border-radius:var(--r-card);
+  box-shadow:0 30px 70px -22px rgba(37,44,74,.55), 0 4px 14px -6px rgba(37,44,74,.25);
+  padding:20px 18px 18px;
+}
+.dialog h3{ font-size:16.5px; font-weight:600; letter-spacing:-.01em; margin:0 0 12px; color:var(--text-primary); }
+/* the Todo is named by showing its own text on its own sub-surface. This
+   edge is decorative — it bounds a piece of content, not a control — so it
+   keeps hairline and 1.4.11 does not apply to it. */
+.dialog .named{
+  display:flex; align-items:center; gap:12px;
+  background:#FFFFFF; border:1px solid var(--hairline);
+  border-radius:var(--r-row); padding:13px 14px; min-height:50px;
+}
+.dialog .named .label{ font-size:14.5px; color:var(--text-primary); }
+.dialog .btns{ display:flex; gap:10px; margin-top:16px; }
+.btn{
+  flex:1 1 auto; font-family:inherit; font-size:13.5px; font-weight:600;
+  border-radius:999px; padding:12px 16px; min-height:44px; line-height:1.2;
+}
+.btn-cancel{
+  background:#FFFFFF; color:var(--text-primary);
+  border:1.5px solid var(--border-control);   /* 1.4.11 fix — was hairline */
+}
+.btn-delete{
+  background:var(--danger-fill); color:var(--on-danger-fill);
+  border:1.5px solid var(--danger-fill);
+}
+.is-focus{ box-shadow:var(--focus); }
+/* focus ring on a COMPLETED row: accent-deep #1B65C2 on mint = 4.33:1.
+   No mint row is drawn on this page; the rule is carried so one cannot be
+   drawn with the failing #2680EB ring on it. */
+.row.complete .is-focus{ box-shadow:var(--focus-complete); }
+
+.stage .card{ box-shadow:none; border-radius:var(--r-card); }
+.stage-ground{ background:var(--ground); padding:14px; border-radius:var(--r-card); }
+
+@media (max-width:760px){
+  .sheet-head,.grid{ padding-left:18px; padding-right:18px; }
+}
+</style>
+</head>
+<body>
+
+<header class="sheet-head">
+  <h1>Simple Action — key flow: delete a Todo</h1>
+  <p>UJ-3, step by step, on touch. Each panel is frozen at one moment of the flow; nothing here animates or responds to interaction. Tokens are Lavender Mist (variation 4) plus the Finalize additions — the swipe panel and the destructive button are <code>danger-fill #8E3B22</code> with <code>on-danger-fill #FFFFFF</code>, and every control boundary is <code>border-control #8C8BAC</code>.</p>
+  <p><b>Cancel takes initial focus in the dialog</b>, not Delete.</p>
+</header>
+
+<div class="grid">
+
+  <!-- ============================================================
+       (a) ROW AT REST — TOUCH
+       ============================================================ -->
+  <section class="panel">
+    <p class="panel-cap">Step A</p>
+    <h2 class="panel-title">At rest · touch</h2>
+    <div class="card">
+      <div class="addbar">
+        <svg class="plus" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+        <span class="ph">what needs doing?</span>
+      </div>
+
+      <div class="tabs" role="tablist" aria-label="Filter">
+        <span class="tab" role="tab" aria-selected="false" aria-label="All, 4 Todos">All<span class="n">4</span></span>
+        <span class="tab" role="tab" aria-selected="true" aria-label="Active, 2 Todos">Active<span class="n">2</span></span>
+        <span class="tab" role="tab" aria-selected="false" aria-label="Completed, 2 Todos">Completed<span class="n">2</span></span>
+      </div>
+
+      <ul class="rows">
+        <li class="lane"><div class="row"><span class="box"></span><span class="label">book dentist</span></div></li>
+        <li class="lane"><div class="row"><span class="box"></span><span class="label">send invoice</span></div></li>
+      </ul>
+    </div>
+    <p class="panel-note">On touch there is <b>no visible delete affordance at rest</b> — no trailing icon, no overflow menu. The row is a clean sub-surface. This is the cost of the swipe gesture, and the first-run nudge in Step D is the whole mitigation.</p>
+    <p class="panel-note">Active is selected, so two of the four Todos are listed. The counts on the other two tabs are how the rest of the list stays visible without leaving this view.</p>
+  </section>
+
+  <!-- ============================================================
+       (b) MID-SWIPE — DELETE ACTION REVEALED
+       ============================================================ -->
+  <section class="panel">
+    <p class="panel-cap">Step B</p>
+    <h2 class="panel-title">Mid-swipe · Delete revealed</h2>
+    <div class="card">
+      <div class="addbar">
+        <svg class="plus" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+        <span class="ph">what needs doing?</span>
+      </div>
+
+      <div class="tabs" role="tablist" aria-label="Filter">
+        <span class="tab" role="tab" aria-selected="false" aria-label="All, 4 Todos">All<span class="n">4</span></span>
+        <span class="tab" role="tab" aria-selected="true" aria-label="Active, 2 Todos">Active<span class="n">2</span></span>
+        <span class="tab" role="tab" aria-selected="false" aria-label="Completed, 2 Todos">Completed<span class="n">2</span></span>
+      </div>
+
+      <ul class="rows">
+        <li class="lane"><div class="row"><span class="box"></span><span class="label">book dentist</span></div></li>
+
+        <!-- row travelled the full 96px; the action lane is fully uncovered -->
+        <li class="lane mid">
+          <div class="action" aria-hidden="true">
+            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16"/><path d="M9.5 7V5.4A1.4 1.4 0 0 1 10.9 4h2.2a1.4 1.4 0 0 1 1.4 1.4V7"/><path d="M6.6 7l.8 11.3A1.8 1.8 0 0 0 9.2 20h5.6a1.8 1.8 0 0 0 1.8-1.7L17.4 7"/><path d="M10.5 11v5M13.5 11v5"/></svg>
+            <span class="txt">Delete</span>
+          </div>
+          <div class="row"><span class="box"></span><span class="label">send invoice</span></div>
+        </li>
+      </ul>
+    </div>
+    <p class="panel-note"><span class="marker">96px travel</span> The second row has travelled the full reveal distance: it has moved left under the lane edge, so its checkbox and the start of its label are out of view. That is the gesture, not a clipped label.</p>
+    <p class="panel-note">The row slides left over a stationary action lane — the Delete panel is uncovered, not pushed in. The panel is <code>danger-fill #8E3B22</code> with the label and icon in <code>on-danger-fill #FFFFFF</code> at ~5.8:1. Icon and the word <b>Delete</b> together, so the clay fill never carries the meaning alone. Releasing here opens the confirmation dialog in Step C; the swipe itself never deletes.</p>
+    <p class="panel-note">Reveal width 96px and the latch distance are <b>not fixed by the spine</b> — see open question 1 in the style comment.</p>
+  </section>
+
+  <!-- ============================================================
+       (c) CONFIRMATION DIALOG
+       ============================================================ -->
+  <section class="panel">
+    <p class="panel-cap">Step C</p>
+    <h2 class="panel-title">Confirmation dialog · Cancel holds focus</h2>
+    <div class="stage stage-ground">
+      <div class="card">
+        <div class="addbar">
+          <svg class="plus" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+          <span class="ph">what needs doing?</span>
+        </div>
+
+        <div class="tabs" role="tablist" aria-label="Filter">
+          <span class="tab" role="tab" aria-selected="false" aria-label="All, 4 Todos">All<span class="n">4</span></span>
+          <span class="tab" role="tab" aria-selected="true" aria-label="Active, 2 Todos">Active<span class="n">2</span></span>
+          <span class="tab" role="tab" aria-selected="false" aria-label="Completed, 2 Todos">Completed<span class="n">2</span></span>
+        </div>
+
+        <ul class="rows">
+          <li class="lane"><div class="row"><span class="box"></span><span class="label">book dentist</span></div></li>
+          <li class="lane"><div class="row"><span class="box"></span><span class="label">send invoice</span></div></li>
+        </ul>
+      </div>
+
+      <div class="scrim" aria-hidden="true"></div>
+
+      <div class="dialogwrap">
+        <div class="dialog" role="alertdialog" aria-modal="true" aria-labelledby="dlg-t">
+          <h3 id="dlg-t">Delete this Todo?</h3>
+          <!-- the Todo names itself: its own text on its own sub-surface -->
+          <!-- no checkbox inside the dialog: nothing in here is toggleable -->
+          <div class="named"><span class="label">send invoice</span></div>
+          <div class="btns">
+            <!-- INITIAL FOCUS SITS HERE -->
+            <button class="btn btn-cancel is-focus" type="button">Cancel</button>
+            <button class="btn btn-delete" type="button">Delete</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <p class="panel-note"><b>Cancel takes initial focus</b>, not Delete — the destructive-default convention, and consistent with nothing in this product ever being lost by accident. A keyboard user who opens this dialog and presses Enter without reading it keeps their Todo. Reaching Delete is one Tab away and deliberate.</p>
+    <p class="panel-note">Focus is trapped inside the dialog and the screen behind it is dimmed to rgba(36,36,58,.44). Cancel's outline is <code>border-control #8C8BAC</code> (3.28:1) so the button has a boundary that actually resolves; the soft-glow ring sits outside it. Delete is <code>danger-fill #8E3B22</code> with a white label.</p>
+    <p class="panel-note">The Todo is named by showing its own text, so no extra sentence enters the interface. Two buttons, both 44px minimum. <b>No undo toast in v1</b> — the dialog is the whole safety net.</p>
+  </section>
+
+  <!-- ============================================================
+       (d) FIRST-RUN SWIPE NUDGE
+       ============================================================ -->
+  <section class="panel">
+    <p class="panel-cap">Step D</p>
+    <h2 class="panel-title">First-run nudge · once ever</h2>
+    <div class="card">
+      <div class="addbar">
+        <svg class="plus" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+        <span class="ph">what needs doing?</span>
+      </div>
+
+      <div class="tabs" role="tablist" aria-label="Filter">
+        <span class="tab" role="tab" aria-selected="false" aria-label="All, 4 Todos">All<span class="n">4</span></span>
+        <span class="tab" role="tab" aria-selected="true" aria-label="Active, 2 Todos">Active<span class="n">2</span></span>
+        <span class="tab" role="tab" aria-selected="false" aria-label="Completed, 2 Todos">Completed<span class="n">2</span></span>
+      </div>
+
+      <ul class="rows">
+        <!-- TOPMOST ROW ONLY, peeked ~24px: a sliver of the Delete action -->
+        <li class="lane nudge">
+          <div class="action" aria-hidden="true">
+            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16"/><path d="M9.5 7V5.4A1.4 1.4 0 0 1 10.9 4h2.2a1.4 1.4 0 0 1 1.4 1.4V7"/><path d="M6.6 7l.8 11.3A1.8 1.8 0 0 0 9.2 20h5.6a1.8 1.8 0 0 0 1.8-1.7L17.4 7"/><path d="M10.5 11v5M13.5 11v5"/></svg>
+            <span class="txt">Delete</span>
+          </div>
+          <div class="row"><span class="box"></span><span class="label">book dentist</span></div>
+        </li>
+
+        <li class="lane"><div class="row"><span class="box"></span><span class="label">send invoice</span></div></li>
+      </ul>
+    </div>
+
+    <div class="timing">
+      <p class="panel-cap" style="margin:0 0 8px">Timing · the peek, frozen here at its furthest point</p>
+      <div class="tl" aria-hidden="true">
+        <i class="out"></i><i class="hold"></i><i class="back"></i>
+      </div>
+      <div class="keys">
+        <span><i style="background:#D9E6FA"></i>slides out to ~24px</span>
+        <span><i style="background:#BFD8F7"></i>holds</span>
+        <span><i style="background:#EDEEF7"></i>settles back to 0</span>
+      </div>
+      <p class="total">Total ~600ms · topmost row only · fires once ever · skipped entirely under <code>prefers-reduced-motion</code></p>
+    </div>
+
+    <p class="panel-note"><b>Motion, not instruction.</b> Nothing to read, nothing to dismiss, no tooltip and no tour — which is what keeps this inside the no-onboarding rule while still letting a first-time user find the gesture without backtracking.</p>
+    <p class="panel-note">The panel above is frozen at the furthest point of the peek: ~24px of travel, enough for the left edge of the clay Delete lane to show and no more.</p>
+  </section>
+
+  <!-- ============================================================
+       KEYBOARD PATH
+       ============================================================ -->
+  <section class="panel">
+    <p class="panel-cap">Step E</p>
+    <h2 class="panel-title">Keyboard path · same dialog, no gesture</h2>
+    <div class="card">
+      <ul class="rows">
+        <li class="lane">
+          <div class="row">
+            <span class="box"></span>
+            <span class="label">send invoice</span>
+            <span style="margin-left:auto;display:flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:999px;color:var(--danger-text);box-shadow:var(--focus);" aria-label="Delete">
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16"/><path d="M9.5 7V5.4A1.4 1.4 0 0 1 10.9 4h2.2a1.4 1.4 0 0 1 1.4 1.4V7"/><path d="M6.6 7l.8 11.3A1.8 1.8 0 0 0 9.2 20h5.6a1.8 1.8 0 0 0 1.8-1.7L17.4 7"/><path d="M10.5 11v5M13.5 11v5"/></svg>
+            </span>
+          </div>
+        </li>
+      </ul>
+    </div>
+    <p class="panel-note">A keyboard equivalent is required regardless of the gesture. Tabbing into the row reaches the same delete control the pointer hover reveals, with the soft-glow ring on it, and it opens the same dialog as Step C — where <b>Cancel</b>, not Delete, is already focused. No swipe is ever the only way through.</p>
+    <p class="panel-note">The icon here is <code>danger-text #8E3B22</code> as a foreground on white. The fill token is reserved for the swipe panel and the destructive button.</p>
+    <p class="panel-note"><b>The ring drawn here is the white-row variant</b>, <code>0 0 0 1px #2680EB, 0 0 0 5px rgba(38,128,235,.30)</code> — <code>send invoice</code> is Active. A Todo can be deleted in either Completion Status, so this same control is reachable on a mint row, where the ring steps down to <code>accent-deep #1B65C2</code> (4.33:1) because #2680EB on mint is <b>2.97:1</b> and fails the 3:1 non-text floor. Same geometry, deeper hue. No completed row is drawn on this page, so no stepped-down ring is rendered here; see <code>key-states.html</code> panel G3.</p>
+  </section>
+
+</div>
+
+</body>
+</html>
