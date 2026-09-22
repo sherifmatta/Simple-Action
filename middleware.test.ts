@@ -444,12 +444,20 @@ describe("AD-17 — the identity is issued here and nowhere else (AC6)", () => {
     expect(filesNaming("mintIdentityTokenThatDoesNotExist")).toEqual([]);
   });
 
-  it("finds no route handler at all yet, so none can be an identity-issuing path", () => {
-    // When route handlers arrive in Epics 2-5 they inherit the wall above: the
-    // scan fails the moment one of them names a minting call.
-    const routeHandlers = sourceFiles(path.join("app", "api")).filter((file) =>
-      path.basename(file).startsWith("route."),
+  it("finds no route handler that is an identity-issuing path", () => {
+    // Story 2.1 brought the first one. The rest arrive in Epics 3-5 and inherit
+    // the wall above: the scan fails the moment one of them names a minting
+    // call. `TEST_FILE` is applied here for the reason it is applied in
+    // `filesNaming` — `route.test.ts` starts with `route.` too, and a test
+    // asserting that no identity is created names the symbol as assertion data.
+    const routeHandlers = sourceFiles(path.join("app", "api")).filter(
+      (file) =>
+        path.basename(file).startsWith("route.") && !TEST_FILE.test(file),
     );
+    expect(
+      routeHandlers.length,
+      "the scan found no route handler, so it would pass vacuously",
+    ).toBeGreaterThan(0);
     for (const handler of routeHandlers) {
       const source = readFileSync(path.join(repositoryRoot, handler), "utf8");
       expect(source, `${handler} mints an identity`).not.toMatch(/createClientIdentity/);

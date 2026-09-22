@@ -53,6 +53,25 @@ export function errorKindForMethod(method: string): ErrorKind {
 }
 
 /**
+ * Marks a response as one caller's, and cacheable by nobody.
+ *
+ * Every response under `app/api/` is decided by the identity cookie, including
+ * the refusals below: a cache keying on the URL alone would hand this `401` to a
+ * caller who does carry a cookie, or hand one person's Todo List to the next
+ * caller. `Vary` is appended rather than set, so the platform's own
+ * `Accept-Encoding` entry survives.
+ *
+ * Added by Story 2.1 for its route handler; applied here too, because the `401`
+ * a browser actually receives is built by `middleware.ts` through the helper
+ * below and never reaches the handler.
+ */
+export function privateToTheCaller(response: Response): Response {
+  response.headers.set("Cache-Control", "private, no-store");
+  response.headers.append("Vary", "Cookie");
+  return response;
+}
+
+/**
  * The `401` for a request under `app/api/` carrying no valid Client Identity.
  *
  * AD-17: a route handler reads an identity and never creates one, so a request
@@ -68,5 +87,5 @@ export function unauthorizedIdentityResponse(method: string): Response {
     },
   };
 
-  return Response.json(body, { status: 401 });
+  return privateToTheCaller(Response.json(body, { status: 401 }));
 }

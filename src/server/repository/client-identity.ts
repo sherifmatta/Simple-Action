@@ -1,11 +1,11 @@
 // Repository functions for the Client Identity (AD-2, AD-7).
 //
-// The whole repository surface at this point in the build: a lookup by token
-// hash and a create. Story 1.6's middleware calls both — resolve the identity
-// the cookie carries, or mint one when the browser has none. The Todo
-// functions (`listTodos`, `createTodo`, `setTodoCompleted`, `deleteTodo`)
-// arrive in the stories that consume them, in Epics 2 through 5, and take
-// `ownerId` as their first parameter (AD-2).
+// This module's whole surface: a lookup by token hash and a create. Story 1.6's
+// middleware calls both — resolve the identity the cookie carries, or mint one
+// when the browser has none. The Todo functions live beside it in `todos.ts`,
+// each arriving with the story that consumes it — `listTodos` with Story 2.1,
+// `createTodo`, `setTodoCompleted` and `deleteTodo` with Epics 3 through 5 —
+// and each taking `ownerId` as its first parameter (AD-2).
 //
 // `client_identity` is not an owned resource — it *is* the owner — so the
 // `ownerId`-first rule does not apply to these two.
@@ -54,7 +54,10 @@ export async function createClientIdentity(
   id: string,
   tokenHash: string,
 ): Promise<ClientIdentity> {
-  const [created] = await db.insert(clientIdentity).values({ id, tokenHash }).returning();
+  const [created] = await db
+    .insert(clientIdentity)
+    .values({ id, tokenHash })
+    .returning();
 
   return created;
 }

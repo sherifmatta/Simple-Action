@@ -5,6 +5,7 @@ import { IDENTITY_COOKIE_NAME } from "./identity-cookie";
 import { hashIdentityToken, mintIdentityToken } from "./identity-token";
 import {
   errorKindForMethod,
+  privateToTheCaller,
   resolveClientIdentity,
   unauthorizedIdentityResponse,
 } from "./request-identity";
@@ -134,5 +135,29 @@ describe("unauthorizedIdentityResponse (AC4)", () => {
 
   it("sets no cookie — refusing a request is not an identity-issuing path (AC4, AC6)", () => {
     expect(unauthorizedIdentityResponse("GET").headers.get("set-cookie")).toBeNull();
+  });
+
+  // Added by Story 2.1. The refusal is decided by the identity cookie, so a
+  // cache keying on the URL alone would hand this 401 to a caller who carries
+  // one. This is the response a browser actually receives — `middleware.ts`
+  // answers before the route handler runs — so the headers have to be here.
+  it("is private to the caller and varies on the cookie", () => {
+    const response = unauthorizedIdentityResponse("GET");
+
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
+    expect(response.headers.get("vary")).toMatch(/\bCookie\b/);
+  });
+});
+
+describe("privateToTheCaller", () => {
+  it("appends to an existing Vary rather than replacing it", () => {
+    const response = new Response(null, {
+      headers: { Vary: "Accept-Encoding" },
+    });
+
+    const vary = privateToTheCaller(response).headers.get("vary");
+
+    expect(vary).toMatch(/\bAccept-Encoding\b/);
+    expect(vary).toMatch(/\bCookie\b/);
   });
 });

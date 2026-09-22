@@ -5,6 +5,7 @@ import { IDENTITY_COOKIE_ATTRIBUTES, IDENTITY_COOKIE_NAME } from "@/server/ident
 import { hashIdentityToken, mintIdentityId, mintIdentityToken } from "@/server/identity/identity-token";
 import {
   errorKindForMethod,
+  privateToTheCaller,
   resolveClientIdentity,
   unauthorizedIdentityResponse,
 } from "@/server/identity/request-identity";
@@ -51,7 +52,7 @@ function identityUnavailableResponse(method: string): Response {
     },
   };
 
-  return Response.json(body, { status: 503 });
+  return privateToTheCaller(Response.json(body, { status: 503 }));
 }
 
 export async function middleware(request: NextRequest) {

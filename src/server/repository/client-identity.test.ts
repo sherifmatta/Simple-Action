@@ -269,13 +269,20 @@ describe("repository scope — identity functions only (AC4, matrix row 'Reposit
     ]);
   });
 
-  it("holds no Todo function yet — those arrive with the stories that consume them", () => {
+  it("holds only the Todo functions whose stories have landed — Story 2.1 added the list", () => {
     // The test files are excluded on purpose: they name the forbidden symbols
     // as assertion data, which is the opposite of exporting them.
     const modules = readdirSync(
       path.join(repositoryRoot, REPOSITORY_DIRECTORY),
     ).filter((file) => file.endsWith(".ts") && !file.endsWith(".test.ts"));
-    expect(modules.sort()).toEqual(["client-identity.ts", "client.ts"]);
+    // `todos.ts` joined the directory with Story 2.1's `listTodos`. This list
+    // is a ratchet, not a ceiling: each of Epics 3 to 5 adds its function to
+    // that same module, and none of them adds a third file.
+    expect(modules.sort()).toEqual([
+      "client-identity.ts",
+      "client.ts",
+      "todos.ts",
+    ]);
 
     const source = modules
       .map((file) =>
@@ -286,8 +293,8 @@ describe("repository scope — identity functions only (AC4, matrix row 'Reposit
       )
       .join("\n");
 
+    // `listTodos` has left this list: Story 2.1 is the story that consumes it.
     for (const todoFunction of [
-      "listTodos",
       "createTodo",
       "setTodoCompleted",
       "deleteTodo",
