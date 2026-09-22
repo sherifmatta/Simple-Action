@@ -221,7 +221,14 @@ describe("the card's children are in DESIGN.md's fixed order (AC5)", () => {
     // The first three regions of the order — add input, error banner region,
     // filter tabs — are the sticky block's occupants, so at the card's own
     // level the order is two children. Nothing renders above the block.
-    expect(children).toEqual(["StickyTopBlock", "div"]);
+    //
+    // Story 2.4 replaced the empty `div` Story 2.3 left with the component
+    // that owns the list region. The assertion is still positional and still
+    // two entries: what changed is that the region now has a name, because it
+    // has contents and a client boundary. Skeletons (2.6), the empty state
+    // (2.8) and their suppression on failure (2.7) are branches inside it
+    // rather than new children here.
+    expect(children).toEqual(["StickyTopBlock", "TodoList"]);
   });
 
   it("gets the sticky block from the one module that declares it", () => {

@@ -193,3 +193,45 @@
   font-weight: 500;
   line-height: 1.3;
 }
+
+/* ---------------------------------------------------------------------------
+   Component recipes whose values have no token behind them (Story 2.4).
+
+   DESIGN.md gives three values as literals inside `components.*` rather than
+   in the `colors`/`rounded`/`spacing` blocks above: the checkbox's 21px square
+   and its 1.75px border, and the Completed row's 1.5px strikethrough. AD-13
+   forbids an arbitrary-value class in a component, and the theme blocks above
+   cannot absorb them either — app/globals.test.ts pins those to exactly the 21
+   colours, 4 radii and 14 spacing tokens DESIGN.md's token blocks name, so a
+   fifteenth spacing token fails that test whether or not DESIGN.md grew one.
+
+   So they are transcribed here, the way the ten typography roles above are: a
+   role is several properties rather than one theme key, and so is a recipe.
+   Only the untokenised literal lives here — everything in these recipes that
+   DOES have a token (the radius, the border colour, the fills, the text
+   colour) stays a utility class on the element, where it is visible.
+   --------------------------------------------------------------------------- */
+
+@utility checkbox-box {
+  /* DESIGN.md `components.checkbox` — `size: 21px`, `border: 1.75px solid`. */
+  width: 21px;
+  height: 21px;
+  border-width: 1.75px;
+}
+
+@utility strikethrough-completed {
+  /* DESIGN.md `components.todo-row-completed.text-decoration` —
+     `line-through 1.5px {colors.text-completed}`. Carried as one recipe
+     because the thickness is the untokenised part and is meaningless without
+     the line it thickens.
+
+     The colour is `currentColor` rather than the token, and that is the rule
+     at the top of this block rather than an omission: the element already
+     carries `{colors.text-completed}` as a utility class, so naming the token
+     again here would be a second place to change it and a second place to be
+     wrong. DESIGN.md gives the line the same colour as the text it strikes
+     through, which is what `currentColor` says. */
+  text-decoration-line: line-through;
+  text-decoration-thickness: 1.5px;
+  text-decoration-color: currentColor;
+}

@@ -25,19 +25,21 @@
 // `metadata` owns.
 
 import { StickyTopBlock } from "./sticky-top-block";
+import { TodoList } from "./todo-list";
 
 export function TodoCard() {
   return (
     <div className="mx-auto max-w-card-max-width rounded-lg bg-card px-gutter py-6 shadow-card">
       <StickyTopBlock />
       {/*
-        The list region. Empty in this story — Story 2.6's skeleton rows,
-        Story 2.4's real rows and Story 2.8's empty state all render into this
-        element, and Story 2.9 names it for assistive technology. It exists now
-        so the order above is structural rather than a convention each of those
-        stories has to re-observe.
+        The list region, which Story 2.4 turned from the empty element Story
+        2.3 left into the component that owns it. Story 2.6's skeleton rows,
+        Story 2.8's empty state and Story 2.7's suppression of both are
+        branches inside it rather than siblings here, because all four are the
+        same region resolving; Story 2.9 names it for assistive technology.
+        The card stays a Server Component — the client boundary is `TodoList`.
       */}
-      <div />
+      <TodoList />
     </div>
   );
 }

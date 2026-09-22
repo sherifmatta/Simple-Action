@@ -1,11 +1,9 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { rmSync } from "node:fs";
 import path from "node:path";
-import postcss from "postcss";
-import tailwindcssPostcss from "@tailwindcss/postcss";
 import ts from "typescript";
 import { afterAll, describe, expect, it } from "vitest";
 import { parseTsx, readMarkup } from "@/test-support/markup";
+import { ruleFor, tailwindCompiler } from "@/test-support/tailwind";
 
 // Covers epics.md Story 1.7 AC5 and Story 2.3 AC1, AC6 and AC7: the card
 // renders on the ground at the correct max width, centred, the sticky block
@@ -28,7 +26,6 @@ import { parseTsx, readMarkup } from "@/test-support/markup";
 // if Tailwind emitted nothing for it, which is exactly the failure mode: an
 // unrecognised utility is silently dropped, not an error.
 
-const repositoryRoot = process.cwd();
 const markup = readMarkup();
 
 function markupOf(file: string) {
@@ -132,31 +129,11 @@ describe("the card is the only thing on the page (1.7 AC5, 2.3 AC1/AC7)", () => 
 
 // --- What those classes actually compile to ---------------------------------
 
-const base = mkdtempSync(path.join(tmpdir(), "simple-action-card-"));
+// Story 2.4 moved this harness to `src/test-support/tailwind.ts`; it had two
+// consumers there and a third arriving, which is the duplication
+// `deferred-work.md` has been tracking. Behaviour here is unchanged.
+const { base, compile } = tailwindCompiler();
 afterAll(() => rmSync(base, { recursive: true, force: true }));
-
-async function compile(classes: string[]): Promise<string> {
-  writeFileSync(
-    path.join(base, "marker.html"),
-    `<div class="${classes.join(" ")}"></div>`,
-  );
-  const input = `@import "${path.join(repositoryRoot, "app", "globals.css")}";\n@source "${path.join(base, "marker.html")}";\n`;
-  const result = await postcss([tailwindcssPostcss({ base })]).process(input, {
-    from: path.join(base, "input.css"),
-  });
-  return result.css;
-}
-
-function ruleFor(css: string, className: string): string {
-  const escaped = className.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const match = css.match(new RegExp(`\\.${escaped}\\s*\\{[^}]*\\}`));
-  if (match === null) {
-    throw new Error(
-      `Tailwind emitted no rule for .${className} — an unrecognised utility is dropped silently, not reported.`,
-    );
-  }
-  return match[0].replace(/\s+/g, " ");
-}
 
 describe("the card is built from DESIGN.md's tokens, not from values (AC5, AD-13)", () => {
   it("compiles every class the shell uses to a theme token", async () => {
