@@ -234,7 +234,7 @@ Every functional requirement maps to exactly one epic that owns it end to end, p
 | **FR-5** Delete a Todo | **Epic 5** — `DELETE /api/todos/:id`, three routes to one dialog, optimistic removal, restore-in-place | Epic 3 (the mutation shape), Epic 4 (the collapse motion) | Epic 6 (UJ-3, UJ-4, the forced delete-failure path) |
 | **FR-6** Persist across sessions | **Epic 1** — identity cookie in middleware, token hashing, schema, owner-scoped repository | Epic 3 (the first point at which persistence is observable: add, reload, still there) | Epic 6 (SM-2 — identical after reload *and* after browser restart; independent across browsers) |
 
-**FR-1 has one consequence that cannot land in Epic 3.** *"Creating a Todo sets the Filter View to All"* requires a Filter View, and there isn't one until Epic 4 ships the tabs. Rather than write an Epic 3 story that depends on a future epic — or stub a single-valued Filter View to satisfy an AC nothing can observe — the behaviour is an acceptance criterion on Epic 4's filter-tabs story (4.4 AC7), where it is testable the day it is written. Every other FR-1 consequence is owned by Epic 3.
+**FR-1 has one consequence that cannot land in Epic 3.** *"Creating a Todo sets the Filter View to All"* requires a Filter View, and there isn't one until Epic 4 ships the tabs. Rather than write an Epic 3 story that depends on a future epic — or stub a single-valued Filter View to satisfy an AC nothing can observe — the behaviour is an acceptance criterion on Epic 4's filter-tabs story (4.3 AC7), where it is testable the day it is written. Every other FR-1 consequence is owned by Epic 3.
 
 **FR-6 is deliberately split.** Its mechanism is structural and lands in Epic 1, because AD-7 and AD-17 must exist before any route handler is written. Its *observable* behaviour needs something to persist, which only exists once Epic 3 can create a Todo. Its full acceptance — browser restart and cross-browser independence — has no UX surface at all and is verified in Epic 6.
 
@@ -264,6 +264,81 @@ All 57 UX-DRs are assigned. Grouped rather than listed one-by-one; the per-story
 | **Cross-cutting** | 35 (each string ships in the story that renders it), 37 ("Done" is banned everywhere), 45 (modelled once in Epic 2, one branch per mutation epic) |
 
 > **Epic 6 may contain only what measures a finished artifact.** UX-DR21 cannot be done earlier — the sticky block's height is not final until every control that occupies it exists. UX-DR48 and UX-DR57 likewise measure something already built. But UX-DR49 (keyboard tab order) and UX-DR53 (44px hit areas) are **construction, not measurement**: a tab order is an emergent property of five epics' worth of controls placed in reading order, and a hit area is a property of the control it belongs to. Neither can be audited into existence. Both are therefore built in the stories that create each control and only *verified* in Epic 6 — which is the same rule `WORK-SPLIT.md` already applies when it says *"no accessibility epic at the end."* Every construction task that leaks into Epic 6 converts it from "prove it" into "do it later," and "do it later" is the epic that gets cut.
+
+### Consolidation Map — 2026-09-22
+
+The remaining backlog was consolidated on 2026-09-22 by sprint change proposal
+(`sprint-change-proposal-2026-09-22.md`). **30 remaining stories became 16 active plus 1 deferred.**
+Epic 1 and Stories 2.1–2.4 were already `done` and were not touched.
+
+Every acceptance criterion from every merged story was carried forward. Nothing was dropped.
+Four criteria were **added**, each one carrying a deferred item forward into the story that inherits it.
+
+| New | Was | Title | ACs |
+|---|---|---|---|
+| **2.5** | 2.5 + 2.6 | Seed the motion module and show skeleton rows while the list loads | 11 |
+| **2.6** | 2.7 + 2.8 + 2.9 | Build the list region's resolved states — error, empty, and what they announce | 20 |
+| **3.1** | 3.1 + 3.2 | Accept and validate a new Todo at the server | 11 |
+| **3.2** | 3.3 | Build the add input | 9 |
+| **3.3** | 3.4 | Add a Todo optimistically, and merge the list that arrives | 10 |
+| **3.4** | 3.5 | Return the user's text when an add fails | 7 |
+| **4.1** | 4.1 | Set a Todo's Completion Status at the server | 6 |
+| **4.2** | 4.2 + 4.3 | The checkbox, and the status change it applies before the server answers | 14 |
+| **4.3** | 4.4 + 4.5 | Build the filter tabs, and make a departing Todo leave visibly | 17 |
+| **4.4** | 4.6 | Revert a toggle the server refused | 7 |
+| **5.1** | 5.1 | Remove a Todo at the server | 6 |
+| **5.2** | 5.2 + 5.3 | Reach delete three ways, confirm once | 15 |
+| **5.3** | 5.4 + 5.5 | Remove before the server answers, restore if refused | 13 |
+| **5.D1** | 5.6 | Teach the swipe once, with motion — **DEFERRED, post-MVP** | 7 |
+| **6.1** | 6.2 + 6.3 + 6.4 | Verify the product end to end, under failure, and under race | 18 |
+| **6.2** | 6.1 + 6.5 + 6.6 + 6.7 | Audit the assembled product — focus, reach, contrast and targets | 21 |
+| **6.3** | 6.8 | Re-verify the README and write the deploy runbook | 5 |
+
+**Criteria added on consolidation**, each carrying a deferred item into its inheriting story:
+
+| New AC | Carries |
+|---|---|
+| 2.5 AC11 | The list region must stay in the DOM while loading (`todo-list.tsx:42` returns `null` today) |
+| 2.6 AC6 | `Retry` consults `identityExpired()` and reloads the document — a `401` is not retryable |
+| 3.3 AC2 | Replace the hand-written `mintIdentityId` stand-in with the real `uuidv7` package, and test time-ordering |
+| 4.3 AC12 | Convert the sticky block's three-slot regex (`sticky-top-block.test.ts:64`) to an element-order assertion |
+
+**Two epics keep four entries rather than three.** Epic 3 keeps Story 3.3 unmerged because it is the
+hardest story in the build — the create must not cancel the in-flight list query, and the arriving
+list merges by id. Epic 4 keeps Story 4.1 separate for the same reason Epic 5 keeps Story 5.1: the two
+server endpoints stay inside their own epics so **Epics 4 and 5 remain parallelizable**, which is the
+whole purpose of Story 2.5's motion module (AC4).
+
+### Requirement Ownership, Resolved to Stories
+
+The FR, NFR and UX-DR coverage maps above assign requirements at epic level, and **epic ownership is
+unchanged by the consolidation**. This table resolves them to the new story numbers.
+
+| Requirement | Owning stories (new numbering) |
+|---|---|
+| **FR-1** Create a Todo | 3.1 (server), 3.2 (input), 3.3 (optimistic insert and merge), 3.4 (add revert); 4.3 AC7 for the Filter-View-to-All consequence |
+| **FR-2** View the Todo List | 2.1, 2.2 (done); 2.5 (skeletons), 2.6 (error, empty, announcements) |
+| **FR-3** Toggle Completion Status | 4.1 (server), 4.2 (checkbox and optimistic change), 4.3 (departure), 4.4 (revert) |
+| **FR-4** Filter the Todo List | 4.3 (tabs, counts, per-view empty states) |
+| **FR-5** Delete a Todo | 5.1 (server), 5.2 (three routes and the dialog), 5.3 (optimistic removal and restore) |
+| **FR-6** Persist across sessions | Epic 1 (mechanism, done); 3.3 AC10 (first observable); 6.1 AC3–AC5 (reload, restart, cross-browser) |
+| **NFR-1** Perceived responsiveness | 3.3, 4.2, 5.3; verified 6.1 |
+| **NFR-2** One responsive web interface | 2.3 (done); verified 6.2 AC6–AC10 |
+| **NFR-3** State coverage | 2.5, 2.6, 3.4, 4.4, 5.3; verified 6.1 AC7–AC13 |
+| **NFR-4** Error handling | 2.6 (the slot, all four kinds); 3.4, 4.4, 5.3 supply their retry closures |
+| **NFR-5** Extensibility | Epic 1 (done) |
+| **NFR-6** Maintainability and deployability | Epic 1 (done); re-verified 6.3 |
+| **UX-DR21** Focus never under the sticky block | 6.2 AC1–AC5 |
+| **UX-DR42** First-run swipe nudge | **5.D1 — deferred post-MVP** |
+| **UX-DR47, 48** Contrast audit | 6.2 AC11–AC15 |
+| **UX-DR49, 53** Tab order and hit areas | Built in 2.6 AC9, 3.2 AC9, 4.2 AC13–AC14, 4.3 AC11, 5.2 AC7/AC15; audited 6.2 AC16–AC18 |
+| **UX-DR54** `prefers-reduced-motion` | 2.5 AC8 (pulse), 4.3 AC16 (departure), 5.3 AC3 (delete collapse); **the nudge clause defers with 5.D1** |
+| **UX-DR55, 57** Responsive and the 500-char ceiling | 6.2 AC6–AC10 |
+| **UX-DR56** Touch and pointer by capability | 3.2 AC6 (autofocus), 5.2 AC4 (swipe and hover) |
+
+> **56 of 57 UX-DRs are assigned to an active story.** UX-DR42 is assigned to Story 5.D1 and travels
+> with its deferral rather than becoming unassigned. Story 6.1 AC2 is the criterion that would first
+> reveal the cost, and Story 5.D1 is the first thing to bring back if it does.
 
 ## Epic List
 
@@ -305,7 +380,7 @@ A user marks a Todo done and sees the mint fill, the filled checkmark and the st
 
 ### Epic 5: Remove a Todo
 
-A user removes a Todo they no longer need. The action is reachable three ways — swipe on touch, a trailing icon on hover, and the keyboard always — and all three open the same confirmation dialog, which traps focus, lands on Cancel, and returns focus somewhere sensible on close rather than dropping it to the document body. Confirming removes the row immediately and the rows below close the gap. If the removal fails, the Todo returns to its original position and says so. On a browser's first-ever visit, and only once, the topmost row nudges sideways to expose the gesture — motion, with nothing said.
+A user removes a Todo they no longer need. The action is reachable three ways — swipe on touch, a trailing icon on hover, and the keyboard always — and all three open the same confirmation dialog, which traps focus, lands on Cancel, and returns focus somewhere sensible on close rather than dropping it to the document body. Confirming removes the row immediately and the rows below close the gap. If the removal fails, the Todo returns to its original position and says so. The first-run swipe nudge that teaches the gesture is specified as Story 5.D1 and **deferred post-MVP** — see that story's risk note.
 
 **FRs covered:** FR-5 (in full)
 **NFRs covered:** NFR-1, NFR-4
@@ -506,9 +581,9 @@ So that what I see is mine, in a stable order, without my having signed in.
 
 **Acceptance Criteria:**
 
-**AC1** — **Given** a request to `GET /api/todos` carrying a valid identity, **When** it is served, **Then** the response is a bare JSON array of the caller's Todos with no envelope, **And** every Todo carries `id`, `text`, `completed` and `created_at` in the shared contract's shape.
+**AC1** — **Given** a request to `GET /api/todos` carrying a valid identity, **When** it is served, **Then** the response is a bare JSON array of the caller's Todos with no envelope, **And** every Todo carries `id`, `text`, `completed` and `createdAt` in the shared contract's shape.
 
-**AC2** — **Given** Todos belonging to the caller, **When** they are returned, **Then** they are ordered `id DESC`, **And** `created_at` is not used as a sort key.
+**AC2** — **Given** Todos belonging to the caller, **When** they are returned, **Then** they are ordered `id DESC`, **And** the `created_at` column is not used as a sort key.
 
 **AC3** — **Given** the repository, **When** `listTodos` is added, **Then** it takes `ownerId` as its first parameter, **And** the route handler passes the resolved identity and builds no query itself.
 
@@ -578,11 +653,13 @@ So that I can tell what is left without reading a single word.
 
 **AC6** — **Given** the row, **When** a click lands on the row body rather than on a control, **Then** nothing happens; the row body is not a click target.
 
-### Story 2.5: Seed the motion module
+### Story 2.5: Seed the motion module and show skeleton rows while the list loads
 
-As a developer implementing any animated behaviour in this product,
-I want every duration and the reduced-motion decision to live in one module from the start,
-So that Epics 4 and 5 can be built in parallel without racing to create it or drifting into two definitions.
+As a person opening the application,
+I want to see the shape of my list while it arrives,
+So that I am never looking at a blank screen, and nothing jumps when the real rows land.
+
+> **Merged 2026-09-22.** Was Story 2.5 (*Seed the motion module*) and Story 2.6 (*Show skeleton rows while the list loads*). AC1–AC4 are the motion module; AC5–AC10 are the skeleton rows. The module is the smaller half and the skeleton pulse is its only consumer in this epic — but AC4 is why the module exists at all and is not negotiable, because Epics 4 and 5 import the same collapse constant from it (AR-27).
 
 **Acceptance Criteria:**
 
@@ -594,31 +671,27 @@ So that Epics 4 and 5 can be built in parallel without racing to create it or dr
 
 **AC4** — **Given** Epics 4 and 5 running in parallel, **When** each imports the collapse duration, **Then** both import the same constant, satisfying AR-27 without either having to create it.
 
-### Story 2.6: Show skeleton rows while the list loads
+**AC5** — **Given** the initial load is in flight, **When** the list region renders, **Then** three skeleton rows appear in the exact geometry of `todo-row-active` — same fill, radius, padding, shadow and minimum height.
 
-As a person opening the application,
-I want to see the shape of my list while it arrives,
-So that I am never looking at a blank screen, and nothing jumps when the real rows land.
+**AC6** — **Given** skeleton rows are showing, **When** the real list lands, **Then** cumulative layout shift attributable to the swap is zero.
 
-**Acceptance Criteria:**
+**AC7** — **Given** skeleton rows, **When** they animate, **Then** they pulse from `hairline` toward `tab-track` over the module's pulse duration, staggered so the pulse is not a single flat beat.
 
-**AC1** — **Given** the initial load is in flight, **When** the list region renders, **Then** three skeleton rows appear in the exact geometry of `todo-row-active` — same fill, radius, padding, shadow and minimum height.
+**AC8** — **Given** `prefers-reduced-motion: reduce`, **When** skeletons render, **Then** the pulse holds still, **And** the skeleton geometry remains, because its job is preventing layout shift rather than animating.
 
-**AC2** — **Given** skeleton rows are showing, **When** the real list lands, **Then** cumulative layout shift attributable to the swap is zero.
+**AC9** — **Given** the initial load is in flight, **When** the rest of the card renders, **Then** the card and the sticky block are already real and interactive; only the list region is skeletal.
 
-**AC3** — **Given** skeleton rows, **When** they animate, **Then** they pulse from `hairline` toward `tab-track` over the module's pulse duration, staggered so the pulse is not a single flat beat.
+**AC10** — **Given** an add, a toggle or a delete, **When** it is in flight, **Then** no skeleton is shown — those are optimistic and have no loading state.
 
-**AC4** — **Given** `prefers-reduced-motion: reduce`, **When** skeletons render, **Then** the pulse holds still, **And** the skeleton geometry remains, because its job is preventing layout shift rather than animating.
+**AC11** — **Given** the list region, **When** the list is loading, **Then** the region is a **persistent element** that the skeletons mount into, **And** it does not leave the DOM. *(Carried from `deferred-work.md` 2026-09-22: `todo-list.tsx:42` is currently `if (data === undefined) return null`, which Story 2.3 did not intend and which this story would otherwise mount skeletons into nothing.)*
 
-**AC5** — **Given** the initial load is in flight, **When** the rest of the card renders, **Then** the card and the sticky block are already real and interactive; only the list region is skeletal.
+### Story 2.6: Build the list region's resolved states — error, empty, and what they announce
 
-**AC6** — **Given** an add, a toggle or a delete, **When** it is in flight, **Then** no skeleton is shown — those are optimistic and have no loading state.
+As a person whose list resolved to nothing, or failed to load,
+I want one predictable place that tells me what happened and offers to try again, and an empty list that reads as finished rather than broken,
+So that every way the load can end has a designed state, and a screen reader learns what a sighted user learns by looking.
 
-### Story 2.7: Build the error banner and the error slot
-
-As a person whose request just failed,
-I want one predictable place that tells me what happened and offers to try again,
-So that a failure is something I can recover from in place rather than something that dead-ends the screen.
+> **Merged 2026-09-22.** Was Story 2.7 (*Build the error banner and the error slot*), Story 2.8 (*Build the empty state in all three variants*) and Story 2.9 (*Announce what the list region is doing*). AC1–AC8 are the error slot and banner; AC9–AC15 are the empty state; AC16–AC19 are the announcements. They were already interlocked before the merge — 2.8's AC6 and AC7 cross-referenced 2.7's load-failure state, and 2.9 was two `announce()` calls on states built in the other two.
 
 **Acceptance Criteria:**
 
@@ -628,53 +701,39 @@ So that a failure is something I can recover from in place rather than something
 
 **AC3** — **Given** a load failure, **When** the banner renders, **Then** it reads `Couldn't load your Todos.` with a `Retry` control, **And** the client maps the error kind to that string rather than forwarding any server message.
 
-**AC4** — **Given** a load failure, **When** the list region renders, **Then** it shows **neither** skeleton rows **nor** any resolved-list treatment, because the list's contents are unknown rather than known-empty.
+**AC4** — **Given** a load failure, **When** the list region renders, **Then** it shows **neither** skeleton rows **nor** any resolved-list treatment, because the list's contents are unknown rather than known-empty. **And** the region itself stays in the DOM, per Story 2.5 AC11.
 
 **AC5** — **Given** a load failure, **When** the user activates `Retry`, **Then** the list request is re-attempted unchanged, **And** the list region returns to skeleton rows while it runs, **And** it resolves to content or to the same banner again.
 
-**AC6** — **Given** an error is displayed and a second, different error occurs, **When** the slot updates, **Then** the newer error replaces the older one, **And** the replaced operation is not retried.
+**AC6** — **Given** a load failure whose cause is an **expired identity**, **When** `Retry` is activated, **Then** it consults `identityExpired()` from `src/client/todos/todo-list-query.ts` and **reloads the document** rather than refetching, because a `401` is not retryable. *(Decision taken in the 2026-09-22 code review of Stories 2.1–2.4 and already implemented; this AC is where the client first honours it.)*
 
-**AC7** — **Given** a retry closure whose target no longer exists, **When** it is invoked, **Then** it is a no-op that clears the slot.
+**AC7** — **Given** an error is displayed and a second, different error occurs, **When** the slot updates, **Then** the newer error replaces the older one, **And** the replaced operation is not retried.
 
-**AC8** — **Given** the `Retry` control, **When** it is measured and tabbed to, **Then** its hit area is at least 44px in both dimensions, **And** it sits in the tab order immediately after the input's position and before the filter tabs, per the reading order this product commits to.
+**AC8** — **Given** a retry closure whose target no longer exists, **When** it is invoked, **Then** it is a no-op that clears the slot.
 
-### Story 2.8: Build the empty state in all three variants
+**AC9** — **Given** the `Retry` control, **When** it is measured and tabbed to, **Then** its hit area is at least 44px in both dimensions, **And** it sits in the tab order immediately after the input's position and before the filter tabs, per the reading order this product commits to.
 
-As a person whose list resolves to nothing,
-I want the screen to tell me so plainly, and to point me at what to do only when there is something to do,
-So that an empty list reads as finished rather than broken.
+**AC10** — **Given** the empty-state component, **When** it is built, **Then** all three variants exist with their exact strings: `Nothing here yet.` over `Type above to add your first Todo.` for All; `Nothing active.` alone; `Nothing completed yet.` alone. **And** only the All variant is reachable in this epic; Epic 4 makes the other two reachable by shipping the Filter Views.
 
-**Acceptance Criteria:**
+**AC11** — **Given** the All variant, **When** it renders, **Then** it shows a centred dashed `hairline` panel holding a 40px mint ring with a plus glyph, the first line at `empty-message` in `text-primary`, and the second at `empty-sub` in `text-muted`.
 
-**AC1** — **Given** the component, **When** it is built, **Then** all three variants exist with their exact strings: `Nothing here yet.` over `Type above to add your first Todo.` for All; `Nothing active.` alone; `Nothing completed yet.` alone. **And** only the All variant is reachable in this epic; Epic 4 makes the other two reachable by shipping the Filter Views.
+**AC12** — **Given** the Active and Completed variants, **When** they render, **Then** each carries its first line only and a check glyph rather than a plus, **And** neither has a second line.
 
-**AC2** — **Given** the All variant, **When** it renders, **Then** it shows a centred dashed `hairline` panel holding a 40px mint ring with a plus glyph, the first line at `empty-message` in `text-primary`, and the second at `empty-sub` in `text-muted`.
+**AC13** — **Given** the empty state, **When** it renders, **Then** it carries no button and no control.
 
-**AC3** — **Given** the Active and Completed variants, **When** they render, **Then** each carries its first line only and a check glyph rather than a plus, **And** neither has a second line.
+**AC14** — **Given** the list is still loading, **When** the list region renders, **Then** the empty state is not shown, **And** there is no flash of it on the way to content.
 
-**AC4** — **Given** the empty state, **When** it renders, **Then** it carries no button and no control.
+**AC15** — **Given** a load failure — the state built in AC3 and AC4 — **When** the list region renders, **Then** the empty state is not shown, because the list's contents are unknown rather than known-empty.
 
-**AC5** — **Given** the list is still loading, **When** the list region renders, **Then** the empty state is not shown, **And** there is no flash of it on the way to content.
+**AC16** — **Given** a load failure followed by a `Retry` that succeeds with zero Todos, **When** the list resolves, **Then** the All empty state appears — completing the resolution path AC5 left open.
 
-**AC6** — **Given** a load failure — the state built in Story 2.7 — **When** the list region renders, **Then** the empty state is not shown, because the list's contents are unknown rather than known-empty.
+**AC17** — **Given** a Filter View resolves to empty, **When** the empty state renders, **Then** its text is announced politely — both lines on All, the single line on the other two.
 
-**AC7** — **Given** a load failure followed by a `Retry` that succeeds with zero Todos, **When** the list resolves, **Then** the All empty state appears — completing the resolution path Story 2.7 AC5 left open.
+**AC18** — **Given** an error occurs, **When** the banner appears, **Then** the applicable error string is announced **assertively**, because it reports a failure the user did not cause.
 
-### Story 2.9: Announce what the list region is doing
+**AC19** — **Given** any announcement, **When** it is made, **Then** it goes through the single `announce(message, urgency)` function from Story 1.7, **And** no component renders its own `aria-live` attribute.
 
-As a person using a screen reader,
-I want to be told when my list resolves to empty and when something fails,
-So that I learn what a sighted user learns by looking.
-
-**Acceptance Criteria:**
-
-**AC1** — **Given** a Filter View resolves to empty, **When** the empty state renders, **Then** its text is announced politely — both lines on All, the single line on the other two.
-
-**AC2** — **Given** an error occurs, **When** the banner appears, **Then** the applicable error string is announced **assertively**, because it reports a failure the user did not cause.
-
-**AC3** — **Given** any announcement, **When** it is made, **Then** it goes through the single `announce(message, urgency)` function from Story 1.7, **And** no component renders its own `aria-live` attribute.
-
-**AC4** — **Given** the two live regions, **When** the DOM is inspected at any point, **Then** there is still exactly one polite and one assertive region.
+**AC20** — **Given** the two live regions, **When** the DOM is inspected at any point, **Then** there is still exactly one polite and one assertive region.
 
 ---
 
@@ -684,15 +743,17 @@ A user types a Todo, presses Enter, and it is at the top of the list before the 
 
 **Requirements in scope:** FR-1 · FR-6 becomes observable · NFR-1, NFR-4 · AR-5, AR-12, AR-17 · UX-DR9, 15, 24, 27, 28, 33, 34, 38–40, 45, 49/53 for the input, 51, 56
 
-### Story 3.1: Accept a new Todo at the server
+### Story 3.1: Accept and validate a new Todo at the server
 
 As a person capturing a task,
-I want the server to store the Todo I submitted, exactly once,
-So that a retry after an uncertain failure gives me one Todo rather than two.
+I want the server to store the Todo I submitted, exactly once, and to re-check what the client already checked,
+So that a retry after an uncertain failure gives me one Todo rather than two, and the API is safe against a caller that is not our interface.
+
+> **Merged 2026-09-22.** Was Story 3.1 (*Accept a new Todo at the server*) and Story 3.2 (*Enforce the validation rule at the server*). AC1–AC6 are the endpoint; AC7–AC11 are its validation rules. Same `POST` handler, same test harness — 3.2's criteria were always the validation rules of the endpoint 3.1 creates.
 
 **Acceptance Criteria:**
 
-**AC1** — **Given** a `POST /api/todos` with a body carrying a client-supplied `id` and `text`, **When** it is served, **Then** a row is created with that id, `completed: false` and a server-set `created_at`, **And** the created Todo is returned bare with no envelope.
+**AC1** — **Given** a `POST /api/todos` with a body carrying a client-supplied `id` and `text`, **When** it is served, **Then** a row is created with that id, `completed: false` and a server-set `created_at` column, **And** the created Todo is returned bare with no envelope, carrying `createdAt` in the shared contract's shape.
 
 **AC2** — **Given** the submitted `id`, **When** the server validates it, **Then** it must be a well-formed UUIDv7 in lowercase canonical form, **And** the server never generates an id itself.
 
@@ -704,25 +765,19 @@ So that a retry after an uncertain failure gives me one Todo rather than two.
 
 **AC6** — **Given** a request with no valid identity, **When** it reaches the route, **Then** it returns `401` without issuing one.
 
-### Story 3.2: Enforce the validation rule at the server
+**AC7** — **Given** a `POST` whose text is empty after trimming, **When** it is served, **Then** it returns an error with kind `create`, **And** no row is created.
 
-As a developer trusting the boundary rather than the caller,
-I want the server to re-check what the client already checked,
-So that the API is safe against a caller that is not our interface.
+**AC8** — **Given** a `POST` whose text exceeds 500 characters, **When** it is served, **Then** it returns an error with kind `create`, **And** no row is created.
 
-**Acceptance Criteria:**
+**AC9** — **Given** the server's validation, **When** it is implemented, **Then** it imports the predicate and the constant from `src/shared/contract/`, **And** neither is retyped.
 
-**AC1** — **Given** a `POST` whose text is empty after trimming, **When** it is served, **Then** it returns an error with kind `create`, **And** no row is created.
+**AC10** — **Given** text that is valid only after trimming, **When** it is stored, **Then** the trimmed form is what persists.
 
-**AC2** — **Given** a `POST` whose text exceeds 500 characters, **When** it is served, **Then** it returns an error with kind `create`, **And** no row is created.
+**AC11** — **Given** any log line produced by this route, **When** it is inspected, **Then** it contains no Todo text.
 
-**AC3** — **Given** the server's validation, **When** it is implemented, **Then** it imports the predicate and the constant from `src/shared/contract/`, **And** neither is retyped.
+### Story 3.2: Build the add input
 
-**AC4** — **Given** text that is valid only after trimming, **When** it is stored, **Then** the trimmed form is what persists.
-
-**AC5** — **Given** any log line produced by this route, **When** it is inspected, **Then** it contains no Todo text.
-
-### Story 3.3: Build the add input
+*(Was Story 3.3. Unchanged in substance. Its two criteria both numbered `AC8` in the previous revision are renumbered AC8 and AC9 here; no criterion was added or removed.)*
 
 As a person with a thought I do not want to lose,
 I want a single always-visible field where typing and pressing Enter is the whole interaction,
@@ -746,9 +801,11 @@ So that capture costs me one gesture and never breaks my rhythm.
 
 **AC8** — **Given** the input is empty, **When** it renders, **Then** its placeholder reads exactly `what needs doing?` in `text-placeholder`, **And** entered text renders in `text-primary` at the `input-text` role.
 
-**AC8** — **Given** the input, **When** it is tabbed to and measured, **Then** it is first in the tab order, **And** its hit area is at least 44px in both dimensions.
+**AC9** — **Given** the input, **When** it is tabbed to and measured, **Then** it is first in the tab order, **And** its hit area is at least 44px in both dimensions.
 
-### Story 3.4: Add a Todo optimistically, and merge the list that arrives
+### Story 3.3: Add a Todo optimistically, and merge the list that arrives
+
+*(Was Story 3.4. Deliberately left unmerged — it is the hardest story in the build and was not bulked up.)*
 
 As a person who just pressed Enter,
 I want my Todo on screen immediately, even if the list it belongs to is still loading,
@@ -760,23 +817,27 @@ So that the input is genuinely live rather than interactive in appearance only.
 
 **AC1** — **Given** a valid submit, **When** the mutation starts, **Then** the client mints a UUIDv7 through a single monotonic generator instance and sends it in the request body, **And** two Todos created in the same millisecond still order correctly.
 
-**AC2** — **Given** the optimistic insert, **When** it is applied, **Then** it is written via `setQueryData` on `['todos']`, **And** the row appears at its `id DESC` position, which for a newly minted UUIDv7 is the top.
+**AC2** — **Given** the id generator, **When** it is implemented, **Then** it uses the real `uuidv7` package rather than a hand-written stand-in, **And** a test asserts that two ids minted by the product's own function compare in time order under `id DESC`. *(Carried from `deferred-work.md` 2026-09-22: `mintIdentityId` is currently a hand-written stand-in, and the `id DESC` ordering scheme rests on a time-ordering property that is asserted in AD-5, `listTodos`, `useTodos` and `todo-list-query.ts` and tested nowhere. This story's optimistic insert is what breaks if the assumption is wrong.)*
 
-**AC3** — **Given** a create is in flight, **When** the mutation runs, **Then** it **does not cancel** the list query.
+**AC3** — **Given** the optimistic insert, **When** it is applied, **Then** it is written via `setQueryData` on `['todos']`, **And** the row appears at its `id DESC` position, which for a newly minted UUIDv7 is the top.
 
-**AC4** — **Given** an unconfirmed optimistic row and a list response arriving, **When** the response lands, **Then** it is **merged into the cache by id**: server rows take their place, an optimistic row whose id is absent from the response is kept, and an id present in both collapses to one entry carrying the server record. **And** the list response never wholesale-replaces cache entries while an unconfirmed create exists.
+**AC4** — **Given** a create is in flight, **When** the mutation runs, **Then** it **does not cancel** the list query.
 
-**AC5** — **Given** a Todo submitted before the list arrives, **When** the screen renders, **Then** the optimistic row shows immediately above the still-pulsing skeleton rows, **And** the optimistic row does not pulse, because it is real.
+**AC5** — **Given** an unconfirmed optimistic row and a list response arriving, **When** the response lands, **Then** it is **merged into the cache by id**: server rows take their place, an optimistic row whose id is absent from the response is kept, and an id present in both collapses to one entry carrying the server record. **And** the list response never wholesale-replaces cache entries while an unconfirmed create exists.
 
-**AC6** — **Given** the add-during-load race, **When** it is exercised, **Then** the Todo is **never dropped and never duplicated**.
+**AC6** — **Given** a Todo submitted before the list arrives, **When** the screen renders, **Then** the optimistic row shows immediately above the still-pulsing skeleton rows, **And** the optimistic row does not pulse, because it is real.
 
-**AC7** — **Given** the server confirms the create, **When** the response lands, **Then** the row's identity is reconciled silently and nothing visible changes — no flash, no re-sort, no position change.
+**AC7** — **Given** the add-during-load race, **When** it is exercised, **Then** the Todo is **never dropped and never duplicated**.
 
-**AC8** — **Given** a successful add, **When** it completes, **Then** the Todo text followed by `added` is announced politely.
+**AC8** — **Given** the server confirms the create, **When** the response lands, **Then** the row's identity is reconciled silently and nothing visible changes — no flash, no re-sort, no position change.
 
-**AC9** — **Given** a successful add, **When** the list is reloaded an hour later, **Then** the Todo is still present — the first point at which FR-6 is observable.
+**AC9** — **Given** a successful add, **When** it completes, **Then** the Todo text followed by `added` is announced politely.
 
-### Story 3.5: Return the user's text when an add fails
+**AC10** — **Given** a successful add, **When** the list is reloaded an hour later, **Then** the Todo is still present — the first point at which FR-6 is observable.
+
+### Story 3.4: Return the user's text when an add fails
+
+*(Was Story 3.5. Unchanged.)*
 
 As a person whose Todo failed to save,
 I want my words back in the input rather than gone,
@@ -808,6 +869,8 @@ A user marks a Todo done and sees it change before the server confirms, marks it
 
 ### Story 4.1: Set a Todo's Completion Status at the server
 
+*(Was Story 4.1. Unchanged — kept separate so Epic 4's server work can start in parallel with Epic 5's.)*
+
 As a person marking work done,
 I want the server to store the status I asked for,
 So that a retry sets the same value rather than flipping it a second time.
@@ -826,11 +889,13 @@ So that a retry sets the same value rather than flipping it a second time.
 
 **AC6** — **Given** a server-side failure, **When** the response is built, **Then** its body carries error kind `update`.
 
-### Story 4.2: Apply the status change before the server answers
+### Story 4.2: The checkbox, and the status change it applies before the server answers
 
 As a person tapping a checkbox,
-I want the change on screen immediately,
-So that the product answers me rather than the network.
+I want one tap to mark a Todo done, the same one to undo it, and the change on screen immediately,
+So that completion costs exactly one interaction in both directions and the product answers me rather than the network.
+
+> **Merged 2026-09-22.** Was Story 4.2 (*Apply the status change before the server answers*) and Story 4.3 (*Make the checkbox the control that toggles*). AC1–AC7 are the optimistic mutation; AC8–AC14 are the control. The control and its optimistic effect are one behaviour — there is no way to demonstrate either half without the other.
 
 **Acceptance Criteria:**
 
@@ -848,33 +913,27 @@ So that the product answers me rather than the network.
 
 **AC7** — **Given** a successful toggle, **When** the page is reloaded, **Then** the Todo's Completion Status is the toggled one — the server confirmation actually persisted rather than only the optimistic change having rendered.
 
-### Story 4.3: Make the checkbox the control that toggles
+**AC8** — **Given** a row, **When** the user taps or clicks its checkbox, **Then** the Completion Status toggles, **And** Completed returns to Active by the same interaction.
 
-As a person with one thing to do per Todo,
-I want a single tap or click to mark it done, and the same one to undo it,
-So that completion costs exactly one interaction in both directions.
+**AC9** — **Given** the checkbox is focused, **When** the user presses Enter or Space, **Then** it activates.
 
-**Acceptance Criteria:**
+**AC10** — **Given** the checkbox, **When** a screen reader reads it, **Then** its Completion Status is exposed as a checked/unchecked state rather than as colour or decoration.
 
-**AC1** — **Given** a row, **When** the user taps or clicks its checkbox, **Then** the Completion Status toggles, **And** Completed returns to Active by the same interaction.
+**AC11** — **Given** a checked checkbox on an **Active** row, **When** it renders, **Then** its fill and border are `accent`. **And Given** a checked checkbox on a **Completed** row, **Then** they are `accent-deep`, because `accent` on mint measures 2.97:1 and fails WCAG 1.4.11.
 
-**AC2** — **Given** the checkbox is focused, **When** the user presses Enter or Space, **Then** it activates.
+**AC12** — **Given** the checkbox receives keyboard focus, **When** the ring renders, **Then** it takes the `-on-complete` variant on a Completed row and the standard variant elsewhere, **And** the ring's geometry is identical in both.
 
-**AC3** — **Given** the checkbox, **When** a screen reader reads it, **Then** its Completion Status is exposed as a checked/unchecked state rather than as colour or decoration.
+**AC13** — **Given** the checkbox's 21px visual mark, **When** its hit area is measured, **Then** it is at least 44px in both dimensions, **And** the mark itself is unchanged.
 
-**AC4** — **Given** a checked checkbox on an **Active** row, **When** it renders, **Then** its fill and border are `accent`. **And Given** a checked checkbox on a **Completed** row, **Then** they are `accent-deep`, because `accent` on mint measures 2.97:1 and fails WCAG 1.4.11.
+**AC14** — **Given** the tab order, **When** a user tabs through a row, **Then** the checkbox comes first within that row, in list order.
 
-**AC5** — **Given** the checkbox receives keyboard focus, **When** the ring renders, **Then** it takes the `-on-complete` variant on a Completed row and the standard variant elsewhere, **And** the ring's geometry is identical in both.
-
-**AC6** — **Given** the checkbox's 21px visual mark, **When** its hit area is measured, **Then** it is at least 44px in both dimensions, **And** the mark itself is unchanged.
-
-**AC7** — **Given** the tab order, **When** a user tabs through a row, **Then** the checkbox comes first within that row, in list order.
-
-### Story 4.4: Build the filter tabs
+### Story 4.3: Build the filter tabs, and make a departing Todo leave visibly
 
 As a person with a list longer than what is left to do,
-I want to narrow it to what matters right now,
-So that the screen is the size of the problem rather than the size of the history.
+I want to narrow it to what matters right now, and to see a Todo leave the view rather than vanish from it,
+So that the screen is the size of the problem, and a change I made reads as caused.
+
+> **Merged 2026-09-22.** Was Story 4.4 (*Build the filter tabs*) and Story 4.5 (*Make a departing Todo leave visibly*). AC1–AC11 are the tabs; AC12–AC16 are the departure transition. The departure exists only because Filter Views do — there is nothing for a row to depart from until the tabs ship.
 
 **Acceptance Criteria:**
 
@@ -896,29 +955,25 @@ So that the screen is the size of the problem rather than the size of the histor
 
 **AC9** — **Given** a reload, **When** the page renders, **Then** the Filter View is All; the selection is not persisted.
 
-**AC10** — **Given** a Filter View that resolves to nothing, **When** the list region renders, **Then** the matching empty-state variant from Story 2.8 appears — making the Active and Completed variants reachable for the first time.
+**AC10** — **Given** a Filter View that resolves to nothing, **When** the list region renders, **Then** the matching empty-state variant from Story 2.6 appears — making the Active and Completed variants reachable for the first time.
 
 **AC11** — **Given** the tab order and hit areas, **When** they are checked, **Then** the three segments follow `Retry` in the tab order, **And** each is at least 44px tall.
 
-### Story 4.5: Make a departing Todo leave visibly
+**AC12** — **Given** the sticky top block, **When** the tabs are placed into its third slot, **Then** its three-slot ordering is asserted by **element order in the rendered markup**, replacing the JSX-comment regex at `sticky-top-block.test.ts:64`. *(Carried from `deferred-work.md` 2026-09-22. This story is the last of the three — with Story 2.6's banner region and Story 3.2's input — to fill a slot, so the conversion lands here.)*
 
-As a person who just completed something while filtered to Active,
-I want to see the change happen before the row goes,
-So that the Todo reads as having left rather than as having vanished.
+**AC13** — **Given** a toggle makes a Todo no longer match the active Filter View, **When** the transition runs, **Then** the row holds in its **new** Completion Status for the module's hold duration, then fades and collapses its height over the collapse duration while the rows below slide up.
 
-**Acceptance Criteria:**
+**AC14** — **Given** the transition, **When** its durations are read, **Then** they come from the motion module seeded in Story 2.5, **And** no duration is inlined.
 
-**AC1** — **Given** a toggle makes a Todo no longer match the active Filter View, **When** the transition runs, **Then** the row holds in its **new** Completion Status for the module's hold duration, then fades and collapses its height over the collapse duration while the rows below slide up.
+**AC15** — **Given** a departure, **When** it completes, **Then** the Todo text followed by `removed from Active` or `removed from Completed` is announced politely.
 
-**AC2** — **Given** the transition, **When** its durations are read, **Then** they come from the motion module seeded in Story 2.5, **And** no duration is inlined.
+**AC16** — **Given** `prefers-reduced-motion: reduce`, **When** a departure occurs, **Then** it cuts straight to the end state — no hold, no fade, no collapse, no slide-up — **And** the live-region announcement still fires, so the information the motion carried is not lost.
 
-**AC3** — **Given** a departure, **When** it completes, **Then** the Todo text followed by `removed from Active` or `removed from Completed` is announced politely.
+**AC17** — **Given** the Filter View is All, **When** a Todo is toggled, **Then** no departure runs, because the row still matches.
 
-**AC4** — **Given** `prefers-reduced-motion: reduce`, **When** a departure occurs, **Then** it cuts straight to the end state — no hold, no fade, no collapse, no slide-up — **And** the live-region announcement still fires, so the information the motion carried is not lost.
+### Story 4.4: Revert a toggle the server refused
 
-**AC5** — **Given** the Filter View is All, **When** a Todo is toggled, **Then** no departure runs, because the row still matches.
-
-### Story 4.6: Revert a toggle the server refused
+*(Was Story 4.6. Unchanged — the refusal path is its own story.)*
 
 As a person whose change did not save,
 I want the screen to go back to what is actually true, and to say so,
@@ -946,9 +1001,11 @@ So that I am never looking at a state the server rejected.
 
 A user removes a Todo they no longer need — reached by swipe, by hover, or by keyboard — confirmed once, gone immediately. If the removal fails, it comes back exactly where it was.
 
-**Requirements in scope:** FR-5 · NFR-1, NFR-4 · AR-7, AR-9, AR-16, AR-30 · UX-DR12, 16, 31, 32, 42, 43, 49/53 for the delete control and dialog buttons, 50, 51, 52, 54, 56
+**Requirements in scope:** FR-5 · NFR-1, NFR-4 · AR-7, AR-9, AR-16, AR-30 · UX-DR12, 16, 31, 32, 43, 49/53 for the delete control and dialog buttons, 50, 51, 52, 54, 56 · **UX-DR42 is deferred with Story 5.D1**
 
 ### Story 5.1: Remove a Todo at the server
+
+*(Was Story 5.1. Unchanged — kept separate so Epic 5's server work can start in parallel with Epic 4's.)*
 
 As a person deleting something,
 I want it gone for good,
@@ -968,11 +1025,13 @@ So that the list holds what I meant it to hold.
 
 **AC6** — **Given** a server-side failure, **When** the response is built, **Then** its body carries error kind `delete`.
 
-### Story 5.2: Reach the delete action three ways
+### Story 5.2: Reach delete three ways, confirm once
 
 As a person on a phone, at a laptop, or on a keyboard,
-I want the delete action available by the means I am already using,
-So that the product does not require a mouse, a gesture, or a guess.
+I want the delete action available by the means I am already using, and to be asked once before anything goes,
+So that the product does not require a mouse, a gesture, or a guess — and a mis-tap does not cost me a Todo.
+
+> **Merged 2026-09-22.** Was Story 5.2 (*Reach the delete action three ways*) and Story 5.3 (*Ask once before removing*). AC1–AC7 are the three routes; AC8–AC15 are the dialog. All three routes open the same dialog, so neither half is demonstrable alone.
 
 **Acceptance Criteria:**
 
@@ -980,7 +1039,7 @@ So that the product does not require a mouse, a gesture, or a guess.
 
 **AC2** — **Given** a pointer device, **When** the user hovers a row, **Then** a trailing line icon appears in `text-muted`, moving to `danger-text` on its own hover, **And** clicking it opens the same dialog.
 
-**AC3** — **Given** a keyboard, **When** the user tabs through a row, **Then** the delete control is reachable **whether or not it is visually revealed**, **And** receiving focus reveals it, **And** Enter or Space opens the same dialog. This route is mandatory and is not a fallback — it is the WCAG 2.2 AA floor.
+**AC3** — **Given** a keyboard, **When** the user tabs through a row, **Then** the delete control is reachable **whether or not it is visually revealed**, **And** receiving focus reveals it, **And** Enter or Space opens the same dialog. This route is mandatory and is not a fallback — it is the WCAG 2.2 AA floor. **And** with Story 5.D1 deferred, it is also the only *taught* route on a touch-only device; see that story's risk note.
 
 **AC4** — **Given** a device supporting both touch and pointer, **When** the routes are offered, **Then** both are available, **And** availability is decided by capability rather than by viewport width.
 
@@ -990,35 +1049,29 @@ So that the product does not require a mouse, a gesture, or a guess.
 
 **AC7** — **Given** the delete control in either presentation, **When** its hit area is measured, **Then** it is at least 44px in both dimensions, **And** it is the **last** focusable control within its row — which places it after the checkbox once Epic 4 ships one, and makes it the row's only focusable control before then. *(Stated as a position rule rather than as "after the checkbox" so this epic does not depend on Epic 4, which may be built in parallel.)*
 
-### Story 5.3: Ask once before removing
+**AC8** — **Given** any of the three routes, **When** the dialog opens, **Then** it reads `Delete this Todo?` with `Cancel` and `Delete`, **And** nothing is removed until the user chooses `Delete`.
 
-As a person about to delete something I cannot get back,
-I want to be asked once, with the safe choice under my hands,
-So that a mis-tap does not cost me a Todo.
+**AC9** — **Given** the dialog is open, **When** the user chooses `Cancel`, **Then** it closes and the Todo List is untouched.
 
-**Acceptance Criteria:**
+**AC10** — **Given** the dialog is open, **When** focus is managed, **Then** it is trapped within the dialog, **And** initial focus lands on **Cancel**, not Delete.
 
-**AC1** — **Given** any of the three routes, **When** the dialog opens, **Then** it reads `Delete this Todo?` with `Cancel` and `Delete`, **And** nothing is removed until the user chooses `Delete`.
+**AC11** — **Given** the dialog is open, **When** the user presses Escape, **Then** it closes exactly as `Cancel` does.
 
-**AC2** — **Given** the dialog is open, **When** the user chooses `Cancel`, **Then** it closes and the Todo List is untouched.
+**AC12** — **Given** the dialog closes by `Cancel` or Escape, **When** focus returns, **Then** it goes to the control that opened it.
 
-**AC3** — **Given** the dialog is open, **When** focus is managed, **Then** it is trapped within the dialog, **And** initial focus lands on **Cancel**, not Delete.
+**AC13** — **Given** the dialog closes by `Delete` and that removed the trigger along with its row, **When** focus returns, **Then** it goes to the **first focusable control of the row that took its place** — the checkbox once Epic 4 has shipped it, the delete control before then — **or** to the input if the list is now empty. **And** focus is never dropped to the document body.
 
-**AC4** — **Given** the dialog is open, **When** the user presses Escape, **Then** it closes exactly as `Cancel` does.
+**AC14** — **Given** the dialog, **When** it renders, **Then** it stacks exactly one level deep, nothing opens on top of it, **And** it has no third button, no checkbox and no "don't ask again".
 
-**AC5** — **Given** the dialog closes by `Cancel` or Escape, **When** focus returns, **Then** it goes to the control that opened it.
+**AC15** — **Given** `Cancel` and `Delete`, **When** they are measured, **Then** each is at least 44px tall, **And** `Delete` is the only filled button in the product.
 
-**AC6** — **Given** the dialog closes by `Delete` and that removed the trigger along with its row, **When** focus returns, **Then** it goes to the **first focusable control of the row that took its place** — the checkbox once Epic 4 has shipped it, the delete control before then — **or** to the input if the list is now empty. **And** focus is never dropped to the document body.
-
-**AC7** — **Given** the dialog, **When** it renders, **Then** it stacks exactly one level deep, nothing opens on top of it, **And** it has no third button, no checkbox and no "don't ask again".
-
-**AC8** — **Given** `Cancel` and `Delete`, **When** they are measured, **Then** each is at least 44px tall, **And** `Delete` is the only filled button in the product.
-
-### Story 5.4: Remove the Todo before the server answers
+### Story 5.3: Remove before the server answers, restore if refused
 
 As a person who just confirmed,
-I want the row gone immediately,
-So that confirming is the end of the interaction rather than the middle of it.
+I want the row gone immediately, and back exactly where it was if the removal fails,
+So that confirming is the end of the interaction rather than the middle of it, and the list never shows a state the server rejected.
+
+> **Merged 2026-09-22.** Was Story 5.4 (*Remove the Todo before the server answers*) and Story 5.5 (*Restore a Todo the server would not remove*). AC1–AC7 are the optimistic removal; AC8–AC13 are the restore. Same optimistic/revert pattern as Stories 4.2 and 4.4, applied once.
 
 **Acceptance Criteria:**
 
@@ -1036,27 +1089,27 @@ So that confirming is the end of the interaction rather than the middle of it.
 
 **AC7** — **Given** the filter-tab counts, **When** the row is removed optimistically, **Then** they update instantly.
 
-### Story 5.5: Restore a Todo the server would not remove
+**AC8** — **Given** a failed delete, **When** the restore runs, **Then** the Todo returns to the list **in its original position**, re-inserted at its `id DESC` position.
 
-As a person whose deletion failed,
-I want the Todo back where it was, and to be told,
-So that the list never shows a state the server rejected.
+**AC9** — **Given** a failed delete, **When** rollback runs, **Then** it re-inserts **only that one row**, **And** no whole-list snapshot is restored.
 
-**Acceptance Criteria:**
+**AC10** — **Given** a failed delete, **When** the banner renders, **Then** it reads `Couldn't save that change.` with `Retry` — sharing the toggle's string because they share a shape.
 
-**AC1** — **Given** a failed delete, **When** the restore runs, **Then** the Todo returns to the list **in its original position**, re-inserted at its `id DESC` position.
+**AC11** — **Given** the delete-failure banner, **When** the user activates `Retry`, **Then** the deletion of the same Todo is re-attempted, **And** the row is removed optimistically again, **And** **the dialog does not re-open** — the user already confirmed, and asking twice would make `Retry` a second confirmation.
 
-**AC2** — **Given** a failed delete, **When** rollback runs, **Then** it re-inserts **only that one row**, **And** no whole-list snapshot is restored.
+**AC12** — **Given** the Todo the retry closure refers to no longer exists, **When** `Retry` is activated, **Then** it does nothing and the banner clears.
 
-**AC3** — **Given** a failed delete, **When** the banner renders, **Then** it reads `Couldn't save that change.` with `Retry` — sharing the toggle's string because they share a shape.
+**AC13** — **Given** a failure, **When** the error is announced, **Then** it is announced assertively.
 
-**AC4** — **Given** the delete-failure banner, **When** the user activates `Retry`, **Then** the deletion of the same Todo is re-attempted, **And** the row is removed optimistically again, **And** **the dialog does not re-open** — the user already confirmed, and asking twice would make `Retry` a second confirmation.
+### Deferred — post-MVP
 
-**AC5** — **Given** the Todo the retry closure refers to no longer exists, **When** `Retry` is activated, **Then** it does nothing and the banner clears.
+The stories below are specified and carried, but are **not** in the sprint and are **not** in `sprint-status.yaml`. They are recorded here rather than deleted because each carries a requirement the coverage maps still reference.
 
-**AC6** — **Given** a failure, **When** the error is announced, **Then** it is announced assertively.
+#### Story 5.D1: Teach the swipe once, with motion — DEFERRED
 
-### Story 5.6: Teach the swipe once, with motion
+*(Was Story 5.6. Deferred 2026-09-22 by sprint change proposal. Owns **UX-DR42** and the nudge clause of **UX-DR54**.)*
+
+> **Risk accepted on deferral.** `EXPERIENCE.md:174` records swipe-to-reveal as a flagged tension against **SM-1** — *"a first-time user completes add, complete, and delete without instruction and without backtracking"* — and names this once-ever nudge as the chosen resolution. Story 5.2 ships three routes to delete: swipe on touch, a trailing icon on hover, and the keyboard. On a **touch-only device with no keyboard**, the swipe is the only non-keyboard route and it is invisible without this nudge. Story 6.1 AC2 verifies SM-1 as an executable journey; if it fails on touch, this story is the first thing to bring back. The motion module (Story 2.5 AC1) therefore keeps its ~600ms nudge constant, and `ARCHITECTURE-SPINE.md`'s "First-run nudge flag" convention stays live.
 
 As a person on a phone who has never used this before,
 I want to discover that a row can be swiped without being told,
@@ -1086,11 +1139,59 @@ The PRD's thesis stops being a claim and becomes a measurement. Every story here
 
 **Requirements in scope:** SM-1 … SM-4 · NFR-1 … NFR-4, NFR-6 re-verified · AR-31 · UX-DR21, 47, 48, 55, 57, plus the end-to-end audit of 49 and 53
 
-### Story 6.1: Keep a focused control out from under the sticky block
+### Story 6.1: Verify the product end to end, under failure, and under race
 
-As a keyboard user tabbing down a long list,
-I want the control I just focused to be visible,
-So that the sticky input and tabs do not hide the thing I am about to act on.
+As a stakeholder deciding whether this is finished,
+I want the product's own journeys executed against a running build, every failure path forced deliberately, and the reconciliation rules tested directly,
+So that SM-1, SM-2 and SM-3 are demonstrated rather than asserted.
+
+> **Merged 2026-09-22.** Was Story 6.2 (*Walk the four journeys end to end*), Story 6.3 (*Force every failure and the race*) and Story 6.4 (*Unit-test what only breaks under a race*). AC1–AC6 are the journeys; AC7–AC13 are the forced failures; AC14–AC18 are the unit tests. One verification story, three levels of test, one running build.
+
+**Acceptance Criteria:**
+
+**AC1** — **Given** Playwright, **When** the suite runs, **Then** UJ-1, UJ-2, UJ-3 and UJ-4 each pass as a scripted journey against a running application.
+
+**AC2** — **Given** UJ-4, **When** it runs, **Then** it completes add, complete and delete **without any instruction step** and without backtracking, which is the executable form of SM-1. **And** with Story 5.D1 deferred, this is the criterion that would first reveal the touch discoverability risk that story's deferral accepted.
+
+**AC3** — **Given** UJ-2 step 6, **When** the page is reloaded, **Then** the Todo List is identical and the Filter View has returned to All.
+
+**AC4** — **Given** SM-2's second half, **When** the browser context is closed and reopened carrying persisted cookies, **Then** the Todo List is identical — confirming the identity cookie's `Max-Age` from Story 1.6 AC2 is doing its job.
+
+**AC5** — **Given** two independent browser contexts, **When** each loads the application, **Then** each sees a different, independent Todo List.
+
+**AC6** — **Given** the suite, **When** it runs in CI, **Then** it passes against the same commit that deploys.
+
+**AC7** — **Given** Playwright route interception, **When** the list request is failed, **Then** the banner reads `Couldn't load your Todos.`, no skeletons and no empty state are shown, **And** `Retry` returns to skeletons and re-requests.
+
+**AC8** — **Given** the create request is failed, **When** the revert runs, **Then** the row is removed, the text is back in the input with the caret at the end, the banner reads `Couldn't add that Todo.`, **And** `Retry` re-sends the same id.
+
+**AC9** — **Given** the update request is failed, **When** the revert runs, **Then** the row returns to its previous status in its original position — including when it had already departed the view — **And** the banner reads `Couldn't save that change.`
+
+**AC10** — **Given** the delete request is failed, **When** the restore runs, **Then** the Todo returns in its original position, the banner reads `Couldn't save that change.`, **And** `Retry` does not re-open the dialog.
+
+**AC11** — **Given** the list request held open and a Todo submitted during it, **When** the list finally lands, **Then** the optimistic row rendered above the skeletons and the merge leaves the Todo **present exactly once**.
+
+**AC12** — **Given** a create retried after an uncertain failure, **When** both requests reach the server, **Then** exactly one Todo exists.
+
+**AC13** — **Given** a newer error arriving while an older one is displayed, **When** the banner updates, **Then** it shows the newer one and the replaced operation is not retried.
+
+**AC14** — **Given** Vitest, **When** merge-by-id is tested, **Then** cases cover: a server row replacing its optimistic twin, an optimistic row absent from the response being kept, an id in both collapsing to one entry carrying the server record, **And** ordering remaining `id DESC` throughout.
+
+**AC15** — **Given** per-entity rollback, **When** it is tested, **Then** a failing create removes only its own row, a failing toggle restores only that row's previous value, and a failing delete re-inserts only that row at its `id DESC` position.
+
+**AC16** — **Given** two mutations in flight, **When** one fails, **Then** the test asserts the other's change survives — the case a whole-list snapshot rollback would break.
+
+**AC17** — **Given** the validation predicate, **When** its Vitest suite from Story 1.5 runs, **Then** it still passes.
+
+**AC18** — **Given** the full suite, **When** it runs, **Then** 100% of tests pass before the epic is accepted. **And** the live-branch repository tests pass against a working `DATABASE_URL` rather than being skipped — see the open caveat in the sprint change proposal of 2026-09-22.
+
+### Story 6.2: Audit the assembled product — focus, reach, contrast and targets
+
+As a keyboard user, a switch user, a person with low vision, and a person holding a phone in one hand,
+I want the finished product measured rather than inspected,
+So that five epics' worth of local decisions add up to one coherent, reachable, legible result.
+
+> **Merged 2026-09-22.** Was Story 6.1 (*Keep a focused control out from under the sticky block*), Story 6.5 (*Verify the product on a phone and at a desktop*), Story 6.6 (*Audit every contrast pair against the table*) and Story 6.7 (*Audit the assembled keyboard path and target sizes*). AC1–AC5 are the sticky-block offset; AC6–AC10 are the responsive pass; AC11–AC15 are the contrast audit; AC16–AC21 are the keyboard and target audit. One pass over the finished app with four checklists — none of them builds anything.
 
 **Acceptance Criteria:**
 
@@ -1104,125 +1205,41 @@ So that the sticky input and tabs do not hide the thing I am about to act on.
 
 **AC5** — **Given** every scroll position and every Filter View, **When** AC3 is re-tested, **Then** it holds in all of them.
 
-### Story 6.2: Walk the four journeys end to end
+**AC6** — **Given** the smallest supported viewport, **When** the product is used one-handed, **Then** every primary action is within reach, **And** the sticky block keeps add one thumb-tap away at any scroll position.
 
-As a stakeholder deciding whether this is finished,
-I want the product's own journeys executed against a running build,
-So that SM-1 and SM-2 are demonstrated rather than asserted.
+**AC7** — **Given** any viewport width, **When** the page is inspected, **Then** the body never scrolls horizontally.
 
-**Acceptance Criteria:**
+**AC8** — **Given** a Todo at the **500-character ceiling** on the **smallest** supported viewport, **When** its row renders, **Then** the text wraps and the row grows, nothing truncates or clips, **And** the result is judged acceptable — this is the `DESIGN.md` flagged tension on Poppins' wide letterforms, and if it fails the lever is `todo-text` size and line-height, never truncation.
 
-**AC1** — **Given** Playwright, **When** the suite runs, **Then** UJ-1, UJ-2, UJ-3 and UJ-4 each pass as a scripted journey against a running application.
+**AC9** — **Given** desktop width, **When** the card exceeds 640px of available space, **Then** it stops growing and the ground widens around it, **And** no sidebar, second column or second region appears at any breakpoint.
 
-**AC2** — **Given** UJ-4, **When** it runs, **Then** it completes add, complete and delete **without any instruction step** and without backtracking, which is the executable form of SM-1.
+**AC10** — **Given** a phone's address-bar collapse, **When** the effective viewport changes, **Then** the sticky block re-seats to the new viewport height.
 
-**AC3** — **Given** UJ-2 step 6, **When** the page is reloaded, **Then** the Todo List is identical and the Filter View has returned to All.
+**AC11** — **Given** `DESIGN.md`'s contrast table, **When** each load-bearing pair is measured against the rendered product, **Then** every computed ratio matches the tabulated value.
 
-**AC4** — **Given** SM-2's second half, **When** the browser context is closed and reopened carrying persisted cookies, **Then** the Todo List is identical — confirming the identity cookie's `Max-Age` from Story 1.6 AC2 is doing its job.
+**AC12** — **Given** `text-completed` on `row-complete`, **When** it is measured, **Then** it is **4.69:1** — the tightest pair in the system, with no headroom — **And** any drift below 4.5:1 fails this story.
 
-**AC5** — **Given** two independent browser contexts, **When** each loads the application, **Then** each sees a different, independent Todo List.
+**AC13** — **Given** the three recorded 1.4.11 corrections, **When** they are checked in the running product, **Then** the checked checkbox on mint uses `accent-deep` at 4.33:1, every control boundary uses `border-control` at 3.28:1, **And** the focus ring on a Completed row uses `accent-deep`.
 
-**AC6** — **Given** the suite, **When** it runs in CI, **Then** it passes against the same commit that deploys.
+**AC14** — **Given** the whole product surface, **When** it is searched, **Then** `accent` never appears on mint — the 2.97:1 pair this design does not use.
 
-### Story 6.3: Force every failure and the race
+**AC15** — **Given** `hairline`, **When** its uses are located, **Then** it appears only on the empty-state dashed panel and the skeleton resting fill, **And** never as the boundary of anything operable.
 
-As a person who will meet this product on a bad network,
-I want every failure path exercised deliberately,
-So that SM-3 is proven by forcing failures rather than by looking at the happy path.
+**AC16** — **Given** the finished product, **When** a user tabs from the top, **Then** the order is input → `Retry` when the banner is occupied → All → Active → Completed → then, per row in list order, checkbox → delete control, **And** it matches reading order.
 
-**Acceptance Criteria:**
+**AC17** — **Given** every row, **When** it is tabbed through, **Then** the delete control is reachable whether or not it is visually revealed, **And** focusing it reveals it.
 
-**AC1** — **Given** Playwright route interception, **When** the list request is failed, **Then** the banner reads `Couldn't load your Todos.`, no skeletons and no empty state are shown, **And** `Retry` returns to skeletons and re-requests.
+**AC18** — **Given** the whole surface, **When** every interactive element is measured, **Then** each has a hit area of at least 44px in both dimensions.
 
-**AC2** — **Given** the create request is failed, **When** the revert runs, **Then** the row is removed, the text is back in the input with the caret at the end, the banner reads `Couldn't add that Todo.`, **And** `Retry` re-sends the same id.
+**AC19** — **Given** the product, **When** keyboard traps are sought, **Then** none exists outside the dialog, **And** the dialog's trap is escapable by Escape.
 
-**AC3** — **Given** the update request is failed, **When** the revert runs, **Then** the row returns to its previous status in its original position — including when it had already departed the view — **And** the banner reads `Couldn't save that change.`
+**AC20** — **Given** every interactive element, **When** it receives keyboard focus, **Then** the focus ring is visible and has not been suppressed anywhere.
 
-**AC4** — **Given** the delete request is failed, **When** the restore runs, **Then** the Todo returns in its original position, the banner reads `Couldn't save that change.`, **And** `Retry` does not re-open the dialog.
+**AC21** — **Given** the finished product, **When** it is audited against the banned list, **Then** there is no drag-to-reorder, no bulk action, no long-press menu, no toast, no undo affordance, no infinite scroll, no hover-only affordance lacking a keyboard equivalent, no modal stack deeper than one, and no animation on open.
 
-**AC5** — **Given** the list request held open and a Todo submitted during it, **When** the list finally lands, **Then** the optimistic row rendered above the skeletons and the merge leaves the Todo **present exactly once**.
+### Story 6.3: Re-verify the README and write the deploy runbook
 
-**AC6** — **Given** a create retried after an uncertain failure, **When** both requests reach the server, **Then** exactly one Todo exists.
-
-**AC7** — **Given** a newer error arriving while an older one is displayed, **When** the banner updates, **Then** it shows the newer one and the replaced operation is not retried.
-
-### Story 6.4: Unit-test what only breaks under a race
-
-As a developer maintaining the optimistic layer,
-I want the reconciliation and rollback rules tested directly,
-So that the product's concentrated complexity has a test that does not need a browser.
-
-**Acceptance Criteria:**
-
-**AC1** — **Given** Vitest, **When** merge-by-id is tested, **Then** cases cover: a server row replacing its optimistic twin, an optimistic row absent from the response being kept, an id in both collapsing to one entry carrying the server record, **And** ordering remaining `id DESC` throughout.
-
-**AC2** — **Given** per-entity rollback, **When** it is tested, **Then** a failing create removes only its own row, a failing toggle restores only that row's previous value, and a failing delete re-inserts only that row at its `id DESC` position.
-
-**AC3** — **Given** two mutations in flight, **When** one fails, **Then** the test asserts the other's change survives — the case a whole-list snapshot rollback would break.
-
-**AC4** — **Given** the validation predicate, **When** its Vitest suite from Story 1.5 runs, **Then** it still passes.
-
-**AC5** — **Given** the full suite, **When** it runs, **Then** 100% of tests pass before the epic is accepted.
-
-### Story 6.5: Verify the product on a phone and at a desktop
-
-As a person using this one-handed on a phone,
-I want the interface to fit the hand and the screen,
-So that SM-4 is true at the sizes people actually hold.
-
-**Acceptance Criteria:**
-
-**AC1** — **Given** the smallest supported viewport, **When** the product is used one-handed, **Then** every primary action is within reach, **And** the sticky block keeps add one thumb-tap away at any scroll position.
-
-**AC2** — **Given** any viewport width, **When** the page is inspected, **Then** the body never scrolls horizontally.
-
-**AC3** — **Given** a Todo at the **500-character ceiling** on the **smallest** supported viewport, **When** its row renders, **Then** the text wraps and the row grows, nothing truncates or clips, **And** the result is judged acceptable — this is the `DESIGN.md` flagged tension on Poppins' wide letterforms, and if it fails the lever is `todo-text` size and line-height, never truncation.
-
-**AC4** — **Given** desktop width, **When** the card exceeds 640px of available space, **Then** it stops growing and the ground widens around it, **And** no sidebar, second column or second region appears at any breakpoint.
-
-**AC5** — **Given** a phone's address-bar collapse, **When** the effective viewport changes, **Then** the sticky block re-seats to the new viewport height.
-
-### Story 6.6: Audit every contrast pair against the table
-
-As a person with low vision,
-I want the contrast promises checked by computation,
-So that the palette's claims are verified rather than believed.
-
-**Acceptance Criteria:**
-
-**AC1** — **Given** `DESIGN.md`'s contrast table, **When** each load-bearing pair is measured against the rendered product, **Then** every computed ratio matches the tabulated value.
-
-**AC2** — **Given** `text-completed` on `row-complete`, **When** it is measured, **Then** it is **4.69:1** — the tightest pair in the system, with no headroom — **And** any drift below 4.5:1 fails this story.
-
-**AC3** — **Given** the three recorded 1.4.11 corrections, **When** they are checked in the running product, **Then** the checked checkbox on mint uses `accent-deep` at 4.33:1, every control boundary uses `border-control` at 3.28:1, **And** the focus ring on a Completed row uses `accent-deep`.
-
-**AC4** — **Given** the whole product surface, **When** it is searched, **Then** `accent` never appears on mint — the 2.97:1 pair this design does not use.
-
-**AC5** — **Given** `hairline`, **When** its uses are located, **Then** it appears only on the empty-state dashed panel and the skeleton resting fill, **And** never as the boundary of anything operable.
-
-### Story 6.7: Audit the assembled keyboard path and target sizes
-
-As a keyboard and switch user,
-I want the finished product's tab order and hit areas verified as a whole,
-So that five epics' worth of controls add up to one coherent path rather than five local decisions.
-
-> Every control's tab position and hit area was **built** in the story that created it. This story only **measures** the assembled result.
-
-**Acceptance Criteria:**
-
-**AC1** — **Given** the finished product, **When** a user tabs from the top, **Then** the order is input → `Retry` when the banner is occupied → All → Active → Completed → then, per row in list order, checkbox → delete control, **And** it matches reading order.
-
-**AC2** — **Given** every row, **When** it is tabbed through, **Then** the delete control is reachable whether or not it is visually revealed, **And** focusing it reveals it.
-
-**AC3** — **Given** the whole surface, **When** every interactive element is measured, **Then** each has a hit area of at least 44px in both dimensions.
-
-**AC4** — **Given** the product, **When** keyboard traps are sought, **Then** none exists outside the dialog, **And** the dialog's trap is escapable by Escape.
-
-**AC5** — **Given** every interactive element, **When** it receives keyboard focus, **Then** the focus ring is visible and has not been suppressed anywhere.
-
-**AC6** — **Given** the finished product, **When** it is audited against the banned list, **Then** there is no drag-to-reorder, no bulk action, no long-press menu, no toast, no undo affordance, no infinite scroll, no hover-only affordance lacking a keyboard equivalent, no modal stack deeper than one, and no animation on open.
-
-### Story 6.8: Re-verify the README and write the deploy runbook
+*(Was Story 6.8. Unchanged.)*
 
 As a developer inheriting this project,
 I want the setup path re-walked against the finished codebase,
@@ -1239,3 +1256,4 @@ So that NFR-6 is true of what shipped, not of what existed in Epic 1.
 **AC4** — **Given** the repository, **When** it is searched, **Then** no secret has a committed default, **And** `DATABASE_URL` is still the only required secret.
 
 **AC5** — **Given** the product surface and the codebase, **When** both are searched for the word "Done", **Then** it appears nowhere as a Filter View name, a label, a tooltip, or in prose.
+

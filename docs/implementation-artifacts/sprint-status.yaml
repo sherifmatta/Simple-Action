@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 09-21-2026 12:00
-last_updated: 09-22-2026 13:10
+last_updated: 09-22-2026 13:29
 project: Simple Action
 project_key: NOKEY
 tracking_system: file-system
@@ -52,46 +52,32 @@ development_status:
   2-2-fetch-the-todo-list-into-the-client: done
   2-3-build-the-card-the-scroll-model-and-the-sticky-top-block: done
   2-4-render-a-todo-in-both-completion-statuses: done
-  2-5-seed-the-motion-module: backlog
-  2-6-show-skeleton-rows-while-the-list-loads: backlog
-  2-7-build-the-error-banner-and-the-error-slot: backlog
-  2-8-build-the-empty-state-in-all-three-variants: backlog
-  2-9-announce-what-the-list-region-is-doing: backlog
+  2-5-seed-the-motion-module-and-show-skeleton-rows-while-the-list: backlog
+  2-6-build-the-list-region-s-resolved-states-error-empty-and-what: backlog
   epic-2-retrospective: optional
 
   epic-3: backlog
-  3-1-accept-a-new-todo-at-the-server: backlog
-  3-2-enforce-the-validation-rule-at-the-server: backlog
-  3-3-build-the-add-input: backlog
-  3-4-add-a-todo-optimistically-and-merge-the-list-that-arrives: backlog
-  3-5-return-the-user-s-text-when-an-add-fails: backlog
+  3-1-accept-and-validate-a-new-todo-at-the-server: backlog
+  3-2-build-the-add-input: backlog
+  3-3-add-a-todo-optimistically-and-merge-the-list-that-arrives: backlog
+  3-4-return-the-user-s-text-when-an-add-fails: backlog
   epic-3-retrospective: optional
 
   epic-4: backlog
   4-1-set-a-todo-s-completion-status-at-the-server: backlog
-  4-2-apply-the-status-change-before-the-server-answers: backlog
-  4-3-make-the-checkbox-the-control-that-toggles: backlog
-  4-4-build-the-filter-tabs: backlog
-  4-5-make-a-departing-todo-leave-visibly: backlog
-  4-6-revert-a-toggle-the-server-refused: backlog
+  4-2-the-checkbox-and-the-status-change-it-applies-before-the-ser: backlog
+  4-3-build-the-filter-tabs-and-make-a-departing-todo-leave-visibl: backlog
+  4-4-revert-a-toggle-the-server-refused: backlog
   epic-4-retrospective: optional
 
   epic-5: backlog
   5-1-remove-a-todo-at-the-server: backlog
-  5-2-reach-the-delete-action-three-ways: backlog
-  5-3-ask-once-before-removing: backlog
-  5-4-remove-the-todo-before-the-server-answers: backlog
-  5-5-restore-a-todo-the-server-would-not-remove: backlog
-  5-6-teach-the-swipe-once-with-motion: backlog
+  5-2-reach-delete-three-ways-confirm-once: backlog
+  5-3-remove-before-the-server-answers-restore-if-refused: backlog
   epic-5-retrospective: optional
 
   epic-6: backlog
-  6-1-keep-a-focused-control-out-from-under-the-sticky-block: backlog
-  6-2-walk-the-four-journeys-end-to-end: backlog
-  6-3-force-every-failure-and-the-race: backlog
-  6-4-unit-test-what-only-breaks-under-a-race: backlog
-  6-5-verify-the-product-on-a-phone-and-at-a-desktop: backlog
-  6-6-audit-every-contrast-pair-against-the-table: backlog
-  6-7-audit-the-assembled-keyboard-path-and-target-sizes: backlog
-  6-8-re-verify-the-readme-and-write-the-deploy-runbook: backlog
+  6-1-verify-the-product-end-to-end-under-failure-and-under-race: backlog
+  6-2-audit-the-assembled-product-focus-reach-contrast-and-targets: backlog
+  6-3-re-verify-the-readme-and-write-the-deploy-runbook: backlog
   epic-6-retrospective: optional
