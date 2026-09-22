@@ -43,7 +43,7 @@ development_status:
   1-4-establish-the-repository-as-the-only-database-module: done
   1-5-define-the-shared-contract: done
   1-6-issue-and-resolve-the-client-identity: done
-  1-7-mount-the-application-shell: backlog
+  1-7-mount-the-application-shell: done
   1-8-ship-the-readme-and-the-first-deploy-and-time-the-path: backlog
   epic-1-retrospective: optional
 

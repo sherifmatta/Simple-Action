@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import { Poppins } from "next/font/google";
+import { AppProviders } from "@/client/providers";
 import "./globals.css";
 
 // DESIGN.md §Typography: one typeface, Poppins. It ships no variable axis, so
@@ -33,12 +34,34 @@ export const metadata: Metadata = {
   description: "A Todo List small enough to finish.",
 };
 
-// Placeholder root layout. Story 1.7 mounts the query client, the live regions
-// and the error slot here.
+// The root layout is a Server Component and stays one (Next.js `layout.js`
+// reference: the root layout must define `<html>` and `<body>`). The three
+// shell singletons — the query client, the two live regions and the error slot
+// — need React context, which Server Components cannot provide, so they are
+// mounted through the one `"use client"` boundary in `@/client/providers`.
+// Mounting them here, once, is what stops a feature story from inventing its
+// own state store, its own `aria-live` element or its own error surface
+// (AD-8, AD-9, AD-12).
+//
+// `<body>` carries the ground and the default ink, both resolving to
+// DESIGN.md tokens transcribed in app/globals.css — no hex literal, no
+// arbitrary value (AD-13).
+//
+// `min-h-dvh`, not `min-h-screen`: `100vh` is mobile Safari's *large*
+// viewport, so the page would scroll by the URL-bar delta with no content
+// under it. `dvh` is what "the ground is behind the card at every viewport
+// height" actually means.
+//
+// `overflow-x-hidden` transcribes DESIGN.md:356 — "No horizontal scrolling on
+// the page body, **ever**, at any viewport width" — which the mockups enforce
+// on `body`. This story is the only one that owns `<body>`, so leaving it out
+// would mean the first long-unbroken-Todo story has to rediscover it.
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en" className={poppins.variable}>
-      <body>{children}</body>
+      <body className="min-h-dvh overflow-x-hidden bg-ground text-text-primary">
+        <AppProviders>{children}</AppProviders>
+      </body>
     </html>
   );
 }

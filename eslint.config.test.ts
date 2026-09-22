@@ -51,7 +51,7 @@ type Violation = {
   filePath: string;
   code: string;
   ruleId: string;
-  names: "AD-1" | "AD-2" | null;
+  names: "AD-1" | "AD-2" | "AD-12" | null;
 };
 
 const violations: Violation[] = [
@@ -292,6 +292,109 @@ const reviewViolations: Violation[] = [
 
 violations.push(...reviewViolations);
 
+// --- Cases added by Story 1.7 (AD-12, one live region one announcer) --------
+// `announce(message, urgency)` is only the single announcing function AD-12
+// names for as long as nothing else can mount a live region of its own. These
+// fixtures are what make that a wall rather than a comment.
+
+const ariaLiveViolations: Violation[] = [
+  {
+    name: "AD-12: a component declares its own aria-live",
+    filePath: "src/client/components/probe.tsx",
+    code: `export function Probe() {\n  return <div aria-live="polite" />;\n}\n`,
+    ruleId: "no-restricted-syntax",
+    names: "AD-12",
+  },
+  {
+    name: "AD-12: an app/ page declares its own aria-live",
+    filePath: "app/probe/page.tsx",
+    code: `export default function Page() {\n  return <p aria-live="assertive">saved</p>;\n}\n`,
+    ruleId: "no-restricted-syntax",
+    names: "AD-12",
+  },
+  {
+    // A sibling of the exempt file, so the exemption is proved to be
+    // file-scoped rather than directory-scoped.
+    name: "AD-12: another module in src/client/feedback/ declares aria-live",
+    filePath: "src/client/feedback/probe.tsx",
+    code: `export function Probe() {\n  return <span aria-live="polite" />;\n}\n`,
+    ruleId: "no-restricted-syntax",
+    names: "AD-12",
+  },
+  {
+    // The query-hook block is a separate config object, so it needs its own
+    // restatement of the rule — and therefore its own fixture.
+    name: "AD-12: a query hook declares aria-live",
+    filePath: "src/client/todos/probe.tsx",
+    code: `export function Probe() {\n  return <div aria-live="polite" />;\n}\n`,
+    ruleId: "no-restricted-syntax",
+    names: "AD-12",
+  },
+  {
+    // The JSX selector cannot see a props object built as a literal.
+    name: "AD-12: aria-live reaches the DOM through a props object",
+    filePath: "src/client/components/probe.ts",
+    code: `export const probe = { "aria-live": "polite" };\n`,
+    ruleId: "no-restricted-syntax",
+    names: "AD-12",
+  },
+  {
+    name: "AD-12: a root-level module declares aria-live",
+    filePath: "probe.tsx",
+    code: `export const probe = <div aria-live="polite" />;\n`,
+    ruleId: "no-restricted-syntax",
+    names: "AD-12",
+  },
+];
+
+violations.push(...ariaLiveViolations);
+
+// The implicit live regions. `role="alert"`, `role="status"` and `role="log"`
+// each carry an implied `aria-live`, so they are the way a second live region
+// arrives without the word `aria-live` appearing anywhere. The error-banner
+// mockup uses exactly this, which is why these fixtures exist before the
+// banner does.
+
+const implicitLiveRegionViolations: Violation[] = [
+  {
+    name: "AD-12: a component uses role=alert, an implicit live region",
+    filePath: "src/client/components/probe.tsx",
+    code: `export function Probe() {\n  return <div role="alert">failed</div>;\n}\n`,
+    ruleId: "no-restricted-syntax",
+    names: "AD-12",
+  },
+  {
+    name: "AD-12: a component uses role=status",
+    filePath: "src/client/components/probe.tsx",
+    code: `export function Probe() {\n  return <div role="status">saved</div>;\n}\n`,
+    ruleId: "no-restricted-syntax",
+    names: "AD-12",
+  },
+  {
+    name: "AD-12: a component uses role=log",
+    filePath: "src/client/components/probe.tsx",
+    code: `export function Probe() {\n  return <div role="log" />;\n}\n`,
+    ruleId: "no-restricted-syntax",
+    names: "AD-12",
+  },
+  {
+    name: "AD-12: role=alert reaches the DOM through a props object",
+    filePath: "src/client/components/probe.ts",
+    code: `export const probe = { role: "alert" };\n`,
+    ruleId: "no-restricted-syntax",
+    names: "AD-12",
+  },
+  {
+    name: "AD-12: aria-live is set imperatively",
+    filePath: "src/client/components/probe.ts",
+    code: `export const probe = (node: Element) => node.setAttribute("aria-live", "polite");\n`,
+    ruleId: "no-restricted-syntax",
+    names: "AD-12",
+  },
+];
+
+violations.push(...implicitLiveRegionViolations);
+
 const exemptions: { name: string; filePath: string; code: string }[] = [
   {
     name: "a query hook is the sanctioned fetch site",
@@ -327,6 +430,22 @@ const exemptions: { name: string; filePath: string; code: string }[] = [
     name: "client code may import next/server",
     filePath: "src/client/components/probe.ts",
     code: `import { NextResponse } from "next/server";\nexport const probe = NextResponse;\n`,
+  },
+  {
+    // Only the three live-region roles are denied. Banning `role` outright
+    // would make the rule an obstacle to ARIA rather than a wall around
+    // announcements.
+    name: "a non-live-region role is untouched",
+    filePath: "src/client/components/probe.tsx",
+    code: `export function Probe() {\n  return <div role="dialog" />;\n}\n`,
+  },
+  {
+    // The exemption is keyed to this exact path. If the announcer is ever
+    // moved or renamed without moving the config block, this case fails —
+    // which is the point.
+    name: "the announcer, and only the announcer, may declare aria-live",
+    filePath: "src/client/feedback/announcer.tsx",
+    code: `export function Probe() {\n  return (\n    <>\n      <div aria-live="polite" />\n      <div aria-live="assertive" />\n    </>\n  );\n}\n`,
   },
 ];
 

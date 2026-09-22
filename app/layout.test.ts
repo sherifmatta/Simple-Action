@@ -300,3 +300,49 @@ describe("app/layout.tsx — negative fixtures prove the guards actually catch r
     expect(fontGuardViolations(fixture)).toContain("html-classname-drifted");
   });
 });
+
+// --- Story 1.7: the shell is mounted here, once -----------------------------
+//
+// Matrix-free story, but the same rigor: AC1 ("a `QueryClientProvider` wraps
+// the tree") and AC2 ("exactly one polite and one assertive live region") are
+// claims about what this file mounts, and the cheapest way to break either is
+// to move the providers below `children`, or to add a second boundary. Both
+// are AST-visible here; `src/client/providers.test.ts` checks the composition
+// on the other side of the boundary.
+
+function jsxElementNames(sourceFile: ts.SourceFile): string[] {
+  const names: string[] = [];
+  function visit(node: ts.Node) {
+    if (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) {
+      names.push(node.tagName.getText(sourceFile));
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(sourceFile);
+  return names;
+}
+
+describe("app/layout.tsx — the application shell is mounted once, at the root", () => {
+  const sourceFile = parse(layoutPath, source);
+  const elements = jsxElementNames(sourceFile);
+
+  it("mounts exactly one client boundary, and `children` goes inside it", () => {
+    expect(elements).toEqual(["html", "body", "AppProviders"]);
+    expect(source).toMatch(/<AppProviders>\{children\}<\/AppProviders>/);
+  });
+
+  it("stays a Server Component — the boundary is @/client/providers, not this file", () => {
+    expect(source).not.toMatch(/^\s*["']use client["']/m);
+    expect(source).toMatch(
+      /import \{ AppProviders \} from "@\/client\/providers";/,
+    );
+  });
+
+  it("puts the ground on <body> from DESIGN.md's tokens (AC5)", () => {
+    const body = elements.indexOf("body");
+    expect(body).toBeGreaterThan(-1);
+    expect(source).toMatch(
+      /<body className="min-h-dvh overflow-x-hidden bg-ground text-text-primary">/,
+    );
+  });
+});

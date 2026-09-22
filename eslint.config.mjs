@@ -67,6 +67,57 @@ const noComponentFetchSyntax = [
 // selector cannot see.
 const noComponentFetchGlobal = ["error", { name: "fetch", message: NO_FETCH }];
 
+// --- AD-12: one live region, one announcer. ---------------------------------
+// Exactly one polite and one assertive live region exist, and they are
+// declared in src/client/feedback/announcer.tsx. Everything that wants to say
+// something calls `announce(message, urgency)`. A second `aria-live` element
+// does not fail loudly — it produces duplicate, colliding or silently dropped
+// announcements, which is precisely the class of bug nobody notices without a
+// screen reader, so the wall is a lint rule rather than a convention.
+
+const AD_12 =
+  "AD-12: no component declares its own aria-live. Exactly two live regions exist, in src/client/feedback/announcer.tsx; call announce(message, urgency) from useAnnounce() instead.";
+
+const noAriaLive = [
+  { selector: "JSXAttribute[name.name='aria-live']", message: AD_12 },
+  // `createElement("div", { "aria-live": "polite" })`, a spread props object,
+  // or a computed `{ ["aria-live"]: … }` — none of which is a JSXAttribute, so
+  // the selector above cannot see any of them. The key is always a string
+  // literal because `aria-live` is not a valid identifier, which is why there
+  // is no `key.name` variant to match.
+  { selector: "Property[key.value='aria-live']", message: AD_12 },
+  // `el.setAttribute("aria-live", …)` — the imperative spelling, which is
+  // neither a JSX attribute nor an object key.
+  {
+    selector:
+      "CallExpression[callee.property.name='setAttribute'][arguments.0.value='aria-live']",
+    message: AD_12,
+  },
+  // The implicit live regions. `role="alert"`, `role="status"` and
+  // `role="log"` each carry an implied `aria-live` in ARIA, so they produce
+  // exactly the duplicate and colliding announcements AD-12 forbids while
+  // containing none of the text the selectors above look for. This is not
+  // hypothetical: the error-banner mockup
+  // (docs/planning-artifacts/ux-designs/…/mockups/key-states.html) is
+  // `role="alert" aria-live="polite"`, so the story that builds the banner
+  // will reach for it. The banner announces through `announce(message,
+  // "assertive")` instead.
+  ...["alert", "status", "log"].flatMap((role) => [
+    {
+      selector: `JSXAttribute[name.name='role'][value.value='${role}']`,
+      message: AD_12,
+    },
+    {
+      selector: `Property[key.name='role'][value.value='${role}']`,
+      message: AD_12,
+    },
+    {
+      selector: `Property[key.value='role'][value.value='${role}']`,
+      message: AD_12,
+    },
+  ]),
+];
+
 // --- AD-2: only src/server/repository/ may import the Drizzle client. --------
 // Deny the whole drizzle-orm namespace and every raw Postgres driver, then
 // re-allow the pure schema/SQL entrypoints Story 1.3's schema needs.
@@ -193,6 +244,7 @@ const eslintConfig = defineConfig([
       "no-restricted-syntax": [
         "error",
         noUseServerDirective,
+        ...noAriaLive,
         ...noDrizzleDynamicImport,
       ],
       "no-restricted-imports": [
@@ -213,6 +265,7 @@ const eslintConfig = defineConfig([
       "no-restricted-syntax": [
         "error",
         noUseServerDirective,
+        ...noAriaLive,
         ...noDrizzleDynamicImport,
         ...noComponentFetchSyntax,
       ],
@@ -234,6 +287,7 @@ const eslintConfig = defineConfig([
       "no-restricted-syntax": [
         "error",
         noUseServerDirective,
+        ...noAriaLive,
         ...noDrizzleDynamicImport,
       ],
       "no-restricted-imports": [
@@ -258,6 +312,7 @@ const eslintConfig = defineConfig([
       "no-restricted-syntax": [
         "error",
         noUseServerDirective,
+        ...noAriaLive,
         ...noDrizzleDynamicImport,
         ...noComponentFetchSyntax,
       ],
@@ -279,6 +334,7 @@ const eslintConfig = defineConfig([
       "no-restricted-syntax": [
         "error",
         noUseServerDirective,
+        ...noAriaLive,
         ...noDrizzleDynamicImport,
       ],
       "no-restricted-imports": [
@@ -298,6 +354,7 @@ const eslintConfig = defineConfig([
       "no-restricted-syntax": [
         "error",
         noUseServerDirective,
+        ...noAriaLive,
         ...noDrizzleDynamicImport,
       ],
       "no-restricted-imports": [
@@ -318,6 +375,7 @@ const eslintConfig = defineConfig([
       "no-restricted-syntax": [
         "error",
         noUseServerDirective,
+        ...noAriaLive,
         ...noDrizzleDynamicImport,
       ],
       "no-restricted-imports": [
@@ -338,6 +396,7 @@ const eslintConfig = defineConfig([
       "no-restricted-syntax": [
         "error",
         noUseServerDirective,
+        ...noAriaLive,
         ...noDrizzleDynamicImport,
       ],
       "no-restricted-imports": [
@@ -354,8 +413,33 @@ const eslintConfig = defineConfig([
   {
     files: [within("src/server/repository")],
     rules: {
-      "no-restricted-syntax": ["error", noUseServerDirective],
+      "no-restricted-syntax": ["error", noUseServerDirective, ...noAriaLive],
       "no-restricted-imports": ["error", { patterns: [noClientImport] }],
+    },
+  },
+
+  // src/client/feedback/announcer.tsx — the one file that may declare
+  // `aria-live`, because it is where the two live regions AD-12 permits are
+  // declared. It must stay LAST: last-match-wins is what makes this an
+  // exemption rather than a no-op, and everything the `src/client` block above
+  // applies to this file is restated here minus `noAriaLive`.
+  {
+    files: ["src/client/feedback/announcer.tsx"],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        noUseServerDirective,
+        ...noDrizzleDynamicImport,
+        ...noComponentFetchSyntax,
+      ],
+      "no-restricted-globals": noComponentFetchGlobal,
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: [drizzleRootPath],
+          patterns: [noDrizzleClientImport, noServerImport],
+        },
+      ],
     },
   },
 ]);
