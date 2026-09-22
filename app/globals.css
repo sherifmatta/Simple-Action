@@ -235,3 +235,98 @@
   text-decoration-thickness: 1.5px;
   text-decoration-color: currentColor;
 }
+
+/* ---------------------------------------------------------------------------
+   Skeleton rows (Story 2.5; DESIGN.md `components.skeleton-row`,
+   mockups/key-states.html).
+
+   The same argument as the block above, plus one more. The bar's 12px height
+   and its three widths, and the two stagger delays, are literals DESIGN.md and
+   the mockup give with no token behind them; AD-13 forbids an arbitrary-value
+   class and app/globals.test.ts pins the theme's token counts exact, so a
+   recipe is the only home they have.
+
+   The extra reason is that the three rows *differ* — a different pulse delay
+   and a different bar width each — and a component cannot express that
+   difference without breaking something. A computed `className` fails
+   `dynamicClassNames()`, an inline `style` fails `opaqueMarkup()`, and an
+   arbitrary-value width class fails the AD-13 scan in app/page.test.ts. So
+   the variation is carried by position selectors here, which is also how the
+   mockup carries it.
+
+   Everything in these recipes that HAS a token stays a utility class on the
+   element, per the rule the block above states: the resting fill is
+   `bg-hairline`, the radii are `rounded-sm` and `rounded-full`, and the row's
+   whole geometry is the Active row's own class string.
+
+   There is deliberately no `@media (prefers-reduced-motion: reduce)` block in
+   this file. Reading the preference twice — once here and once in
+   src/client/motion/motion.ts — is two homes for one decision and fails Story
+   2.5 AC2; the module is the single reader and `[data-still]` below is the
+   marker it produces. CSS could suppress this pulse but not the two JS-timed
+   behaviours Epics 4 and 5 change, so the module has to read it regardless.
+   --------------------------------------------------------------------------- */
+
+@keyframes skeleton-pulse {
+  0%, 100% { background-color: var(--color-hairline); }
+  50% { background-color: var(--color-tab-track); }
+}
+
+@utility skeleton-box {
+  /* The checkbox placeholder, at `components.checkbox`'s own 21px square —
+     the same value `checkbox-box` above carries, and without it the swap
+     would not be the zero-shift one DESIGN.md claims. The border-width is
+     absent on purpose: a skeleton draws no control edge. */
+  width: 21px;
+  height: 21px;
+}
+
+@utility skeleton-bar {
+  /* One bar, not two (mockups/key-states.html). An Active row's content box
+     is governed by the 21px checkbox, so one bar of 12px lands inside it and
+     shifts nothing; a second stacked bar would push the content box past
+     21px and move every row down when the real list arrives. */
+  height: 12px;
+  width: 70%;
+}
+
+@utility skeleton-row {
+  /* The pulse. `1400ms` is DESIGN.md's `pulse-duration` and is the same
+     number as SKELETON_PULSE_MS in src/client/motion/motion.ts — a CSS
+     animation cannot read a TypeScript constant, so the two are spelled
+     separately and motion.test.ts compiles this file to assert they agree. */
+  & > * { animation: skeleton-pulse 1400ms ease-in-out infinite; }
+
+  /* Staggered so the three rows are not one flat beat (DESIGN.md
+     `components.skeleton-row`; the mockup's .12s/.24s).
+
+     Keyed on adjacency between skeleton rows rather than on `:nth-child` of
+     the list region, because the region is not skeletons-only for long:
+     Story 3.3 renders an optimistic row above them during load
+     (EXPERIENCE.md:149), and under `:nth-child` that row would silently take
+     the first skeleton's delay and shift the other two down a step. Sibling
+     chains count skeletons, which is what the stagger is actually about. */
+  .skeleton-row + & > * { animation-delay: 120ms; }
+  .skeleton-row + .skeleton-row + & > * { animation-delay: 240ms; }
+
+  /* And the bar's width varies with position for the same reason. Targeted
+     by name rather than as `> :last-child`, so adding a third placeholder to
+     a row cannot silently reassign the width to it. */
+  .skeleton-row + & > .skeleton-bar { width: 52%; }
+  .skeleton-row + .skeleton-row + & > .skeleton-bar { width: 61%; }
+
+  /* Stillness, from the one marker the motion module sets on the list region.
+     `[data-still="true"] > .skeleton-row > *` is (0,3,0) against the pulse
+     rule's (0,1,0), so it wins on specificity rather than on source order —
+     which it has to, because the production minifier emits it first.
+
+     The value is required and the relationship is the region's own child:
+     matching on attribute presence alone would freeze the pulse for
+     `data-still="false"`, and matching from any ancestor depth would let an
+     unrelated marker elsewhere in the tree do the same.
+
+     The geometry stays and the resting fill is the element's own
+     `bg-hairline` — under reduced motion the skeletons still do their job,
+     which is holding the layout, not animating. */
+  [data-still="true"] > & > * { animation: none; }
+}

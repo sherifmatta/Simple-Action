@@ -7,10 +7,11 @@
 //
 // It is the placement `deferred-work.md` names for the tree-walk duplication
 // it records ("one `src/test-support/source-files.ts` imported by all six").
-// This is deliberately the narrower half of that job: the *markup* surface,
-// which is `.tsx` under `app/` and `src/client/`. Migrating the six existing
-// copies of the generic source walk is still outstanding and still theirs —
-// those scan `.ts` as well and belong to done stories' tests.
+// Story 2.3 took the narrower half: the *markup* surface, which is `.tsx`
+// under `app/` and `src/client/`. Story 2.5 added `readSources()` below, the
+// generic `.ts`/`.tsx` walk the entry asks for. The six existing copies in
+// done stories' tests are still unmigrated — a home for the walk now exists,
+// so what remains of that entry is moving them onto it.
 //
 // Classes come out of the TypeScript AST, not out of the file text. Every file
 // this walks discusses `sticky`, `overflow`, fades and scrollbars *in its
@@ -150,6 +151,58 @@ function filesUnder(directory: string, extension: string): string[] {
 /** Every `.tsx` under `MARKUP_ROOTS`, test files excluded. */
 export function markupFiles(): string[] {
   return MARKUP_ROOTS.flatMap((root) => filesUnder(root, ".tsx"));
+}
+
+/** Everywhere in this product that ships TypeScript, markup or otherwise. */
+export const SOURCE_ROOTS = ["app", "src"];
+
+/** The repository root's own `.ts` files, which belong to no directory. */
+function rootSourceFiles(): string[] {
+  return readdirSync(repositoryRoot, { withFileTypes: true })
+    .filter(
+      (entry) =>
+        entry.isFile() &&
+        path.extname(entry.name) === ".ts" &&
+        !entry.name.includes(".test."),
+    )
+    .map((entry) => entry.name);
+}
+
+/**
+ * Every `.ts` and `.tsx` the product ships, as `{ file, source }`.
+ *
+ * The markup walk above reads `.tsx` under `app/` and `src/client/`, which is
+ * the right surface for a claim about class names and the wrong one for a
+ * claim about the product as a whole. Story 2.5 needs three of the latter —
+ * that the motion-preference media query is read in one module, that no
+ * second duration constant is declared anywhere, that nothing schedules its
+ * own timer — and each is an absence, so each has to be a scan over
+ * everything rather than an assertion at a call site.
+ *
+ * `SOURCE_ROOTS` alone would miss the files that sit at the repository root,
+ * and one of them ships on every request: `middleware.ts` runs before every
+ * matched route. A scan that says "anywhere in the product" and cannot see it
+ * is not the claim it says it is, so the root's own `.ts` files are in the
+ * surface too.
+ *
+ * This file is inside the surface it returns, which is deliberate: excluding
+ * the test-support directory would leave a hole exactly where a helper is
+ * most tempted to keep a stub. It is also why the doc comments here name no
+ * banned token literally.
+ *
+ * Test files are excluded by the walk; nothing here is a claim about tests.
+ */
+export function readSources(): { file: string; source: string }[] {
+  return [
+    ...rootSourceFiles(),
+    ...SOURCE_ROOTS.flatMap((root) => [
+      ...filesUnder(root, ".ts"),
+      ...filesUnder(root, ".tsx"),
+    ]),
+  ].map((file) => ({
+    file,
+    source: readFileSync(path.join(repositoryRoot, file), "utf8"),
+  }));
 }
 
 export function readMarkup(): Markup[] {
