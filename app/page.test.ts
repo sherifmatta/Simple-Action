@@ -1,63 +1,65 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import postcss from "postcss";
 import tailwindcssPostcss from "@tailwindcss/postcss";
 import ts from "typescript";
 import { afterAll, describe, expect, it } from "vitest";
+import { parseTsx, readMarkup } from "@/test-support/markup";
 
-// Covers epics.md Story 1.7 AC5: an empty card renders on the ground at the
-// correct max width, and nothing else is visible.
+// Covers epics.md Story 1.7 AC5 and Story 2.3 AC1, AC6 and AC7: the card
+// renders on the ground at the correct max width, centred, the sticky block
+// holds at the top of the viewport on an opaque surface, and nothing else is on
+// the screen.
+//
+// Story 2.3 moved the card recipe out of `app/page.tsx` into
+// `src/client/components/`, which is why the two guards below — the AD-13 hex
+// and arbitrary-value scan, and the compilation that proves every class
+// resolves to a theme token — now run over the whole markup surface rather
+// than over a list of files. Scoped to `app/`, they let the card walk out from
+// under both by changing directory; scoped to a hand-written list, the next
+// component to be added would walk out the same way without anyone noticing.
 //
 // "The correct max width" is `{spacing.card-max-width}` — a DESIGN.md token
 // Story 1.2 already transcribed — so this compiles the real `app/globals.css`
 // through the real Tailwind engine (the `app/globals.test.ts` approach) and
-// asserts the classes the page actually uses resolve to those tokens. A test
+// asserts the classes the product actually uses resolve to those tokens. A test
 // that only read the class strings would pass on `max-w-card-max-width` even
 // if Tailwind emitted nothing for it, which is exactly the failure mode: an
 // unrecognised utility is silently dropped, not an error.
 
 const repositoryRoot = process.cwd();
-const pagePath = path.join(repositoryRoot, "app", "page.tsx");
-const layoutPath = path.join(repositoryRoot, "app", "layout.tsx");
-const pageSource = readFileSync(pagePath, "utf8");
-const layoutSource = readFileSync(layoutPath, "utf8");
+const markup = readMarkup();
 
-function parse(fileName: string, code: string): ts.SourceFile {
-  return ts.createSourceFile(
-    fileName,
-    code,
-    ts.ScriptTarget.Latest,
-    true,
-    ts.ScriptKind.TSX,
-  );
-}
-
-function classNamesOf(source: string, fileName: string): string[] {
-  const sourceFile = parse(fileName, source);
-  const found: string[] = [];
-  function visit(node: ts.Node) {
-    if (
-      ts.isJsxAttribute(node) &&
-      node.name.getText(sourceFile) === "className" &&
-      node.initializer &&
-      ts.isStringLiteral(node.initializer)
-    ) {
-      found.push(...node.initializer.text.split(/\s+/).filter(Boolean));
-    }
-    ts.forEachChild(node, visit);
-  }
-  visit(sourceFile);
+function markupOf(file: string) {
+  const found = markup.find((entry) => entry.file === file);
+  if (found === undefined)
+    throw new Error(`${file} is not in the markup surface`);
   return found;
 }
 
-const pageClasses = classNamesOf(pageSource, "page.tsx");
-const layoutClasses = classNamesOf(layoutSource, "layout.tsx");
+const pageFile = path.join("app", "page.tsx");
+const layoutFile = path.join("app", "layout.tsx");
+const cardFile = path.join("src", "client", "components", "todo-card.tsx");
+const stickyFile = path.join(
+  "src",
+  "client",
+  "components",
+  "sticky-top-block.tsx",
+);
+
+const pageSource = markupOf(pageFile).source;
+const pageClasses = markupOf(pageFile).classes;
+const layoutClasses = markupOf(layoutFile).classes;
+const cardClasses = markupOf(cardFile).classes;
+const stickyClasses = markupOf(stickyFile).classes;
+/** Every class in the product — what the compilation below must account for. */
+const productClasses = markup.flatMap(({ classes }) => classes);
 
 // --- The markup -------------------------------------------------------------
 
-describe("the card is empty and it is the only thing on the page (AC5)", () => {
-  const sourceFile = parse("page.tsx", pageSource);
+describe("the card is the only thing on the page (1.7 AC5, 2.3 AC1/AC7)", () => {
+  const sourceFile = parseTsx("page.tsx", pageSource);
 
   it("renders no text at all", () => {
     const text: string[] = [];
@@ -70,7 +72,7 @@ describe("the card is empty and it is the only thing on the page (AC5)", () => {
     visit(sourceFile);
     expect(
       text,
-      `the shell renders an empty card and nothing else; found ${JSON.stringify(text)}`,
+      `the page renders the card and nothing else; found ${JSON.stringify(text)}`,
     ).toEqual([]);
   });
 
@@ -83,13 +85,16 @@ describe("the card is empty and it is the only thing on the page (AC5)", () => {
       ts.forEachChild(node, visit);
     }
     visit(sourceFile);
-    expect(elements).toEqual(["main", "div"]);
+    // Story 2.3: the card's own markup moved into `TodoCard`, so the page is
+    // its margin and one child. Nothing may be added beside it — a wordmark or
+    // a title bar here would show up as a third entry (AC7).
+    expect(elements).toEqual(["main", "TodoCard"]);
   });
 
-  it("uses no hex literal and no arbitrary-value class (AD-13)", () => {
-    for (const source of [pageSource, layoutSource]) {
-      expect(source).not.toMatch(/#[0-9A-Fa-f]{3}(?:[0-9A-Fa-f]{3})?\b/);
-      expect(source).not.toMatch(/\b[a-z-]+-\[[^\]]+\]/);
+  it("uses no hex literal and no arbitrary-value class, anywhere (AD-13)", () => {
+    for (const { file, source } of markup) {
+      expect(source, file).not.toMatch(/#[0-9A-Fa-f]{3}(?:[0-9A-Fa-f]{3})?\b/);
+      expect(source, file).not.toMatch(/\b[a-z-]+-\[[^\]]+\]/);
     }
   });
 
@@ -104,9 +109,24 @@ describe("the card is empty and it is the only thing on the page (AC5)", () => {
     expect(layoutClasses).toContain("text-text-primary");
   });
 
-  it("centres the card and caps its width", () => {
-    expect(pageClasses).toContain("mx-auto");
-    expect(pageClasses).toContain("max-w-card-max-width");
+  it("is DESIGN.md's card recipe entire, and only that (2.3 AC1)", () => {
+    // An exact set rather than a handful of `toContain`s: dropping
+    // `shadow-card` or `rounded-lg` would leave every positive assertion
+    // passing and the card wrong, which is the regression worth catching.
+    expect([...cardClasses].sort()).toEqual(
+      [
+        "mx-auto",
+        "max-w-card-max-width",
+        "rounded-lg",
+        "bg-card",
+        "px-gutter",
+        "py-6",
+        "shadow-card",
+      ].sort(),
+    );
+    // Below the cap the card fills the viewport less the phone margin, which
+    // is the page's to apply — the card itself has no width of its own.
+    expect(pageClasses).toContain("p-margin-phone");
   });
 });
 
@@ -140,7 +160,7 @@ function ruleFor(css: string, className: string): string {
 
 describe("the card is built from DESIGN.md's tokens, not from values (AC5, AD-13)", () => {
   it("compiles every class the shell uses to a theme token", async () => {
-    const css = await compile([...pageClasses, ...layoutClasses]);
+    const css = await compile(productClasses);
 
     // The `components.card` recipe: fill, radius, shadow, block padding,
     // inline padding, max width. Plus the ground behind it.
@@ -161,15 +181,29 @@ describe("the card is built from DESIGN.md's tokens, not from values (AC5, AD-13
     );
   });
 
+  it("holds the sticky block at the top of the viewport on an opaque surface (2.3 AC6)", async () => {
+    const css = await compile(productClasses);
+
+    expect(stickyClasses).toContain("sticky");
+    expect(stickyClasses).toContain("top-0");
+    expect(ruleFor(css, "sticky")).toContain("position: sticky");
+    expect(ruleFor(css, "top-0")).toContain("top: 0");
+    // DESIGN.md:360 — an opaque surface, not a translucent one. `bg-card`
+    // resolves to a six-digit hex with no alpha channel, and no opacity
+    // modifier is applied to it anywhere in the block.
+    expect(stickyClasses).toContain("bg-card");
+    expect(css).toMatch(/--color-card:\s*#[0-9A-Fa-f]{6};/);
+  });
+
   it("resolves the max width to DESIGN.md's 640px and the ground to its colour", async () => {
-    const css = await compile([...pageClasses, ...layoutClasses]);
+    const css = await compile(productClasses);
     expect(css).toContain("--spacing-card-max-width: 640px");
     expect(css).toContain("--color-ground: #E7EAF6");
     expect(css).toContain("--spacing-margin-phone: 18px");
   });
 
   it("would fail if a class stopped resolving, so the assertions above are not vacuous", async () => {
-    const css = await compile(pageClasses);
+    const css = await compile(productClasses);
     expect(() => ruleFor(css, "max-w-invented-token")).toThrow(
       /emitted no rule/,
     );

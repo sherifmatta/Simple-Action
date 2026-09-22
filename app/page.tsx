@@ -1,29 +1,24 @@
-// The one screen (epics.md Story 1.7 AC5).
+// The one screen (epics.md Story 1.7 AC5, Story 2.3 AC1/AC5/AC7).
 //
-// An empty card on the ground, at DESIGN.md's maximum width, centred — and
-// nothing else. No wordmark, no title bar, no greeting: DESIGN.md §Layout is
-// explicit that there is nothing above the add input, so a placeholder heading
-// here would be a thing later stories have to remember to delete.
+// `p-margin-phone` is what keeps ground visible on all sides below 640px, "so
+// the card reads as an object on a field rather than as the page"
+// (DESIGN.md:352). The ground itself is on `<body>` in app/layout.tsx, along
+// with `overflow-x-hidden` — DESIGN.md:356's "no horizontal scrolling on the
+// page body, ever".
 //
-// This is the `components.card` recipe, transcribed from DESIGN.md:339-352,
-// 398-400 entirely out of the tokens Story 1.2 put in `app/globals.css`'s
-// `@theme` block — `{colors.card}`, `{rounded.lg}`, the card shadow,
-// `{spacing.6}` block padding, `{spacing.gutter}` inline padding and
-// `{spacing.card-max-width}`. Every class below compiles to a `var(--…)`
-// reference; no hex literal and no arbitrary-value class appears (AD-13).
-//
-// `{spacing.margin-phone}` on the wrapper is what keeps ground visible on all
-// sides below 640px, "so the card reads as an object on a field rather than as
-// the page" (DESIGN.md:352). The ground itself is on `<body>` in
-// app/layout.tsx.
-//
-// The card's contents — add input, error banner region, filter tabs, list, in
-// that fixed order — arrive with Epics 2-4. Until then the card is genuinely
-// empty, which is the whole of what this epic is meant to show.
+// Everything inside the card is `TodoCard`'s. Story 2.3 moved the card recipe
+// out of this file to `src/client/components/`, the home AR-20 gives card,
+// input, tabs, row and banner components; what stays here is the page's own
+// margin and the fact that the card is the only thing on the screen. There is
+// still no wordmark, no title bar and no greeting above it — the product name
+// appears in the browser tab title only, which `app/layout.tsx`'s `metadata`
+// owns (AC7).
+import { TodoCard } from "@/client/components/todo-card";
+
 export default function Page() {
   return (
     <main className="p-margin-phone">
-      <div className="mx-auto max-w-card-max-width rounded-lg bg-card px-gutter py-6 shadow-card" />
+      <TodoCard />
     </main>
   );
 }
