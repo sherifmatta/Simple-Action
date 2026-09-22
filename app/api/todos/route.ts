@@ -1,6 +1,7 @@
 import type { NextRequest } from "next/server";
 
 import {
+  errorKindForMethod,
   privateToTheCaller,
   resolveClientIdentity,
   unauthorizedIdentityResponse,
@@ -39,9 +40,18 @@ import type { ErrorEnvelope } from "@/shared/contract/errors";
  */
 export const LOAD_FAILED_MESSAGE = "The Todo List could not be read.";
 
-function loadFailedResponse(): Response {
+/**
+ * The `500` for a request this endpoint could not serve.
+ *
+ * The kind comes from `errorKindForMethod` rather than the literal `"load"`,
+ * for the same reason `unauthorizedIdentityResponse` takes a method: AD-10
+ * classifies a failure by the operation attempted, and this file gains `POST`
+ * with Story 3.1. A hardcoded `load` would report a failed create to the single
+ * error slot as a failed read, and the slot would show the wrong copy.
+ */
+function requestFailedResponse(method: string): Response {
   const body: ErrorEnvelope = {
-    error: { kind: "load", message: LOAD_FAILED_MESSAGE },
+    error: { kind: errorKindForMethod(method), message: LOAD_FAILED_MESSAGE },
   };
 
   return Response.json(body, { status: 500 });
@@ -71,6 +81,6 @@ export async function GET(request: NextRequest): Promise<Response> {
       error instanceof Error ? error.message : "unknown error",
     );
 
-    return privateToTheCaller(loadFailedResponse());
+    return privateToTheCaller(requestFailedResponse(request.method));
   }
 }

@@ -475,6 +475,16 @@ const queryKeyViolations: Violation[] = [
 
 const positionalQueryKeyViolations: Violation[] = [
   {
+    // Computed access: `callee.property.name` is undefined here, so quoting the
+    // method name bypassed the rule until a second selector read
+    // `callee.property.value`.
+    name: "AD-8: the key method is reached with computed access",
+    filePath: "src/client/todos/probe.ts",
+    code: `export const probe = (c: { setQueryData: (k: unknown, v: unknown) => void }) =>\n  c["setQueryData"](["todo-list"], []);\n`,
+    ruleId: "no-restricted-syntax",
+    names: "AD-8",
+  },
+  {
     name: "AD-8: setQueryData is given a key literal",
     filePath: "src/client/todos/probe.ts",
     code: `export const probe = (c: { setQueryData: (k: unknown, v: unknown) => void }) =>\n  c.setQueryData(["todo-list"], []);\n`,

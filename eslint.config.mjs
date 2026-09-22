@@ -107,6 +107,13 @@ const noUnapprovedQueryKey = [
     selector: `CallExpression[callee.property.name=${POSITIONAL_KEY_METHODS}]:not([arguments.0.name='TODOS_QUERY_KEY'])`,
     message: AD_8,
   },
+  // The same call written with computed access — `client["setQueryData"](…)`.
+  // `callee.property.name` is undefined there, so without this the rule is
+  // bypassed by quoting the method name.
+  {
+    selector: `CallExpression[callee.property.value=${POSITIONAL_KEY_METHODS}]:not([arguments.0.name='TODOS_QUERY_KEY'])`,
+    message: AD_8,
+  },
   // The same call after the method has been pulled off the client —
   // `const { setQueryData } = queryClient`.
   {
@@ -265,6 +272,28 @@ const noServerImport = {
     "Dependency graph: client and shared code may not import from src/server/. Go through a route handler under app/api/.",
 };
 
+// --- The restricted-syntax baseline -----------------------------------------
+// Every directory block below starts from the same four restrictions. They were
+// previously restated in each of the ten blocks, so adding a rule meant ten
+// near-identical edits and a block missed in the paste failed nothing — the
+// fixture suite reaches only some of the ten paths.
+//
+// The two genuine exemptions stay explicit, as subtractions you can read:
+// `src/server/repository/` is the one module allowed the Drizzle client, and
+// `src/client/feedback/announcer.tsx` is the one file allowed `aria-live`.
+const baseRestrictedSyntax = [
+  noUseServerDirective,
+  ...noAriaLive,
+  ...noUnapprovedQueryKey,
+  ...noDrizzleDynamicImport,
+];
+
+/** The baseline minus the named exemptions. */
+function baseExcept(...exempt) {
+  const excluded = new Set(exempt.flat());
+  return baseRestrictedSyntax.filter((rule) => !excluded.has(rule));
+}
+
 const eslintConfig = defineConfig([
   ...nextVitals,
   ...nextTs,
@@ -291,10 +320,7 @@ const eslintConfig = defineConfig([
     rules: {
       "no-restricted-syntax": [
         "error",
-        noUseServerDirective,
-        ...noAriaLive,
-        ...noUnapprovedQueryKey,
-        ...noDrizzleDynamicImport,
+        ...baseRestrictedSyntax,
       ],
       "no-restricted-imports": [
         "error",
@@ -313,10 +339,7 @@ const eslintConfig = defineConfig([
     rules: {
       "no-restricted-syntax": [
         "error",
-        noUseServerDirective,
-        ...noAriaLive,
-        ...noUnapprovedQueryKey,
-        ...noDrizzleDynamicImport,
+        ...baseRestrictedSyntax,
         ...noComponentFetchSyntax,
       ],
       "no-restricted-globals": noComponentFetchGlobal,
@@ -336,10 +359,7 @@ const eslintConfig = defineConfig([
     rules: {
       "no-restricted-syntax": [
         "error",
-        noUseServerDirective,
-        ...noAriaLive,
-        ...noUnapprovedQueryKey,
-        ...noDrizzleDynamicImport,
+        ...baseRestrictedSyntax,
       ],
       "no-restricted-imports": [
         "error",
@@ -362,10 +382,7 @@ const eslintConfig = defineConfig([
     rules: {
       "no-restricted-syntax": [
         "error",
-        noUseServerDirective,
-        ...noAriaLive,
-        ...noUnapprovedQueryKey,
-        ...noDrizzleDynamicImport,
+        ...baseRestrictedSyntax,
         ...noComponentFetchSyntax,
       ],
       "no-restricted-globals": noComponentFetchGlobal,
@@ -385,10 +402,7 @@ const eslintConfig = defineConfig([
     rules: {
       "no-restricted-syntax": [
         "error",
-        noUseServerDirective,
-        ...noAriaLive,
-        ...noUnapprovedQueryKey,
-        ...noDrizzleDynamicImport,
+        ...baseRestrictedSyntax,
       ],
       "no-restricted-imports": [
         "error",
@@ -406,10 +420,7 @@ const eslintConfig = defineConfig([
     rules: {
       "no-restricted-syntax": [
         "error",
-        noUseServerDirective,
-        ...noAriaLive,
-        ...noUnapprovedQueryKey,
-        ...noDrizzleDynamicImport,
+        ...baseRestrictedSyntax,
       ],
       "no-restricted-imports": [
         "error",
@@ -428,10 +439,7 @@ const eslintConfig = defineConfig([
     rules: {
       "no-restricted-syntax": [
         "error",
-        noUseServerDirective,
-        ...noAriaLive,
-        ...noUnapprovedQueryKey,
-        ...noDrizzleDynamicImport,
+        ...baseRestrictedSyntax,
       ],
       "no-restricted-imports": [
         "error",
@@ -450,10 +458,7 @@ const eslintConfig = defineConfig([
     rules: {
       "no-restricted-syntax": [
         "error",
-        noUseServerDirective,
-        ...noAriaLive,
-        ...noUnapprovedQueryKey,
-        ...noDrizzleDynamicImport,
+        ...baseRestrictedSyntax,
       ],
       "no-restricted-imports": [
         "error",
@@ -471,9 +476,7 @@ const eslintConfig = defineConfig([
     rules: {
       "no-restricted-syntax": [
         "error",
-        noUseServerDirective,
-        ...noAriaLive,
-        ...noUnapprovedQueryKey,
+        ...baseExcept(noDrizzleDynamicImport),
       ],
       "no-restricted-imports": ["error", { patterns: [noClientImport] }],
     },
@@ -489,9 +492,7 @@ const eslintConfig = defineConfig([
     rules: {
       "no-restricted-syntax": [
         "error",
-        noUseServerDirective,
-        ...noUnapprovedQueryKey,
-        ...noDrizzleDynamicImport,
+        ...baseExcept(noAriaLive),
         ...noComponentFetchSyntax,
       ],
       "no-restricted-globals": noComponentFetchGlobal,

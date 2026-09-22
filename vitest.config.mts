@@ -26,11 +26,24 @@ export default defineConfig(({ mode }) => {
       },
     },
     test: {
+      // `node` stays the default: the repository, contract, lint-fixture and
+      // markup-scan suites are the overwhelming majority and none of them wants
+      // a document. A test that needs one opts in per file with
+      // `// @vitest-environment jsdom`, which keeps the DOM where it is
+      // actually used rather than paying for it everywhere.
       environment: "node",
-      // No DOM environment is installed, so `.test.tsx` is deliberately absent:
-      // a component test would fail on a missing document rather than be skipped.
-      // Epic 6 or the first component test adds jsdom and the glob together.
-      include: ["*.test.ts", "src/**/*.test.ts", "app/**/*.test.ts"],
+      // `.test.tsx` is included now that jsdom is installed. The epic context
+      // makes the first component test the one that adds both, so that a render
+      // test proves the live regions and the query provider survive a real
+      // mount rather than only `renderToStaticMarkup`.
+      include: [
+        "*.test.ts",
+        "*.test.tsx",
+        "src/**/*.test.ts",
+        "src/**/*.test.tsx",
+        "app/**/*.test.ts",
+        "app/**/*.test.tsx",
+      ],
       env: DATABASE_URL ? { DATABASE_URL } : {},
       // Vitest's defaults are 5s per test and 10s per hook. A Neon branch that
       // has auto-suspended takes several seconds to wake on the first query,

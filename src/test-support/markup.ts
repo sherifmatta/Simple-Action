@@ -102,8 +102,37 @@ export function dynamicClassNames(sources: Markup[]): string[] {
  * anchored pattern matched against the class as written would see neither.
  */
 export function baseUtility(className: string): string {
-  const withoutVariants = className.slice(className.lastIndexOf(":") + 1);
+  // The variant separator is a colon at bracket depth zero. Slicing on the last
+  // colon anywhere turns `md:[overflow:auto]` into `auto]`, which matches no
+  // pattern any scan holds — so an arbitrary-property class used to slip past
+  // every one of them silently.
+  let depth = 0;
+  let separator = -1;
+  for (let index = 0; index < className.length; index += 1) {
+    const character = className[index];
+    if (character === "[") depth += 1;
+    else if (character === "]") depth -= 1;
+    else if (character === ":" && depth === 0) separator = index;
+  }
+
+  const withoutVariants = className.slice(separator + 1);
   return withoutVariants.replace(/^!/, "").replace(/!$/, "");
+}
+
+/**
+ * `file:class` for every arbitrary-*property* class, e.g. `[overflow:auto]`.
+ *
+ * Tailwind lets a class name carry a raw CSS declaration. That is a scroll
+ * container, a second sticky block or a fade written in a form no utility
+ * pattern can match, so the scans assert this list is empty rather than trying
+ * to police what is inside the brackets.
+ */
+export function arbitraryProperties(sources: Markup[]): string[] {
+  return sources.flatMap(({ file, classes }) =>
+    classes
+      .filter((name) => /^\[[^\]]*:[^\]]*\]$/.test(baseUtility(name)))
+      .map((name) => `${file}:${name}`),
+  );
 }
 
 function filesUnder(directory: string, extension: string): string[] {
@@ -137,4 +166,109 @@ export function matches(sources: Markup[], pattern: RegExp): string[] {
       .filter((name) => pattern.test(baseUtility(name)))
       .map((name) => `${file}:${name}`),
   );
+}
+
+/**
+ * `file:expression` for every way markup can reach the browser unscanned.
+ *
+ * `dynamicClassNames` covers a computed `className` attribute. These are the
+ * three routes around the attribute itself:
+ *
+ * - `{...props}` on a JSX element, which can carry a `className` this module
+ *   never sees, because it is a `JsxSpreadAttribute` and not a `JsxAttribute`.
+ * - `createElement(...)`, which produces an element with no JSX attribute node
+ *   at all.
+ * - `style={{ … }}`, which sets `overflow`, `position` or a gradient directly,
+ *   with no class involved.
+ *
+ * Each makes the whole-tree absence scans blind in exactly the way
+ * `dynamicClassNames` exists to prevent, so they are reported the same way.
+ */
+export function opaqueMarkup(sources: Markup[]): string[] {
+  return sources.flatMap(({ file, source }) => {
+    const sourceFile = parseTsx(file, source);
+    const found: string[] = [];
+
+    function visit(node: ts.Node) {
+      if (ts.isJsxSpreadAttribute(node)) {
+        found.push(`${file}:spread ${node.getText(sourceFile)}`);
+      }
+      if (ts.isJsxAttribute(node) && node.name.getText(sourceFile) === "style") {
+        found.push(`${file}:style ${node.getText(sourceFile)}`);
+      }
+      if (
+        ts.isCallExpression(node) &&
+        /(^|\.)createElement$/.test(node.expression.getText(sourceFile))
+      ) {
+        found.push(`${file}:createElement`);
+      }
+      ts.forEachChild(node, visit);
+    }
+
+    visit(sourceFile);
+    return found;
+  });
+}
+
+/** The JSX tag a `className` attribute sits on, e.g. `body`, `div`, `TodoRow`. */
+function elementOf(attribute: ts.JsxAttribute, sourceFile: ts.SourceFile): string {
+  const opening = attribute.parent.parent;
+  if (ts.isJsxSelfClosingElement(opening) || ts.isJsxOpeningElement(opening)) {
+    return opening.tagName.getText(sourceFile);
+  }
+  return "(unknown)";
+}
+
+/**
+ * `file:element:class` for every class whose base utility matches `pattern`.
+ *
+ * `matches` reports the file only, which makes a file-scoped allow-list the
+ * strongest thing a scan can assert — and `overflow-x-hidden` is only safe on
+ * `<body>`. Moving it to `<html>`, or onto any other element in the same file,
+ * breaks sticky positioning and the overflow propagation the scroll model rests
+ * on, while a `file:class` assertion stays green. This is what lets the scans
+ * pin the element instead.
+ */
+export function matchesWithElement(sources: Markup[], pattern: RegExp): string[] {
+  return sources.flatMap(({ file, source }) => {
+    const sourceFile = parseTsx(file, source);
+    return classNameAttributes(sourceFile).flatMap((attribute) => {
+      if (!attribute.initializer || !ts.isStringLiteral(attribute.initializer)) {
+        return [];
+      }
+      const element = elementOf(attribute, sourceFile);
+      return attribute.initializer.text
+        .split(/\s+/)
+        .filter(Boolean)
+        .filter((name) => pattern.test(baseUtility(name)))
+        .map((name) => `${file}:${element}:${name}`);
+    });
+  });
+}
+
+/** Every stylesheet this product ships, as `{ file, source }`. */
+export function readStyleSheets(): { file: string; source: string }[] {
+  return MARKUP_ROOTS.flatMap((root) => filesUnder(root, ".css")).map((file) => ({
+    file,
+    source: readFileSync(path.join(repositoryRoot, file), "utf8"),
+  }));
+}
+
+/**
+ * `file:match` for every stylesheet declaration matching `pattern`.
+ *
+ * The scans above read `.tsx` only, so the whole CSS half of the product was
+ * unscanned — and this epic has started putting component recipes in
+ * `globals.css`, which makes the stylesheet a live route for exactly the
+ * regressions the markup scans exist to catch rather than a theoretical one.
+ */
+export function styleSheetMatches(pattern: RegExp): string[] {
+  return readStyleSheets().flatMap(({ file, source }) => {
+    // Comments discuss `overflow`, gradients and fades at length; only
+    // declarations reach the browser.
+    const declarations = source.replace(/\/\*[\s\S]*?\*\//g, "");
+    return [...declarations.matchAll(new RegExp(pattern, "g"))].map(
+      (match) => `${file}:${match[0]}`,
+    );
+  });
 }

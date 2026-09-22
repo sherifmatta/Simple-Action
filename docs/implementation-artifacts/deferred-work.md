@@ -121,3 +121,41 @@ Append-only. Each entry is a finding that was verified as real but deliberately 
 - source_spec: `docs/implementation-artifacts/spec-2-4-render-a-todo-in-both-completion-statuses.md`
   summary: DESIGN.md's `checkbox.checked-background-on-active` / `checked-border-on-active` pair describes a state this product cannot reach, and nothing says so.
   evidence: `components.checkbox` in DESIGN.md:128-140 gives a checked appearance for both row statuses, and DESIGN.md:412 explains the Active one as `{colors.accent}` on white at 3.91:1. But a checked checkbox *is* the Completed status in this data model (`Todo.completed` is the single boolean, `src/shared/contract/todo.ts:21`), so a checked box on an Active row is not a state the product has — only, at most, a frame of Epic 4's toggle transition, which EXPERIENCE.md does not describe as crossfading the two. Story 2.4 therefore implements only the reachable pair (`accent-deep` on mint) and `todo-row.test.ts` asserts the accent-on-active spelling is absent. If Epic 4's toggle does end up rendering an intermediate frame, that frame's colours are already specified and simply unused today. Natural owner is Story 4.2 or 4.3, which build the toggle and are where the question becomes answerable.
+
+## Deferred from: code review of stories 2.1–2.4 (2026-09-22)
+
+- source_spec: `spec-2-1-serve-the-todo-list-from-the-server.md`
+  summary: `epics.md` Story 2.1 AC1 still says `created_at`; the shipped contract and `listTodos` say `createdAt`.
+  evidence: The spec's Implementation Notes settle it ("the contract wins", citing `epics.md:509`) and `src/server/repository/todos.ts` projects `createdAt`. Deferred because the fix edits a planning document rather than code. Natural owner is the epic-list restructure now in progress.
+
+- source_spec: `spec-2-2-fetch-the-todo-list-into-the-client.md`
+  summary: The `id DESC` ordering scheme rests on UUIDv7 being time-ordered, which is asserted in AD-5, `listTodos`, `useTodos` and `todo-list-query.ts` and tested nowhere.
+  evidence: `todos.test.ts` proves the ordering with hand-built ids sharing a `randomUUID()` (v4) prefix and differing in the last hex digit — that tests Postgres's `ORDER BY`, not the id scheme. No test asserts that two ids from the product's own minting function compare in time order, and this file already records `mintIdentityId` as a hand-written stand-in for the real `uuidv7` package. Epic 3's optimistic insert is what breaks if the assumption is wrong; settling it needs the package.
+
+- source_spec: `spec-2-3-build-the-card-the-scroll-model-and-the-sticky-top-block.md`
+  summary: The sticky block's three-slot ordering is pinned by a regex over JSX comments and by nothing else.
+  evidence: `sticky-top-block.test.ts:64` extracts the order with `/\{\/\* (\d)\. ([a-z ]+) —/g`. It inspects no markup, so it fails on a reword that changes nothing observable and passes if the markup is later written in the wrong order. Resolves when Stories 2.7, 3.3 and 4.4 fill the slots with real elements — the assertion should become element-order at that point.
+
+- source_spec: `spec-2-4-render-a-todo-in-both-completion-statuses.md`
+  summary: The list region leaves the DOM entirely while loading and after a failure.
+  evidence: `todo-list.tsx:42` is `if (data === undefined) return null`. Story 2.3 left a persistent element as the region and named the four stories that fill it; this replaced it with a component that renders nothing. Story 2.6 will mount skeletons into a region that does not exist, and Story 2.9 must announce a region that unmounts. `todo-card.test.ts`'s child-order assertion is a source-level scan and cannot see it. Owners are 2.6 and 2.7.
+
+- source_spec: `spec-2-4-render-a-todo-in-both-completion-statuses.md`
+  summary: Three untokenised DESIGN.md values went into `@utility` recipes instead of the theme, against the epic's stated constraint.
+  evidence: `epic-2-context.md` Technical Decisions — "A value not in the theme is added there first, under its original token name." `app/globals.css` gained `@utility checkbox-box { width: 21px; height: 21px; border-width: 1.75px }` and `@utility strikethrough-completed { … text-decoration-thickness: 1.5px }`. The blocker is a Story 1.2 test: `globals.test.ts` pins the theme to exactly 21 colours, 4 radii and 14 spacing tokens, so honouring the constraint means renegotiating that test.
+
+- source_spec: `spec-2-4-render-a-todo-in-both-completion-statuses.md`
+  summary: The checkbox glyph's `13px`/`stroke-3` geometry has no token, no citation and no test.
+  evidence: `todo-row.tsx` sets `width="13" height="13" strokeWidth="3"` as SVG attributes, justified in-comment because "AD-13's arbitrary-value ban has nothing to catch". DESIGN.md's `components.checkbox` block specifies size, radius, border and glyph colour but no glyph size, so the value comes from `mockups/key-main.html` uncited. Same class of value as the three recipe literals above, opposite treatment.
+
+- source_spec: `spec-2-4-render-a-todo-in-both-completion-statuses.md`
+  summary: Completion Status reaches no accessibility tree; the epic's "status survives colour being removed" is met visually only.
+  evidence: `todo-row.tsx` renders the checkbox `<span aria-hidden="true">`, toggles the glyph purely by `hidden` / `group-data-completed:block`, and gives the strikethrough no semantics. Already owned by Story 4.3 and named in the spec. Recorded because `epic-2-context.md` treats state legibility as acceptance rather than polish, and nothing in Epic 2 closes it.
+
+- source_spec: `spec-2-4-render-a-todo-in-both-completion-statuses.md`
+  summary: The guard that `listTodos` is defined only in `todos.ts` was removed and the remaining scan runs over joined source.
+  evidence: `client-identity.test.ts:293-297` dropped the `listTodos` entry. Because the assertion walks joined source rather than per-file, `listTodos` could move back into `client-identity.ts` with the scan still green. Low confidence that this matters today; settled by making the assertion per-file.
+
+- source_spec: `spec-2-1-serve-the-todo-list-from-the-server.md`
+  summary: `listTodos` has no `LIMIT` and no pagination; the unbounded read is accepted as a stated ceiling.
+  evidence: `src/server/repository/todos.ts` selects every row an owner holds, which becomes one unbounded JSON body and one unbounded `<ul>` against AC3's single-scrolling-element model. Reviewed 2026-09-22 and deliberately not fixed: a single-user Todo app is unlikely to reach that size, a silent `.limit()` would truncate with nothing in the interface saying so, and real pagination is scope the PRD never asked for and would touch the scroll model. Recorded so the absence reads as a choice rather than an oversight — which is how every other absence in this epic reads.

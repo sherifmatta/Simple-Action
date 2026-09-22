@@ -59,15 +59,26 @@ export function errorKindForMethod(method: string): ErrorKind {
  * the refusals below: a cache keying on the URL alone would hand this `401` to a
  * caller who does carry a cookie, or hand one person's Todo List to the next
  * caller. `Vary` is appended rather than set, so the platform's own
- * `Accept-Encoding` entry survives.
+ * `Accept-Encoding` entry survives, and appending is guarded so the helper is
+ * idempotent.
  *
  * Added by Story 2.1 for its route handler; applied here too, because the `401`
  * a browser actually receives is built by `middleware.ts` through the helper
  * below and never reaches the handler.
  */
-export function privateToTheCaller(response: Response): Response {
+export function privateToTheCaller<T extends Response>(response: T): T {
   response.headers.set("Cache-Control", "private, no-store");
-  response.headers.append("Vary", "Cookie");
+
+  // Appended rather than set, so the platform's own `Accept-Encoding` entry
+  // survives — and guarded, because `append` is not idempotent: wrapping one
+  // response twice would otherwise yield `Vary: Cookie, Cookie`, which is
+  // valid HTTP and passes a `/\bCookie\b/` assertion, so nothing would catch
+  // it. The type parameter keeps a `NextResponse` a `NextResponse`, which is
+  // what lets `middleware.ts` mark the response it mints the cookie on.
+  if (!/\bCookie\b/i.test(response.headers.get("Vary") ?? "")) {
+    response.headers.append("Vary", "Cookie");
+  }
+
   return response;
 }
 

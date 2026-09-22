@@ -155,9 +155,30 @@ describe("privateToTheCaller", () => {
       headers: { Vary: "Accept-Encoding" },
     });
 
-    const vary = privateToTheCaller(response).headers.get("vary");
+    // Asserted exactly, not with `toMatch`: a `/\bCookie\b/` test passes just
+    // as happily on `Accept-Encoding, Cookie, Cookie`, which is what an
+    // unguarded `append` produces and what the next test rules out.
+    expect(privateToTheCaller(response).headers.get("vary")).toBe(
+      "Accept-Encoding, Cookie",
+    );
+  });
 
-    expect(vary).toMatch(/\bAccept-Encoding\b/);
-    expect(vary).toMatch(/\bCookie\b/);
+  it("is idempotent — wrapping one response twice lists Cookie once", () => {
+    // `middleware.ts` and `route.ts` both wrap, and a future handler could
+    // reach a response either has already marked. `append` is not idempotent on
+    // its own, so the helper guards it.
+    const once = privateToTheCaller(new Response(null));
+    const twice = privateToTheCaller(once);
+
+    expect(twice.headers.get("vary")).toBe("Cookie");
+    expect(twice.headers.get("cache-control")).toBe("private, no-store");
+  });
+
+  it("returns the same response type it was given", () => {
+    // The type parameter is what lets `middleware.ts` mark a `NextResponse` and
+    // still return a `NextResponse`; this pins the runtime half of that.
+    const response = new Response(null);
+
+    expect(privateToTheCaller(response)).toBe(response);
   });
 });

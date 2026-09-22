@@ -26,13 +26,23 @@ function parse(fileName: string, code: string): ts.SourceFile {
   );
 }
 
+// The called name, with any qualifier stripped: `useState` for both `useState(…)`
+// and `React.useState(…)`. Comparing `node.expression.getText()` to the bare
+// name — which this did — misses every namespaced form, so a Todo held in
+// `React.useState<Todo[]>([])` evaded the AD-8 scan below entirely.
+function calleeName(node: ts.CallExpression, sourceFile: ts.SourceFile): string {
+  const target = node.expression;
+  if (ts.isPropertyAccessExpression(target)) return target.name.getText(sourceFile);
+  if (ts.isElementAccessExpression(target) && ts.isStringLiteralLike(target.argumentExpression)) {
+    return target.argumentExpression.text;
+  }
+  return target.getText(sourceFile);
+}
+
 function calls(sourceFile: ts.SourceFile, callee: string): ts.CallExpression[] {
   const found: ts.CallExpression[] = [];
   function visit(node: ts.Node) {
-    if (
-      ts.isCallExpression(node) &&
-      node.expression.getText(sourceFile) === callee
-    ) {
+    if (ts.isCallExpression(node) && calleeName(node, sourceFile) === callee) {
       found.push(node);
     }
     ts.forEachChild(node, visit);
@@ -199,6 +209,10 @@ describe("AD-8 — no server-derived Todo data in React state (AC3)", () => {
       `const [state, dispatch] = useReducer(reducer, todoList);`,
       `const [one, setOne] = useState<Todo | null>(null);`,
       `const [rows, setRows] = useState(useTodos().data ?? []);`,
+      // The namespaced forms. These are the ones a bare-name comparison misses,
+      // and they are ordinary React — nothing stops a later story writing them.
+      `const [todos, setTodos] = React.useState<Todo[]>([]);`,
+      `const [state, dispatch] = React.useReducer(reducer, todoList);`,
     ];
     for (const code of planted) {
       expect(todoStateOffences("probe.tsx", code), code).toHaveLength(1);

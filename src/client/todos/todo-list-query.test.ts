@@ -6,9 +6,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Todo } from "@/shared/contract/todo";
 import { TODOS_QUERY_KEY } from "./query-keys";
 import {
+  READ_DEADLINE_MS,
   TODOS_ENDPOINT,
   TodoRequestError,
   fetchTodoList,
+  identityExpired,
   todoListQueryOptions,
 } from "./todo-list-query";
 
@@ -200,6 +202,50 @@ describe("the query options (AC1, AC4)", () => {
     },
   );
 
+  it("hands the fetch a signal, so TanStack's cancellation actually reaches the transport", async () => {
+    // The direct-call test above proves `fetchTodoList` forwards a signal it is
+    // given. It does not prove the `queryFn` passes TanStack's context signal
+    // in — and that is the half that breaks silently: `queryFn: () =>
+    // fetchTodoList()` type-checks (a queryFn may ignore its context) and keeps
+    // every other test in this block green, because none of them reads the
+    // `init` the queryFn produced.
+    const stub = stubFetch(() => answer(SERVER_ORDER));
+
+    await new QueryClient().fetchQuery(todoListQueryOptions);
+
+    expect(stub.mock.calls[0]?.[1]?.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it("gives the fetch a deadline as well as the caller's signal", async () => {
+    // A connection accepted and then left open is the case `retry: false` and
+    // `networkMode: "always"` do not cover: without a deadline the query stays
+    // pending, which is the same stuck interface those two options were chosen
+    // to avoid. Proved by composition rather than by waiting out the clock —
+    // the signal the transport receives must not be the caller's own.
+    const stub = stubFetch(() => answer(SERVER_ORDER));
+    const caller = new AbortController();
+
+    await fetchTodoList({ signal: caller.signal });
+
+    const passed = stub.mock.calls[0]?.[1]?.signal;
+    expect(passed).toBeInstanceOf(AbortSignal);
+    expect(passed).not.toBe(caller.signal);
+    expect(READ_DEADLINE_MS).toBeGreaterThan(0);
+    expect(Number.isFinite(READ_DEADLINE_MS)).toBe(true);
+  });
+
+  it("still aborts when the caller aborts, so cancellation is not lost to the deadline", async () => {
+    const stub = stubFetch(() => answer(SERVER_ORDER));
+    const caller = new AbortController();
+
+    await fetchTodoList({ signal: caller.signal });
+    const passed = stub.mock.calls[0]?.[1]?.signal;
+    expect(passed?.aborted).toBe(false);
+
+    caller.abort();
+    expect(passed?.aborted).toBe(true);
+  });
+
   it("caches the list under ['todos'] in the order received", async () => {
     stubFetch(() => answer(SERVER_ORDER));
     const queryClient = new QueryClient();
@@ -280,5 +326,46 @@ describe("the query options (AC1, AC4)", () => {
     const state = queryClient.getQueryState(TODOS_QUERY_KEY);
     expect(state?.status).toBe("success");
     expect(state?.data).toEqual(SERVER_ORDER);
+  });
+});
+
+describe("identityExpired — the failure a Retry cannot fix", () => {
+  // `middleware.ts` mints on a document request and never under `app/api/`
+  // (AD-17), so a 401 means this page holds no identity the server accepts.
+  // Story 2.7's Retry would re-request and receive 401 again, forever; only a
+  // fresh document request mints. The middleware's own catch branch reaches
+  // this state deliberately: when the identity store is unreachable it serves
+  // the shell with no cookie at all.
+  it("is true for a 401", async () => {
+    stubFetch(() => answer({ error: { kind: "load", message: "x" } }, { status: 401 }));
+
+    const error = await fetchTodoList().catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(TodoRequestError);
+    expect((error as TodoRequestError).status).toBe(401);
+    expect(identityExpired(error)).toBe(true);
+  });
+
+  it.each([500, 503])("is false for a %i, which a Retry can fix", async (status) => {
+    stubFetch(() => answer({ error: { kind: "load", message: "x" } }, { status }));
+
+    const error = await fetchTodoList().catch((caught: unknown) => caught);
+
+    expect((error as TodoRequestError).status).toBe(status);
+    expect(identityExpired(error)).toBe(false);
+  });
+
+  it("is false when no response arrived at all", async () => {
+    stubFetch(() => Promise.reject(new TypeError("Failed to fetch")));
+
+    const error = await fetchTodoList().catch((caught: unknown) => caught);
+
+    expect((error as TodoRequestError).status).toBeUndefined();
+    expect(identityExpired(error)).toBe(false);
+  });
+
+  it("is false for anything that is not a TodoRequestError", () => {
+    expect(identityExpired(new Error("unrelated"))).toBe(false);
+    expect(identityExpired(undefined)).toBe(false);
   });
 });

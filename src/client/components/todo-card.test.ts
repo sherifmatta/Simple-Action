@@ -3,10 +3,15 @@ import path from "node:path";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
 import {
+  arbitraryProperties,
+  classNamesOf,
   dynamicClassNames,
   matches,
+  matchesWithElement,
+  opaqueMarkup,
   parseTsx,
   readMarkup,
+  styleSheetMatches,
   type Markup,
 } from "@/test-support/markup";
 
@@ -32,8 +37,11 @@ const layoutFile = path.join("app", "layout.tsx");
 
 /** `overflow-auto` / `overflow-scroll`, on either axis or both. */
 const SCROLL_CONTAINER = /^overflow(-[xy])?-(auto|scroll)$/;
-/** `overflow-hidden`, on either axis or both. */
-const CLIPPING = /^overflow(-[xy])?-hidden$/;
+/** `overflow-hidden` or `overflow-clip`, on either axis or both. */
+// `clip` clips exactly as `hidden` does — it merely refuses programmatic
+// scrolling — so a clipping ancestor written `overflow-clip` cuts off the
+// sticky block just the same, and the narrower pattern let it through.
+const CLIPPING = /^overflow(-[xy])?-(hidden|clip)$/;
 /** Anything that could shade, fade or mask a lower edge. */
 const MORE_BELOW_CUE =
   /^(bg-(gradient|linear|radial|conic)|from-|via-|to-|mask|shadow-inner|scrollbar|backdrop-)/;
@@ -135,8 +143,12 @@ describe("the page body is the only scrolling element (AC3)", () => {
     // working inside the card — the same declaration on any element *below*
     // the body would clip the sticky block instead, which is why this is an
     // allow-list of one rather than a ban on the whole family.
-    expect(matches(markup, CLIPPING)).toEqual([
-      `${layoutFile}:overflow-x-hidden`,
+    // Pinned to the element, not just the file: the allow-list exists because
+    // the propagation above is a property of `<body>` specifically. Moving the
+    // same class to `<html>` — or onto any other element in `app/layout.tsx` —
+    // breaks sticky positioning while a file-scoped assertion stays green.
+    expect(matchesWithElement(markup, CLIPPING)).toEqual([
+      `${layoutFile}:body:overflow-x-hidden`,
     ]);
   });
 
@@ -150,6 +162,15 @@ describe("the page body is the only scrolling element (AC3)", () => {
 describe("the card's lower edge leaving the viewport is not cued (AC4)", () => {
   it("adds no fade, mask, inner shadow or region-local scrollbar", () => {
     expect(matches(markup, MORE_BELOW_CUE)).toEqual([]);
+  });
+
+  it("adds none of them through the stylesheet either", () => {
+    // The scans above read `.tsx` only. This epic has started putting
+    // component recipes in `globals.css`, so every cue these ACs rule out can
+    // now be reintroduced there with every markup scan still green.
+    expect(
+      styleSheetMatches(/\b(mask[a-z-]*|text-overflow|[a-z-]*-gradient)\s*:/),
+    ).toEqual([]);
   });
 
   it("keeps the card's shadow an outer one", () => {
@@ -170,8 +191,13 @@ describe("nothing can take the page sideways (AC2)", () => {
   });
 
   it("keeps the horizontal wall on <body>", () => {
-    const layout = markup.find(({ file }) => file === layoutFile);
-    expect(layout?.classes).toContain("overflow-x-hidden");
+    expect(matchesWithElement(markup, /^overflow-x-hidden$/)).toEqual([
+      `${layoutFile}:body:overflow-x-hidden`,
+    ]);
+  });
+
+  it("declares no page-widening width in the stylesheet either", () => {
+    expect(styleSheetMatches(/\b(width|min-width)\s*:\s*(100vw|100dvw|100lvw)/)).toEqual([]);
   });
 });
 
@@ -262,5 +288,62 @@ describe("the product name appears in the tab title only (AC7)", () => {
       .filter(({ source }) => source.includes("Simple Action"))
       .map(({ file }) => file);
     expect(offenders).toEqual([]);
+  });
+});
+
+// --- The scans' own blind spots ---------------------------------------------
+// Every assertion in this file is an absence proved by reading `className`
+// string literals out of the AST. These three are what keep that reading
+// honest: a class the scans cannot parse, markup they cannot see, and a
+// declaration that never passes through a class at all.
+
+describe("the absence scans can actually see the markup they scan", () => {
+  it("finds no arbitrary-property class, which no utility pattern can match", () => {
+    // `[overflow:auto]` is a scroll container and `md:[position:fixed]` a second
+    // pinned block, both written in a form every pattern in this file misses.
+    expect(arbitraryProperties(markup)).toEqual([]);
+  });
+
+  it("finds no spread attribute, createElement call or inline style", () => {
+    // Each is a route to the browser that carries no `className` attribute
+    // node, so the scans would go quietly blind rather than fail.
+    expect(opaqueMarkup(markup)).toEqual([]);
+  });
+
+  it("would catch each of them, so the three assertions above are not vacuous", () => {
+    const planted = (code: string): Markup => ({
+      file: "planted.tsx",
+      source: code,
+      classes: classNamesOf(code, "planted.tsx"),
+    });
+
+    expect(
+      arbitraryProperties([planted(`const a = <div className="md:[overflow:auto]" />;`)]),
+    ).toEqual(["planted.tsx:md:[overflow:auto]"]);
+
+    expect(
+      opaqueMarkup([planted(`const a = <div {...props} />;`)]),
+    ).toHaveLength(1);
+    expect(
+      opaqueMarkup([planted(`const a = <div style={{ overflow: "auto" }} />;`)]),
+    ).toHaveLength(1);
+    expect(
+      opaqueMarkup([planted(`const a = React.createElement("div", { className: "sticky" });`)]),
+    ).toHaveLength(1);
+
+    // And the element-scoped form distinguishes the two elements a file-scoped
+    // assertion cannot tell apart.
+    expect(
+      matchesWithElement(
+        [planted(`const a = <html className="overflow-x-hidden" />;`)],
+        CLIPPING,
+      ),
+    ).toEqual(["planted.tsx:html:overflow-x-hidden"]);
+  });
+
+  it("declares no positioning in the stylesheet", () => {
+    // AC6's "stickiness is declared exactly once" is a markup scan; a
+    // `position: sticky` in `globals.css` satisfies it without being seen.
+    expect(styleSheetMatches(/\bposition\s*:\s*(sticky|fixed)/)).toEqual([]);
   });
 });

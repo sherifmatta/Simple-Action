@@ -131,7 +131,13 @@ describe("the card is the only thing on the page (1.7 AC5, 2.3 AC1/AC7)", () => 
 
 // Story 2.4 moved this harness to `src/test-support/tailwind.ts`; it had two
 // consumers there and a third arriving, which is the duplication
-// `deferred-work.md` has been tracking. Behaviour here is unchanged.
+// `deferred-work.md` has been tracking.
+//
+// Behaviour here did change, and in this file's favour: `ruleFor` read only up
+// to the first `}`, so every shadow assertion in the repository — the one below
+// included — was matching a truncated fragment. It is brace-balanced now, which
+// is what lets the `shadow-card` assertion below check the declaration that
+// actually paints rather than the custom property that feeds it.
 const { base, compile } = tailwindCompiler();
 afterAll(() => rmSync(base, { recursive: true, force: true }));
 
@@ -143,7 +149,16 @@ describe("the card is built from DESIGN.md's tokens, not from values (AC5, AD-13
     // inline padding, max width. Plus the ground behind it.
     expect(ruleFor(css, "bg-card")).toContain("var(--color-card)");
     expect(ruleFor(css, "rounded-lg")).toContain("var(--radius-lg)");
-    expect(ruleFor(css, "shadow-card")).toContain("--tw-shadow:");
+    // The whole rule, not its first fragment: Tailwind nests a block inside the
+    // shadow utilities, so `--tw-shadow:` alone passes without `box-shadow`
+    // ever being applied — which is what the truncating `ruleFor` could not
+    // tell apart. Whether the shadow is an outer one is a property of the
+    // token, and `todo-card.test.ts` asserts it there; Tailwind's own
+    // `--tw-shadow-inset` plumbing appears in every shadow utility, so it
+    // cannot be asserted here.
+    const cardShadow = ruleFor(css, "shadow-card");
+    expect(cardShadow).toContain("--tw-shadow:");
+    expect(cardShadow).toContain("box-shadow:");
     expect(ruleFor(css, "py-6")).toContain("var(--spacing-6)");
     expect(ruleFor(css, "px-gutter")).toContain("var(--spacing-gutter)");
     expect(ruleFor(css, "max-w-card-max-width")).toContain(

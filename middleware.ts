@@ -85,7 +85,13 @@ export async function middleware(request: NextRequest) {
     // an identity, and the browser's first API call carries the cookie this
     // response just set.
     response.cookies.set(IDENTITY_COOKIE_NAME, token, IDENTITY_COOKIE_ATTRIBUTES);
-    return response;
+
+    // Marked private for the same reason as every `app/api/` response, and more
+    // urgently: this is the one response in the product whose body-plus-header
+    // pair is uniquely per-caller, because it carries the `Set-Cookie` that
+    // decides whose Todo List every later request reads. A shared cache
+    // replaying it hands two visitors one identity.
+    return privateToTheCaller(response);
   } catch (error) {
     // Neon auto-suspends, so an unreachable identity store is an ordinary
     // transient, not an impossible state. A document request is served without

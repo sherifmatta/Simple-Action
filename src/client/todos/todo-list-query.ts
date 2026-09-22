@@ -32,14 +32,55 @@ export const TODOS_ENDPOINT = "/api/todos";
  * to the copy in EXPERIENCE.md §Voice and Tone and never compose or forward a
  * message to the interface. The server's `message` is not read at all — this
  * class is built from the operation, not from the response body.
+ *
+ * `status` is the HTTP status when a response arrived, and `undefined` when
+ * none did. It does not weaken the rule above — it is not copy and never
+ * reaches the interface — but it is the one thing about the response a caller
+ * must be able to see, because `401` is the single failure a re-request cannot
+ * fix. See `identityExpired` below.
  */
 export class TodoRequestError extends Error {
   readonly kind: ErrorKind;
+  readonly status?: number;
 
-  constructor(kind: ErrorKind, options?: { cause?: unknown }) {
+  constructor(kind: ErrorKind, options?: { cause?: unknown; status?: number }) {
     super(`The Todo ${kind} request failed.`, options);
     this.name = "TodoRequestError";
     this.kind = kind;
+    this.status = options?.status;
+  }
+}
+
+/**
+ * How long a read may take before it is abandoned.
+ *
+ * `retry: false` (below) means nothing here ever gives up on its own, and
+ * `networkMode: "always"` is set precisely so a request is *attempted* rather
+ * than paused — but neither helps against a connection that is accepted and
+ * then never answered. Without a deadline that read stays `pending` forever:
+ * skeletons pulsing, no banner, nothing to press, which is the same stuck
+ * interface NFR-4 forbids and that `networkMode` was chosen to avoid, reached
+ * by a different route.
+ *
+ * 15s is well past any healthy response and well short of a user concluding
+ * the product is broken.
+ */
+export const READ_DEADLINE_MS = 15_000;
+
+/** The caller's signal and the deadline, whichever fires first. */
+function deadline(signal?: AbortSignal): AbortSignal {
+  const timeout = AbortSignal.timeout(READ_DEADLINE_MS);
+  return signal ? AbortSignal.any([signal, timeout]) : timeout;
+}
+
+/** A response arrived and was a failure; carries the status for `fetchTodoList`. */
+class HttpStatusError extends Error {
+  readonly status: number;
+
+  constructor(status: number) {
+    super(`GET ${TODOS_ENDPOINT} answered ${status}.`);
+    this.name = "HttpStatusError";
+    this.status = status;
   }
 }
 
@@ -68,12 +109,12 @@ export class TodoRequestError extends Error {
  */
 async function readTodoList(signal?: AbortSignal): Promise<Todo[]> {
   const response = await fetch(TODOS_ENDPOINT, {
-    signal,
+    signal: deadline(signal),
     headers: { accept: "application/json" },
   });
 
   if (!response.ok) {
-    throw new Error(`GET ${TODOS_ENDPOINT} answered ${response.status}.`);
+    throw new HttpStatusError(response.status);
   }
 
   const body: unknown = await response.json();
@@ -106,7 +147,10 @@ export async function fetchTodoList({
   try {
     return await readTodoList(signal);
   } catch (cause) {
-    throw new TodoRequestError("load", { cause });
+    throw new TodoRequestError("load", {
+      cause,
+      status: cause instanceof HttpStatusError ? cause.status : undefined,
+    });
   }
 }
 
@@ -150,3 +194,26 @@ export const todoListQueryOptions = queryOptions<
   retry: false,
   networkMode: "always",
 });
+
+/**
+ * Whether this failure is one a re-request cannot fix.
+ *
+ * `middleware.ts` mints a Client Identity on a *document* request and never
+ * under `app/api/` (AD-17), so a `401` means the open page holds no identity
+ * the server will accept — a cookie the user cleared, a forged value, or the
+ * case `middleware.ts` documents itself: when the identity store is unreachable
+ * on a document request the shell is served with no cookie at all, and every
+ * API call it makes afterwards is `401`.
+ *
+ * In that state Story 2.7's `Retry` re-requests, receives `401` again, and does
+ * so forever — the designed recovery affordance is a dead button. Only a fresh
+ * document request mints. So `Retry` must consult this: when it is true the
+ * recovery is `location.reload()`, not `refetch()`.
+ *
+ * It is exported here rather than decided inside the banner because the reason
+ * lives with the request, and because Epics 3 through 5 reach the same `401`
+ * from their own mutations.
+ */
+export function identityExpired(error: unknown): boolean {
+  return error instanceof TodoRequestError && error.status === 401;
+}

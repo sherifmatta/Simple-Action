@@ -147,6 +147,17 @@ describe("a document request with no identity cookie (AC1, AC2, AC5)", () => {
     expect(tokenHash).not.toBe(token);
   });
 
+  it("marks the minting response private and keyed on the cookie", async () => {
+    // This is the one response in the product whose body-plus-header pair is
+    // uniquely per-caller: it carries the `Set-Cookie` that decides whose Todo
+    // List every later request reads. A shared cache replaying it hands two
+    // visitors one identity.
+    const response = await middleware(request("/"));
+
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
+    expect(response.headers.get("vary")).toMatch(/\bCookie\b/);
+  });
+
   it("sets HttpOnly, Secure and SameSite=Lax (AC1)", async () => {
     const cookie = setCookie(await middleware(request("/")));
 
@@ -319,6 +330,13 @@ describe("when the identity store is unreachable", () => {
     await expect(response.json()).resolves.toEqual({
       error: { kind: "create", message: expect.any(String) },
     });
+    // The outage response is decided by the identity cookie like every other
+    // response under `app/api/`, so it carries the same two headers. Asserted
+    // here because `identityUnavailableResponse` is module-local: no other file
+    // can reach it, and re-inlining a bare `Response.json` here would otherwise
+    // ship a cacheable, unkeyed 503 with the whole suite green.
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
+    expect(response.headers.get("vary")).toMatch(/\bCookie\b/);
     logged.mockRestore();
   });
 

@@ -170,7 +170,9 @@ describe("GET /api/todos — no valid identity (AC5)", () => {
     const body = await (await GET(requestWith())).json();
 
     expect(body).toEqual({
-      error: { kind: "load", message: expect.any(String) },
+      // Equality, not `expect.any(String)` — a driver error is a string too,
+      // and this is the envelope a browser actually receives.
+      error: { kind: "load", message: "No Client Identity on this request." },
     });
   });
 });
@@ -209,14 +211,30 @@ describe("GET /api/todos — the response belongs to one caller", () => {
 });
 
 describe("the route's exported surface", () => {
+  // Next.js also recognises a set of route *segment config* exports. They are
+  // declarations about how the route runs, not endpoints, and two of them
+  // (`dynamic`, `revalidate`) are exactly how this route would state its
+  // never-cached intent explicitly rather than incidentally. Excluding them
+  // from the check keeps the guard aimed at what it is for: an undesigned HTTP
+  // method reaching the wire.
+  const SEGMENT_CONFIG = new Set([
+    "dynamic",
+    "dynamicParams",
+    "revalidate",
+    "fetchCache",
+    "runtime",
+    "preferredRegion",
+    "maxDuration",
+  ]);
+
   it("exports GET and the message constant, and no second HTTP method", () => {
-    // Next.js routes any exported method name it recognises. `POST` joins this
-    // file with Story 3.1 and updates this list; until then an extra export is
-    // an endpoint nobody designed.
-    expect(Object.keys(routeModule).sort()).toEqual([
-      "GET",
-      "LOAD_FAILED_MESSAGE",
-    ]);
+    // `POST` joins this file with Story 3.1 and updates this list; until then
+    // an extra export is an endpoint nobody designed.
+    const surface = Object.keys(routeModule)
+      .filter((name) => !SEGMENT_CONFIG.has(name))
+      .sort();
+
+    expect(surface).toEqual(["GET", "LOAD_FAILED_MESSAGE"]);
   });
 });
 
