@@ -67,6 +67,54 @@ const noComponentFetchSyntax = [
 // selector cannot see.
 const noComponentFetchGlobal = ["error", { name: "fetch", message: NO_FETCH }];
 
+// --- AD-8: exactly one query key, `['todos']`. ------------------------------
+// Story 1.7 declared the key once and proved the rule with source scans in
+// `providers.test.ts`; `deferred-work.md` records putting it behind a lint
+// rule as the first query hook's to own, because until Story 2.2 there was no
+// call site to write the rule against. This is that rule.
+//
+// Scoped to `ObjectExpression >` so it sees an options object and not a
+// destructuring pattern: `queryFn: ({ queryKey }) => …` is TanStack handing
+// the key back, which is the rule being obeyed rather than broken. A shorthand
+// `{ queryKey }` in an options object is still an error — a key read from a
+// local variable is the drift AD-8 forbids, whatever the variable holds.
+
+const AD_8 =
+  "AD-8: there is exactly one query key. Import TODOS_QUERY_KEY from src/client/todos/query-keys and pass it as queryKey.";
+
+// The cache methods that take the key *positionally* rather than in an options
+// object. `setQueryData` is how every optimistic mutation in Epics 3 to 5
+// writes to the cache, so leaving these to the property selectors below would
+// wall the one form this codebase barely uses and leave the one it lives on
+// open. Their first argument is always a query key, which is what lets the rule
+// demand the constant itself rather than merely reject an array literal.
+const POSITIONAL_KEY_METHODS =
+  "/^(setQueryData|getQueryData|getQueryState|setQueryDefaults|getQueryDefaults)$/";
+
+const noUnapprovedQueryKey = [
+  {
+    selector:
+      "ObjectExpression > Property[key.name='queryKey']:not([value.name='TODOS_QUERY_KEY'])",
+    message: AD_8,
+  },
+  // `{ "queryKey": … }` — a string key, which `key.name` cannot see.
+  {
+    selector:
+      "ObjectExpression > Property[key.value='queryKey']:not([value.name='TODOS_QUERY_KEY'])",
+    message: AD_8,
+  },
+  {
+    selector: `CallExpression[callee.property.name=${POSITIONAL_KEY_METHODS}]:not([arguments.0.name='TODOS_QUERY_KEY'])`,
+    message: AD_8,
+  },
+  // The same call after the method has been pulled off the client —
+  // `const { setQueryData } = queryClient`.
+  {
+    selector: `CallExpression[callee.name=${POSITIONAL_KEY_METHODS}]:not([arguments.0.name='TODOS_QUERY_KEY'])`,
+    message: AD_8,
+  },
+];
+
 // --- AD-12: one live region, one announcer. ---------------------------------
 // Exactly one polite and one assertive live region exist, and they are
 // declared in src/client/feedback/announcer.tsx. Everything that wants to say
@@ -245,6 +293,7 @@ const eslintConfig = defineConfig([
         "error",
         noUseServerDirective,
         ...noAriaLive,
+        ...noUnapprovedQueryKey,
         ...noDrizzleDynamicImport,
       ],
       "no-restricted-imports": [
@@ -266,6 +315,7 @@ const eslintConfig = defineConfig([
         "error",
         noUseServerDirective,
         ...noAriaLive,
+        ...noUnapprovedQueryKey,
         ...noDrizzleDynamicImport,
         ...noComponentFetchSyntax,
       ],
@@ -288,6 +338,7 @@ const eslintConfig = defineConfig([
         "error",
         noUseServerDirective,
         ...noAriaLive,
+        ...noUnapprovedQueryKey,
         ...noDrizzleDynamicImport,
       ],
       "no-restricted-imports": [
@@ -313,6 +364,7 @@ const eslintConfig = defineConfig([
         "error",
         noUseServerDirective,
         ...noAriaLive,
+        ...noUnapprovedQueryKey,
         ...noDrizzleDynamicImport,
         ...noComponentFetchSyntax,
       ],
@@ -335,6 +387,7 @@ const eslintConfig = defineConfig([
         "error",
         noUseServerDirective,
         ...noAriaLive,
+        ...noUnapprovedQueryKey,
         ...noDrizzleDynamicImport,
       ],
       "no-restricted-imports": [
@@ -355,6 +408,7 @@ const eslintConfig = defineConfig([
         "error",
         noUseServerDirective,
         ...noAriaLive,
+        ...noUnapprovedQueryKey,
         ...noDrizzleDynamicImport,
       ],
       "no-restricted-imports": [
@@ -376,6 +430,7 @@ const eslintConfig = defineConfig([
         "error",
         noUseServerDirective,
         ...noAriaLive,
+        ...noUnapprovedQueryKey,
         ...noDrizzleDynamicImport,
       ],
       "no-restricted-imports": [
@@ -397,6 +452,7 @@ const eslintConfig = defineConfig([
         "error",
         noUseServerDirective,
         ...noAriaLive,
+        ...noUnapprovedQueryKey,
         ...noDrizzleDynamicImport,
       ],
       "no-restricted-imports": [
@@ -413,7 +469,12 @@ const eslintConfig = defineConfig([
   {
     files: [within("src/server/repository")],
     rules: {
-      "no-restricted-syntax": ["error", noUseServerDirective, ...noAriaLive],
+      "no-restricted-syntax": [
+        "error",
+        noUseServerDirective,
+        ...noAriaLive,
+        ...noUnapprovedQueryKey,
+      ],
       "no-restricted-imports": ["error", { patterns: [noClientImport] }],
     },
   },
@@ -429,6 +490,7 @@ const eslintConfig = defineConfig([
       "no-restricted-syntax": [
         "error",
         noUseServerDirective,
+        ...noUnapprovedQueryKey,
         ...noDrizzleDynamicImport,
         ...noComponentFetchSyntax,
       ],

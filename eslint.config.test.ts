@@ -51,7 +51,7 @@ type Violation = {
   filePath: string;
   code: string;
   ruleId: string;
-  names: "AD-1" | "AD-2" | "AD-12" | null;
+  names: "AD-1" | "AD-2" | "AD-8" | "AD-12" | null;
 };
 
 const violations: Violation[] = [
@@ -395,7 +395,146 @@ const implicitLiveRegionViolations: Violation[] = [
 
 violations.push(...implicitLiveRegionViolations);
 
+// --- Cases added by Story 2.2 (AD-8, exactly one query key) ----------------
+// `deferred-work.md` recorded this rule as the first query hook's to own: until
+// one existed there was no call site to write it against, and no way to measure
+// its false-positive surface. These fixtures are that measurement — the
+// destructuring forms in `exemptions` below are TanStack handing the key back
+// to a `queryFn`, which is the rule obeyed rather than broken.
+
+const queryKeyViolations: Violation[] = [
+  {
+    name: "AD-8: a query hook spells the key inline instead of importing it",
+    filePath: "src/client/todos/probe.ts",
+    code: `export const probe = { queryKey: ["todos"] };\n`,
+    ruleId: "no-restricted-syntax",
+    names: "AD-8",
+  },
+  {
+    name: "AD-8: a second key by another name",
+    filePath: "src/client/todos/probe.ts",
+    code: `export const probe = { queryKey: ["todo-list"] };\n`,
+    ruleId: "no-restricted-syntax",
+    names: "AD-8",
+  },
+  {
+    // The import scan in `providers.test.ts` is satisfied by a file that
+    // imports the constant and writes a composite key beside it; this rule
+    // catches the literal itself.
+    name: "AD-8: a composite key beside the imported one",
+    filePath: "src/client/todos/probe.ts",
+    code: `import { TODOS_QUERY_KEY } from "./query-keys";\nexport const probe = [TODOS_QUERY_KEY, { queryKey: ["todos", "1"] }];\n`,
+    ruleId: "no-restricted-syntax",
+    names: "AD-8",
+  },
+  {
+    // A key read from a local variable defeats every scan that looks at the
+    // literal, and is how `['todos', id]` arrives one refactor later.
+    name: "AD-8: the key comes from a local variable, in shorthand",
+    filePath: "src/client/components/probe.ts",
+    code: `const queryKey = ["todos"];\nexport const probe = { queryKey };\n`,
+    ruleId: "no-restricted-syntax",
+    names: "AD-8",
+  },
+  {
+    name: "AD-8: the property is written as a string key",
+    filePath: "src/client/todos/probe.ts",
+    code: `export const probe = { "queryKey": ["todos"] };\n`,
+    ruleId: "no-restricted-syntax",
+    names: "AD-8",
+  },
+  {
+    // Every config block restates the rule; these three are the ones no
+    // `src/client/**` fixture would reach.
+    name: "AD-8: a route handler declares a query key",
+    filePath: "app/api/todos/route.ts",
+    code: `export const probe = { queryKey: ["todos"] };\n`,
+    ruleId: "no-restricted-syntax",
+    names: "AD-8",
+  },
+  {
+    name: "AD-8: the repository declares a query key",
+    filePath: "src/server/repository/probe.ts",
+    code: `export const probe = { queryKey: ["todos"] };\n`,
+    ruleId: "no-restricted-syntax",
+    names: "AD-8",
+  },
+  {
+    name: "AD-8: a root-level module declares a query key",
+    filePath: "probe.ts",
+    code: `export const probe = { queryKey: ["todos"] };\n`,
+    ruleId: "no-restricted-syntax",
+    names: "AD-8",
+  },
+];
+
+// The positional form. `setQueryData` is how every optimistic mutation in
+// Epics 3 to 5 writes to the cache, so the first review pass of Story 2.2
+// found the property selectors walling the form this codebase barely uses and
+// leaving the one it lives on open.
+
+const positionalQueryKeyViolations: Violation[] = [
+  {
+    name: "AD-8: setQueryData is given a key literal",
+    filePath: "src/client/todos/probe.ts",
+    code: `export const probe = (c: { setQueryData: (k: unknown, v: unknown) => void }) =>\n  c.setQueryData(["todo-list"], []);\n`,
+    ruleId: "no-restricted-syntax",
+    names: "AD-8",
+  },
+  {
+    name: "AD-8: getQueryData is given a composite key literal",
+    filePath: "src/client/components/probe.ts",
+    code: `export const probe = (c: { getQueryData: (k: unknown) => unknown }) =>\n  c.getQueryData(["todos", "1"]);\n`,
+    ruleId: "no-restricted-syntax",
+    names: "AD-8",
+  },
+  {
+    name: "AD-8: a positional key comes from some other constant",
+    filePath: "src/client/todos/probe.ts",
+    code: `const otherKey = ["todos"] as const;\nexport const probe = (c: { getQueryState: (k: unknown) => unknown }) =>\n  c.getQueryState(otherKey);\n`,
+    ruleId: "no-restricted-syntax",
+    names: "AD-8",
+  },
+  {
+    name: "AD-8: the method is pulled off the client first",
+    filePath: "src/client/todos/probe.ts",
+    code: `export const probe = (c: { setQueryData: (k: unknown, v: unknown) => void }) => {\n  const { setQueryData } = c;\n  setQueryData(["todos", "1"], []);\n};\n`,
+    ruleId: "no-restricted-syntax",
+    names: "AD-8",
+  },
+];
+
+violations.push(...queryKeyViolations, ...positionalQueryKeyViolations);
+
 const exemptions: { name: string; filePath: string; code: string }[] = [
+  {
+    name: "the imported key is the one approved queryKey",
+    filePath: "src/client/todos/probe.ts",
+    code: `import { TODOS_QUERY_KEY } from "./query-keys";\nexport const probe = { queryKey: TODOS_QUERY_KEY };\n`,
+  },
+  {
+    // TanStack passes the key into the queryFn's context. Flagging that would
+    // make the rule an obstacle to using the library it exists to constrain.
+    name: "a queryFn destructures the key TanStack hands it",
+    filePath: "src/client/todos/probe.ts",
+    code: `export const probe = ({ queryKey }: { queryKey: readonly string[] }) => queryKey;\n`,
+  },
+  {
+    name: "the imported key is accepted positionally too",
+    filePath: "src/client/todos/probe.ts",
+    code: `import { TODOS_QUERY_KEY } from "./query-keys";\nexport const probe = (c: { setQueryData: (k: unknown, v: unknown) => void }) =>\n  c.setQueryData(TODOS_QUERY_KEY, []);\n`,
+  },
+  {
+    name: "a filters object carrying the imported key is untouched",
+    filePath: "src/client/todos/probe.ts",
+    code: `import { TODOS_QUERY_KEY } from "./query-keys";\nexport const probe = (c: { refetchQueries: (f: unknown) => void }) =>\n  c.refetchQueries({ queryKey: TODOS_QUERY_KEY });\n`,
+  },
+  {
+    name: "the key is destructured out of a variable",
+    filePath: "src/client/todos/probe.ts",
+    code: `export const probe = (options: { queryKey: readonly string[] }) => {\n  const { queryKey } = options;\n  return queryKey;\n};\n`,
+  },
+
   {
     name: "a query hook is the sanctioned fetch site",
     filePath: "src/client/todos/use-todos.ts",
