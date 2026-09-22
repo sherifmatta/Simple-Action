@@ -83,6 +83,18 @@ context:
 - Given a future repository function that reads or writes a Todo, when its signature is written, then `ownerId` is its first parameter — recorded here as the standing rule for Epics 2–5, since this story adds no such function (AC3).
 - Given any route handler, when one is later added, then it calls repository functions and never builds a query — no route handler exists in the tree at this story's baseline, so AC5 is a constraint this story preserves rather than a behavior it demonstrates (AC5).
 
+### Review Findings
+
+_Code review 2026-09-21 — four layers over the full Epic 1 diff._
+
+- [x] [Review][Patch] The two tree-walking scan helpers were copy-pasted and have already drifted [src/server/repository/client-identity.test.ts:147] — `SOURCE_EXTENSIONS`, `SKIPPED_DIRECTORIES`, `SCAN_EXEMPT_FILES`, `repositoryRoot` and `sourceFiles()` are duplicated verbatim from `src/shared/contract/contract.test.ts`, except that copy skips `out` and `build` and this one does not. A stale build directory therefore makes the AD-2 scan walk emitted JS and report it as an illegal database importer. Extract one shared helper.
+- [x] [Review][Defer] Two committed error messages point at a `.env.example` that is not in the tree [src/server/repository/client.ts:30, drizzle.config.ts:5] — deferred: **already recorded in `deferred-work.md` by this story's own triage**, routed to Story 1.8 so the template and the sentence explaining it land with the README rather than split across two stories. Re-confirmed here by three review layers and re-stated only because it is now load-bearing: `npm test` fails on a fresh clone until 1.8 lands.
+- [x] [Review][Patch] `client.ts`'s comment understates the readers of `DATABASE_URL` [src/server/repository/client.ts:21] — it says "read here and nowhere else in the application (the only other reader is `drizzle.config.ts`)", but `vitest.config.mts:20` reads it too, via `loadEnv`, and injects it into `test.env`. That read was an explicit task in this same spec, so the code is right and the comment is stale — but the frozen Always bullet says "the repository's client module and nowhere else".
+
+**Rejected**
+
+- `createClientIdentity` returns `undefined` typed as `ClientIdentity` [src/server/repository/client-identity.ts:57] — `low`. `noUncheckedIndexedAccess` is off, so the destructure types away a runtime possibility; but a successful `INSERT ... RETURNING` always yields a row and a failure throws. No reachable path was demonstrated, and the fix adds a guard for state never shown to occur. Consistent with this spec's prior triage #11.
+
 ## Implementation Notes
 
 **`@neondatabase/serverless@1.1.0`, exact-pinned.** The architecture pins no version for the driver (it is not in the Stack table), so the latest published release at implementation time was taken. It satisfies `drizzle-orm@0.45.3`'s `>=0.10.0` peer range. `drizzle-orm/neon-http` was already present in the installed `drizzle-orm` — no ORM change was needed.

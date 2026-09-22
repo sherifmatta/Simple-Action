@@ -17,3 +17,11 @@ Append-only. Each entry is a finding that was verified as real but deliberately 
 - source_spec: `docs/implementation-artifacts/spec-1-5-define-the-shared-contract.md`
   summary: Constrain what may appear in the error envelope's `message`, so driver or SQL text cannot reach the browser through the single error slot.
   evidence: `ErrorEnvelope["error"]["message"]` is an unconstrained `string` crossing the wire on every failure path. AD-10's rule that the client never forwards or composes a server message is recorded in `errors.ts`'s doc comment, but nothing stops a route handler from putting a driver error's text there. No endpoint exists at this story's baseline, so the fix belongs to the stories that first construct an error response — Epic 2's list endpoint onward.
+
+- source_spec: `spec-1-1-scaffold-app-layer-boundaries.md`
+  summary: Nothing runs `npm test` automatically — no CI workflow, no git hooks, and `build` (what Vercel runs) skips the suite.
+  evidence: `package.json`'s `build` is `lint && typecheck && next build`; `test` is a separate script nothing chains to. No `.github/` directory, no non-sample hooks in `.git/hooks`, no husky or lint-staged config. Every guard Epic 1 built — the 23 ESLint boundary fixtures, the design-token scan, the AD-2 database-reach scan, the contract-duplication scan — runs only when a human remembers. Two regressions were demonstrated surviving a green `npm run build` (design-token drift, schema/migration drift). Graded high. Deferred to Story 1.8, which establishes the deploy path and owns the `DATABASE_URL` secret a CI job would need; `src/server/repository/client-identity.test.ts` imports `./client` at module scope, so CI needs that secret or the live rows need gating.
+
+- source_spec: `spec-1-2-transcribe-design-tokens-load-typeface.md`
+  summary: `<body>` is never painted with `--color-ground` / `--color-text-primary`, so the app renders on Tailwind-preflight white.
+  evidence: `app/globals.css` declares the tokens but carries no `body` rule and no `@layer base`; `app/layout.tsx:41` renders a bare `<body>`. Story 1.2's scope is transcription, and `app/page.tsx` states in a comment that Story 1.7 replaces the placeholder — so the shell story is the right owner for applying the ground colour. Recorded so it is not lost between the two.

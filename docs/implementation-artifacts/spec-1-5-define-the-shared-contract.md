@@ -85,6 +85,18 @@ context:
 - Given `src/client/` and `src/server/`, when they are searched, then neither declares its own Todo type — asserted by a persisted scan, not a one-off grep (AC1).
 - Given a future endpoint, when it returns success, then the body is the bare resource or a bare array with no envelope — recorded here as the standing rule for Epics 2–5, since this story adds no endpoint (AC6).
 
+### Review Findings
+
+_Code review 2026-09-21 — four layers over the full Epic 1 diff._
+
+- [x] [Review][Patch] The banned-vocabulary check reads raw source while the `any` check strips comments [src/shared/contract/contract.test.ts] — the `any` scan runs through `withoutComments()`; the `/\b(Done|task|item|isDone|title|status|content)\b/` scan runs on the raw file. `todo.ts` survives only because it writes "Completion Status" with a capital S and the regex is case-sensitive: one lowercase "status" in a prose comment fails the suite for no real reason. Strip comments there too.
+- [x] [Review][Patch] `withoutComments` mis-handles regex literals containing a quote [src/shared/contract/contract.test.ts] — a scanned file holding such a literal leaves comments inside that span unstripped, so prose can be reported as a competing Todo shape. Track regex-literal state alongside quote state, or skip the file.
+
+**Rejected**
+
+- `todo.ts` and `errors.ts` have no colocated `*.test.ts`, against a frozen Boundaries bullet — `low`. Their coverage lives in `contract.test.ts`, which pairs with no module of that name; `contract.test.ts:395-403` hard-codes the five-file listing as an assertion. Real convention drift, but no named harm, and the fix means splitting a 429-line suite and rewriting that assertion — more than a direct correction.
+- Frozen Intent says "two constants and one function"; the module exports one constant and one function — `low`, and the fix is to edit frozen spec text. Already raised and rejected as this spec's triage #20; it stands as an unresolved intent/code mismatch.
+
 ## Implementation Notes
 
 **The exported names.** `Todo` (todo.ts); `ErrorKind` and `ErrorEnvelope` (errors.ts); `TODO_TEXT_MAX_LENGTH` and `isValidTodoText` (validation.ts). The spec fixed only `Todo`, `text` and `completed`; the rest follow the three-files-no-barrel shape in Design Notes. `ErrorEnvelope` rather than `ErrorResponse` because `AD-10` and the epic context both call it the envelope, and `status` is banned as an identifier so no `ErrorStatus`-shaped name was available anyway. The module's only runtime exports remain the constant and the predicate — the two type modules emit nothing.

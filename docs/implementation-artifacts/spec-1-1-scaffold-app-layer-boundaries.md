@@ -83,6 +83,25 @@ Verified on npm 2026-09-21: `next@16.3.5`, `react`/`react-dom@19.3.0`, `typescri
 - Given the repository root, when the layout is compared to AR-20, then every directory it names exists **and is tracked by git**.
 - Given the final state with all probes removed, when `npm run lint` runs, then it exits zero.
 
+### Review Findings
+
+_Code review 2026-09-21 — four layers (blind-hunter, edge-case-hunter, verification-gap, acceptance-auditor) over the full Epic 1 diff._
+
+- [x] [Review][Patch] AD-2 deny-list is not default-deny — three holes the config header promises are closed [eslint.config.mjs:60-93, 95-108] — (a) bare `drizzle-orm` is unwalled: the group lists `drizzle-orm/**`, which does not match the package root; (b) the `!drizzle-orm/pg-core` re-allow lives in the shared pattern object used by every block, so *any* file may import pg-core — `schema.ts:8`'s comment claims the exemption is scoped to `src/server/db/`, and it is not; (c) `noDrizzleDynamicImport`'s regex anchors `^` only to the first alternation branch and omits `./client`, so `import("./client")` is allowed while the static form is denied. Verified against the real config.
+- [x] [Review][Patch] `app/` pages and layouts are not walled off `src/server/` [eslint.config.mjs:199-210] — the block omits `noServerImport`, justified by a comment about route handlers; but route handlers are already carved out by `ignores: [within("app/api")]`. As written, `app/page.tsx` may import the repository and query the database from a Server Component, bypassing the route-handler hop AR-24 mandates. No fixture covers this case.
+- [x] [Review][Patch] The baseline block — the only AD-1/AD-2 wall over root-level and `e2e/` files — has no violation fixture [eslint.config.test.ts:37-200] — all 23 fixtures use paths matched by a later block that fully restates the rules. Demonstrated: blanking the baseline block's `rules` leaves all 23 fixtures green while root-level and `e2e/` files lose the wall entirely. This is the exact "FULL RESTATEMENT" rot that eslint.config.mjs:17-22 names this file as the defence against.
+- [x] [Review][Patch] `boundaryMessages` passes vacuously when a fixture fails to parse or is globally ignored [eslint.config.test.ts:1345-1350] — every `allows $name` exemption case passes on zero messages without asserting the result is defined and non-fatal.
+- [x] [Review][Patch] The fetch wall misses computed access and destructured rename [eslint.config.mjs:42-52] — `window["fetch"](url)` and `const { fetch: f } = globalThis` both pass; commit 16fc030 claims fetch aliasing is walled.
+- [x] [Review][Patch] `coverage/**` is gitignored but absent from ESLint `globalIgnores` [eslint.config.mjs:137-146] — `CODE` includes `js`, so a coverage run leaves generated JS that `npm run lint --max-warnings=0` will walk and fail the build gate on.
+- [x] [Review][Patch] middleware matcher does not exclude extensionless `/api` or `/_next`, and has no test [middleware.ts:14] — `/((?!api/|_next/|.*\..*).*)` requires the trailing slash, so bare `/api` is matched. Dormant while middleware is a pass-through; live the moment Story 1.6 mints cookies there, contrary to AD-17. The matcher is the one non-trivial invariant in this diff with no test pinning it. `deferred-work.md` already routes the `middleware.ts` → `proxy.ts` rename to Story 1.6 — fix the matcher in the same step.
+- [x] [Review][Patch] `app/api/` is named by AR-20, by two ESLint config blocks and by six fixtures, but does not exist in the tree [app/] — spec-1-1's restated AC7 requires every AR-20 directory to exist and be git-tracked. (epics.md's narrower AC7 list *is* satisfied, so this is a contradiction internal to this spec.)
+- [x] [Review][Defer] Nothing runs `npm test` automatically [package.json:10] — deferred: no CI workflow, no git hooks, no husky/lint-staged; `build` (what Vercel runs) is `lint && typecheck && next build` and skips tests. Every guard in this epic — 23 ESLint fixtures, the token scan, the AD-2 scan, the contract scan — runs only when a human types `npm test`. Graded **high**. Deferred to Story 1.8, which establishes the deploy path and owns the `DATABASE_URL` secret a CI job needs.
+
+**Rejected**
+
+- `createClientIdentity` returns `undefined` typed as `ClientIdentity` (raised by three layers) — `low`. A successful `INSERT ... RETURNING` always yields a row and a failure throws; no reachable path was demonstrated. The fix adds a guard for state never shown to occur. Consistent with this spec's prior triage #11.
+- Housekeeping nits — devDependency carets beside exact pins, no `packageManager` field, `tsconfig` `target: ES2017`, `next.config.ts` left at boilerplate, no README — `low`, and Story 1.8 owns the README and the reproducibility story.
+
 ## Implementation Notes
 
 **Flat config resolves rules last-match-wins, not merge-wins.** The four boundary

@@ -21,13 +21,23 @@ const layoutPath = path.resolve(process.cwd(), "app/layout.tsx");
 const source = readFileSync(layoutPath, "utf8");
 
 function parse(fileName: string, code: string): ts.SourceFile {
-  return ts.createSourceFile(fileName, code, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  return ts.createSourceFile(
+    fileName,
+    code,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TSX,
+  );
 }
 
 function findPoppinsCalls(root: ts.Node): ts.CallExpression[] {
   const calls: ts.CallExpression[] = [];
   function visit(node: ts.Node) {
-    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "Poppins") {
+    if (
+      ts.isCallExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      node.expression.text === "Poppins"
+    ) {
       calls.push(node);
     }
     ts.forEachChild(node, visit);
@@ -36,17 +46,31 @@ function findPoppinsCalls(root: ts.Node): ts.CallExpression[] {
   return calls;
 }
 
+// Matches both `fallback: [...]` and `"fallback": [...]`. Until the
+// string-literal form was handled, `Poppins({ "fallback": [...] })` walked
+// straight through the zero-CLS guard.
 function findProperty(
   objectLiteral: ts.ObjectLiteralExpression,
   name: string,
 ): ts.PropertyAssignment | undefined {
   return objectLiteral.properties.find(
     (property): property is ts.PropertyAssignment =>
-      ts.isPropertyAssignment(property) && ts.isIdentifier(property.name) && property.name.text === name,
+      ts.isPropertyAssignment(property) &&
+      (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name)) &&
+      property.name.text === name,
   );
 }
 
-function findHtmlJsxElement(root: ts.Node): ts.JsxOpeningLikeElement | undefined {
+// A spread hides whatever it carries from every property lookup above, so the
+// options object stops being statically readable and the guards below would
+// pass without having checked anything.
+function hasSpread(objectLiteral: ts.ObjectLiteralExpression): boolean {
+  return objectLiteral.properties.some(ts.isSpreadAssignment);
+}
+
+function findHtmlJsxElement(
+  root: ts.Node,
+): ts.JsxOpeningLikeElement | undefined {
   let found: ts.JsxOpeningLikeElement | undefined;
   function visit(node: ts.Node) {
     if (found) return;
@@ -64,20 +88,89 @@ function findHtmlJsxElement(root: ts.Node): ts.JsxOpeningLikeElement | undefined
   return found;
 }
 
-function classNameExpressionText(element: ts.JsxOpeningLikeElement, sourceFile: ts.SourceFile): string | undefined {
+function classNameExpressionText(
+  element: ts.JsxOpeningLikeElement,
+  sourceFile: ts.SourceFile,
+): string | undefined {
   const attribute = element.attributes.properties.find(
     (property): property is ts.JsxAttribute =>
-      ts.isJsxAttribute(property) && ts.isIdentifier(property.name) && property.name.text === "className",
+      ts.isJsxAttribute(property) &&
+      ts.isIdentifier(property.name) &&
+      property.name.text === "className",
   );
-  if (!attribute?.initializer || !ts.isJsxExpression(attribute.initializer) || !attribute.initializer.expression) {
+  if (
+    !attribute?.initializer ||
+    !ts.isJsxExpression(attribute.initializer) ||
+    !attribute.initializer.expression
+  ) {
     return undefined;
   }
   return attribute.initializer.expression.getText(sourceFile);
 }
 
+// The guards, expressed once. Both halves of this suite call this: the real
+// file must produce no violations, and each negative fixture must produce the
+// specific one it encodes. Hand-writing the inverse assertion in the negative
+// half — as this file did until the 2026-09-21 review — proves only that the
+// helpers work, and leaves the fixtures green if a guard is ever weakened.
+type FontGuardViolation =
+  | "poppins-not-called-exactly-once"
+  | "options-not-an-object-literal"
+  | "options-spread"
+  | "fallback-present"
+  | "adjust-font-fallback-disabled"
+  | "variable-drifted"
+  | "html-classname-drifted";
+
+function fontGuardViolations(sourceFile: ts.SourceFile): FontGuardViolation[] {
+  const found: FontGuardViolation[] = [];
+  const calls = findPoppinsCalls(sourceFile);
+
+  if (calls.length !== 1) {
+    found.push("poppins-not-called-exactly-once");
+  }
+
+  const options = calls[0]?.arguments[0];
+  if (calls.length === 1) {
+    if (!options || !ts.isObjectLiteralExpression(options)) {
+      found.push("options-not-an-object-literal");
+    } else {
+      if (hasSpread(options)) found.push("options-spread");
+      if (findProperty(options, "fallback")) found.push("fallback-present");
+
+      const adjust = findProperty(options, "adjustFontFallback");
+      if (adjust && adjust.initializer.getText(sourceFile) === "false") {
+        found.push("adjust-font-fallback-disabled");
+      }
+
+      const variable = findProperty(options, "variable");
+      if (
+        !variable ||
+        variable.initializer.getText(sourceFile) !== '"--font-poppins"'
+      ) {
+        found.push("variable-drifted");
+      }
+    }
+  }
+
+  const htmlElement = findHtmlJsxElement(sourceFile);
+  if (
+    htmlElement &&
+    classNameExpressionText(htmlElement, sourceFile) !== "poppins.variable"
+  ) {
+    found.push("html-classname-drifted");
+  }
+
+  return found;
+}
+
 describe("app/layout.tsx — Poppins() zero-CLS font swap", () => {
   const sourceFile = parse(layoutPath, source);
   const calls = findPoppinsCalls(sourceFile);
+
+  it("satisfies every zero-CLS font guard", () => {
+    expect(fontGuardViolations(sourceFile)).toEqual([]);
+  });
 
   it("loads Poppins exactly once via next/font/google", () => {
     expect(calls).toHaveLength(1);
@@ -108,19 +201,26 @@ describe("app/layout.tsx — Poppins() zero-CLS font swap", () => {
     }
   });
 
-  it("exposes the CSS variable as exactly \"--font-poppins\"", () => {
+  it('exposes the CSS variable as exactly "--font-poppins"', () => {
     expect(options && ts.isObjectLiteralExpression(options)).toBe(true);
     if (options && ts.isObjectLiteralExpression(options)) {
       const property = findProperty(options, "variable");
-      expect(property, "expected a `variable` option on Poppins(...)").toBeDefined();
-      expect(property!.initializer.getText(sourceFile)).toBe('"--font-poppins"');
+      expect(
+        property,
+        "expected a `variable` option on Poppins(...)",
+      ).toBeDefined();
+      expect(property!.initializer.getText(sourceFile)).toBe(
+        '"--font-poppins"',
+      );
     }
   });
 
   it("applies poppins.variable as <html>'s className", () => {
     const htmlElement = findHtmlJsxElement(sourceFile);
     expect(htmlElement, "expected to find an <html> JSX element").toBeDefined();
-    expect(classNameExpressionText(htmlElement!, sourceFile)).toBe("poppins.variable");
+    expect(classNameExpressionText(htmlElement!, sourceFile)).toBe(
+      "poppins.variable",
+    );
   });
 });
 
@@ -136,12 +236,29 @@ describe("app/layout.tsx — negative fixtures prove the guards actually catch r
          fallback: ["Arial"],
        });`,
     );
-    const [call] = findPoppinsCalls(fixture);
-    const options = call.arguments[0];
-    expect(options && ts.isObjectLiteralExpression(options)).toBe(true);
-    if (options && ts.isObjectLiteralExpression(options)) {
-      expect(findProperty(options, "fallback")).toBeDefined();
-    }
+    expect(fontGuardViolations(fixture)).toContain("fallback-present");
+  });
+
+  it("would flag a Poppins(...) call that reintroduces `fallback` under a string-literal key", () => {
+    const fixture = parse(
+      "fixture-fallback-string-key.tsx",
+      `import { Poppins } from "next/font/google";
+       const poppins = Poppins({
+         subsets: ["latin"],
+         variable: "--font-poppins",
+         "fallback": ["Arial"],
+       });`,
+    );
+    expect(fontGuardViolations(fixture)).toContain("fallback-present");
+  });
+
+  it("would flag a Poppins(...) call whose options arrive through a spread", () => {
+    const fixture = parse(
+      "fixture-spread.tsx",
+      `import { Poppins } from "next/font/google";
+       const poppins = Poppins({ ...options, variable: "--font-poppins" });`,
+    );
+    expect(fontGuardViolations(fixture)).toContain("options-spread");
   });
 
   it("would flag a Poppins(...) call that sets `adjustFontFallback: false`", () => {
@@ -155,29 +272,18 @@ describe("app/layout.tsx — negative fixtures prove the guards actually catch r
          adjustFontFallback: false,
        });`,
     );
-    const [call] = findPoppinsCalls(fixture);
-    const options = call.arguments[0];
-    expect(options && ts.isObjectLiteralExpression(options)).toBe(true);
-    if (options && ts.isObjectLiteralExpression(options)) {
-      const property = findProperty(options, "adjustFontFallback");
-      expect(property).toBeDefined();
-      expect(property!.initializer.getText(fixture)).toBe("false");
-    }
+    expect(fontGuardViolations(fixture)).toContain(
+      "adjust-font-fallback-disabled",
+    );
   });
 
-  it("would flag a `variable` option that drifts from \"--font-poppins\"", () => {
+  it('would flag a `variable` option that drifts from "--font-poppins"', () => {
     const fixture = parse(
       "fixture-variable-typo.tsx",
       `import { Poppins } from "next/font/google";
        const poppins = Poppins({ subsets: ["latin"], variable: "--font-poppin" });`,
     );
-    const [call] = findPoppinsCalls(fixture);
-    const options = call.arguments[0];
-    expect(options && ts.isObjectLiteralExpression(options)).toBe(true);
-    if (options && ts.isObjectLiteralExpression(options)) {
-      const property = findProperty(options, "variable");
-      expect(property!.initializer.getText(fixture)).not.toBe('"--font-poppins"');
-    }
+    expect(fontGuardViolations(fixture)).toContain("variable-drifted");
   });
 
   it("would flag an <html> element whose className drifts from poppins.variable", () => {
@@ -191,8 +297,6 @@ describe("app/layout.tsx — negative fixtures prove the guards actually catch r
          );
        }`,
     );
-    const htmlElement = findHtmlJsxElement(fixture);
-    expect(htmlElement).toBeDefined();
-    expect(classNameExpressionText(htmlElement!, fixture)).not.toBe("poppins.variable");
+    expect(fontGuardViolations(fixture)).toContain("html-classname-drifted");
   });
 });

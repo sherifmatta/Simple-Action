@@ -20,8 +20,28 @@ beforeAll(() => {
 });
 
 async function boundaryMessages(filePath: string, code: string) {
-  const [result] = await eslint.lintText(code, { filePath, warnIgnored: false });
-  return (result?.messages ?? []).filter(
+  const [result] = await eslint.lintText(code, {
+    filePath,
+    warnIgnored: false,
+  });
+
+  // Without these two guards every `allows $name` case passes on an empty
+  // message list — which is also what a fixture that failed to parse, or one
+  // whose path is globally ignored, produces. The exemption half of this
+  // suite would then prove nothing at all.
+  if (result === undefined) {
+    throw new Error(
+      `ESLint returned no result for ${filePath} — the fixture was ignored rather than linted.`,
+    );
+  }
+  const fatal = result.messages.filter((message) => message.fatal === true);
+  if (fatal.length > 0) {
+    throw new Error(
+      `${filePath} failed to parse, so no rule ran: ${JSON.stringify(fatal)}`,
+    );
+  }
+
+  return result.messages.filter(
     (message) => message.ruleId !== null && BOUNDARY_RULES.has(message.ruleId),
   );
 }
@@ -198,6 +218,80 @@ const violations: Violation[] = [
   },
 ];
 
+// --- Cases added by the 2026-09-21 code review ------------------------------
+// Each of these passed before the rule it exercises was tightened.
+
+const reviewViolations: Violation[] = [
+  {
+    // `drizzle-orm/**` never matched the package root, so the namespace the
+    // header calls default-deny had an unwalled entrypoint.
+    name: "AD-2: shared code imports the bare drizzle-orm package root",
+    filePath: "src/shared/contract/probe.ts",
+    code: `import { eq } from "drizzle-orm";\nexport const probe = eq;\n`,
+    ruleId: "no-restricted-imports",
+    names: "AD-2",
+  },
+  {
+    // The pg-core re-allow used to live in the shared pattern object, which
+    // made it an exemption for every file in the repository.
+    name: "AD-2: a component imports the pg-core table builders",
+    filePath: "src/client/components/probe.ts",
+    code: `import { pgTable } from "drizzle-orm/pg-core";\nexport const probe = pgTable;\n`,
+    ruleId: "no-restricted-imports",
+    names: "AD-2",
+  },
+  {
+    // The static deny-list carries `./client`; the dynamic selector did not.
+    name: "AD-2: a sibling module dynamically imports ./client",
+    filePath: "src/server/identity/probe.ts",
+    code: `export const probe = () => import("./client");\n`,
+    ruleId: "no-restricted-syntax",
+    names: "AD-2",
+  },
+  {
+    // Route handlers are carved out by `ignores`, so pages and layouts get no
+    // exemption from the closed graph.
+    name: "Graph: an app/ page imports the repository directly",
+    filePath: "app/probe/page.tsx",
+    code: `import { findClientIdentityByTokenHash } from "@/server/repository/client-identity";\nexport default function Page() {\n  return findClientIdentityByTokenHash;\n}\n`,
+    ruleId: "no-restricted-imports",
+    names: null,
+  },
+  {
+    // Nothing below the baseline block matches a repository-root file, so
+    // this is the only fixture that pins the baseline's AD-2 entry.
+    name: "AD-2: a root-level module imports the Drizzle client",
+    filePath: "probe.ts",
+    code: `import { drizzle } from "drizzle-orm/neon-http";\nexport const probe = drizzle;\n`,
+    ruleId: "no-restricted-imports",
+    names: "AD-2",
+  },
+  {
+    // Same for e2e/ — matched by the baseline block and nothing else.
+    name: "AD-1: an e2e/ helper declares a Server Action",
+    filePath: "e2e/probe.ts",
+    code: `"use server";\n\nexport const probe = 1;\n`,
+    ruleId: "no-restricted-syntax",
+    names: "AD-1",
+  },
+  {
+    name: "AD-1: a component reaches fetch through a computed member",
+    filePath: "src/client/components/probe.ts",
+    code: `export const probe = () => window["fetch"]("/api/todos");\n`,
+    ruleId: "no-restricted-syntax",
+    names: "AD-1",
+  },
+  {
+    name: "AD-1: a component destructures fetch off globalThis",
+    filePath: "src/client/components/probe.ts",
+    code: `const { fetch: f } = globalThis;\nexport const probe = () => f("/api/todos");\n`,
+    ruleId: "no-restricted-syntax",
+    names: "AD-1",
+  },
+];
+
+violations.push(...reviewViolations);
+
 const exemptions: { name: string; filePath: string; code: string }[] = [
   {
     name: "a query hook is the sanctioned fetch site",
@@ -210,7 +304,7 @@ const exemptions: { name: string; filePath: string; code: string }[] = [
     code: `export async function GET() {\n  return fetch("https://example.test");\n}\n`,
   },
   {
-    name: "the schema may import the pg-core table builders",
+    name: "the schema, and only the schema, may import the pg-core table builders",
     filePath: "src/server/db/schema.ts",
     code: `import { pgTable, text } from "drizzle-orm/pg-core";\nexport const probe = pgTable("probe", { text: text("text") });\n`,
   },

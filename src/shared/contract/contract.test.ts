@@ -25,7 +25,9 @@ import type { Todo } from "./todo";
 // only when each is assignable to the other in an invariant position. Plain
 // `extends` would pass a Todo carrying extra fields.
 type Exactly<A, B> =
-  (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
+  (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2
+    ? true
+    : false;
 
 describe("src/shared/contract/todo.ts — the Todo wire shape (AC1)", () => {
   it("is exactly id, text, completed and createdAt, all required", () => {
@@ -65,13 +67,18 @@ describe("src/shared/contract/todo.ts — the Todo wire shape (AC1)", () => {
 
     // `Date.parse` would also accept "Sep 21 2026", which is exactly what this
     // row exists to rule out, so the shape of the string is what is asserted.
-    expect(sample.createdAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{3})?Z$/);
+    expect(sample.createdAt).toMatch(
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{3})?Z$/,
+    );
   });
 });
 
 describe("src/shared/contract/errors.ts — the error envelope (AC2)", () => {
   it("admits exactly the four kinds, all present from the outset", () => {
-    const kindsAreExact: Exactly<ErrorKind, "load" | "create" | "update" | "delete"> = true;
+    const kindsAreExact: Exactly<
+      ErrorKind,
+      "load" | "create" | "update" | "delete"
+    > = true;
 
     // The `Record` is exhaustive in both directions: a missing kind fails to
     // compile, an invented one fails the excess-property check.
@@ -83,7 +90,12 @@ describe("src/shared/contract/errors.ts — the error envelope (AC2)", () => {
     };
 
     expect(kindsAreExact).toBe(true);
-    expect(Object.keys(kinds).sort()).toEqual(["create", "delete", "load", "update"]);
+    expect(Object.keys(kinds).sort()).toEqual([
+      "create",
+      "delete",
+      "load",
+      "update",
+    ]);
   });
 
   it("wraps the kind and the message in a single `error` key", () => {
@@ -113,7 +125,16 @@ describe("src/shared/contract/errors.ts — the error envelope (AC2)", () => {
 // future story writes a competing shape instead of importing this one.
 
 const CONTRACT_DIRECTORY = "src/shared/contract";
-const SOURCE_EXTENSIONS = new Set([".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"]);
+const SOURCE_EXTENSIONS = new Set([
+  ".ts",
+  ".tsx",
+  ".mts",
+  ".cts",
+  ".js",
+  ".jsx",
+  ".mjs",
+  ".cjs",
+]);
 const SKIPPED_DIRECTORIES = new Set([
   "node_modules",
   ".next",
@@ -142,9 +163,13 @@ function sourceFiles(directory: string): string[] {
   return readdirSync(path.join(repositoryRoot, directory || "."), {
     withFileTypes: true,
   }).flatMap((entry) => {
-    const relativePath = directory ? path.join(directory, entry.name) : entry.name;
+    const relativePath = directory
+      ? path.join(directory, entry.name)
+      : entry.name;
     if (entry.isDirectory()) {
-      return SKIPPED_DIRECTORIES.has(entry.name) ? [] : sourceFiles(relativePath);
+      return SKIPPED_DIRECTORIES.has(entry.name)
+        ? []
+        : sourceFiles(relativePath);
     }
     if (!SOURCE_EXTENSIONS.has(path.extname(entry.name))) return [];
     if (SCAN_EXEMPT_FILES.has(relativePath)) return [];
@@ -158,10 +183,18 @@ type Declaration = { file: string; name: string; body: string };
 // about the Todo type is not a declaration of one. Strings survive, because the
 // kind union is spelled with them. Not a parser — a regex literal holding `//`
 // loses the rest of its line, which costs this scan nothing it needs.
+// A `/` opens a regex literal only in expression position. These are the
+// characters after which that is the case; after an identifier, a digit or a
+// closing bracket, `/` is division.
+function regexLiteralCanStartAfter(previous: string): boolean {
+  return previous === "" || "(,=:[!&|?{};+-*%~^<>".includes(previous);
+}
+
 function withoutComments(source: string): string {
   let out = "";
   let quote = "";
   let comment: "" | "line" | "block" = "";
+  let lastSignificant = "";
 
   for (let i = 0; i < source.length; i += 1) {
     const char = source[i];
@@ -201,7 +234,37 @@ function withoutComments(source: string): string {
       i += 1;
       continue;
     }
+    // A regex literal may hold a quote character (`/["']/`). Without
+    // tracking it, that quote opens a phantom string here and every comment
+    // until the next quote survives stripping — and prose is then reported as
+    // a competing Todo shape. A `/` in expression position opens a literal;
+    // after a value it is division, which is why the previous significant
+    // character decides.
+    if (char === "/" && regexLiteralCanStartAfter(lastSignificant)) {
+      out += char;
+      i += 1;
+      let inClass = false;
+      for (; i < source.length; i += 1) {
+        const inner = source[i];
+        out += inner;
+        if (inner === "\\") {
+          out += source[i + 1] ?? "";
+          i += 1;
+        } else if (inner === "[") {
+          inClass = true;
+        } else if (inner === "]") {
+          inClass = false;
+        } else if (inner === "/" && !inClass) {
+          break;
+        } else if (inner === "\n") {
+          break; // not a regex after all — bail rather than run away
+        }
+      }
+      lastSignificant = "/";
+      continue;
+    }
     if (char === '"' || char === "'" || char === "`") quote = char;
+    if (char.trim() !== "") lastSignificant = char;
     out += char;
   }
 
@@ -221,10 +284,14 @@ const NEXT_DECLARATION =
 // kind union is one) ends at its semicolon, at the next declaration, or at a
 // closing brace it never opened, whichever comes first.
 function declarations(file: string): Declaration[] {
-  const source = withoutComments(readFileSync(path.join(repositoryRoot, file), "utf8"));
+  const source = withoutComments(
+    readFileSync(path.join(repositoryRoot, file), "utf8"),
+  );
   const found: Declaration[] = [];
 
-  for (const match of source.matchAll(/\b(?:type|interface)\s+([A-Za-z_$][\w$]*)/g)) {
+  for (const match of source.matchAll(
+    /\b(?:type|interface)\s+([A-Za-z_$][\w$]*)/g,
+  )) {
     const start = match.index + match[0].length;
     let depth = 0;
     let end = start;
@@ -242,7 +309,8 @@ function declarations(file: string): Declaration[] {
         }
       } else if (depth === 0) {
         if (char === ";") break;
-        if (char === "\n" && NEXT_DECLARATION.test(source.slice(end + 1))) break;
+        if (char === "\n" && NEXT_DECLARATION.test(source.slice(end + 1)))
+          break;
       }
     }
 
@@ -272,22 +340,28 @@ function isTodoShape({ name, body }: Declaration): boolean {
 // ordered — the four kinds re-listed alphabetically are the same duplication.
 function isErrorEnvelopeShape({ name, body }: Declaration): boolean {
   if (name === "ErrorKind" || name === "ErrorEnvelope") return true;
-  if (/\berror\s*[?]?\s*:\s*\{[\s\S]*?\bkind\s*[?]?\s*:/.test(body)) return true;
+  if (/\berror\s*[?]?\s*:\s*\{[\s\S]*?\bkind\s*[?]?\s*:/.test(body))
+    return true;
   return ERROR_KINDS.every((kind) => new RegExp(`["']${kind}["']`).test(body));
 }
 
 describe("AD-3 — the contract is the single definition (AC1, AC2, AC6)", () => {
   const everyDeclaration = sourceFiles("").flatMap(declarations);
   const inside = (file: string) =>
-    file.startsWith(`${CONTRACT_DIRECTORY}${path.sep}`) || file === CONTRACT_DIRECTORY;
+    file.startsWith(`${CONTRACT_DIRECTORY}${path.sep}`) ||
+    file === CONTRACT_DIRECTORY;
 
   it("finds the contract's own declarations, so the scan cannot pass vacuously", () => {
-    const own = everyDeclaration.filter((declaration) => inside(declaration.file));
-
-    expect(own.filter(isTodoShape).map((declaration) => declaration.name)).toContain("Todo");
-    expect(own.filter(isErrorEnvelopeShape).map((declaration) => declaration.name)).toEqual(
-      expect.arrayContaining(["ErrorKind", "ErrorEnvelope"]),
+    const own = everyDeclaration.filter((declaration) =>
+      inside(declaration.file),
     );
+
+    expect(
+      own.filter(isTodoShape).map((declaration) => declaration.name),
+    ).toContain("Todo");
+    expect(
+      own.filter(isErrorEnvelopeShape).map((declaration) => declaration.name),
+    ).toEqual(expect.arrayContaining(["ErrorKind", "ErrorEnvelope"]));
   });
 
   it("finds no Todo shape declared anywhere outside src/shared/contract/", () => {
@@ -333,45 +407,77 @@ describe("the duplication detectors themselves", () => {
     ).toBe(true);
     expect(
       isTodoShape(
-        declaration("Row", "{ id: string; text: string; completed: boolean; createdAt: string }"),
+        declaration(
+          "Row",
+          "{ id: string; text: string; completed: boolean; createdAt: string }",
+        ),
       ),
     ).toBe(true);
     // `epics.md:509` writes `created_at`, so this is the likelier drift.
     expect(
       isTodoShape(
-        declaration("TodoRow", "{ id: string; text: string; completed: boolean; created_at: string }"),
+        declaration(
+          "TodoRow",
+          "{ id: string; text: string; completed: boolean; created_at: string }",
+        ),
       ),
     ).toBe(true);
-    expect(isTodoShape(declaration("Optional", "{ text?: string; completed?: boolean; createdAt?: string }"))).toBe(
-      true,
-    );
+    expect(
+      isTodoShape(
+        declaration(
+          "Optional",
+          "{ text?: string; completed?: boolean; createdAt?: string }",
+        ),
+      ),
+    ).toBe(true);
   });
 
   it("leaves a declaration that is not a Todo shape alone", () => {
     expect(isTodoShape(declaration("Bare", " = string"))).toBe(false);
-    expect(isTodoShape(declaration("Props", "{ todo: Todo; onDelete: () => void }"))).toBe(false);
-    expect(isTodoShape(declaration("Partial", "{ text: string; completed: boolean }"))).toBe(false);
+    expect(
+      isTodoShape(declaration("Props", "{ todo: Todo; onDelete: () => void }")),
+    ).toBe(false);
+    expect(
+      isTodoShape(
+        declaration("Partial", "{ text: string; completed: boolean }"),
+      ),
+    ).toBe(false);
   });
 
   it("recognises the kind union in any order and the envelope under any name", () => {
-    expect(isErrorEnvelopeShape(declaration("ErrorKind", " = never"))).toBe(true);
+    expect(isErrorEnvelopeShape(declaration("ErrorKind", " = never"))).toBe(
+      true,
+    );
     expect(
-      isErrorEnvelopeShape(declaration("Kind", ' = "load" | "create" | "update" | "delete"')),
+      isErrorEnvelopeShape(
+        declaration("Kind", ' = "load" | "create" | "update" | "delete"'),
+      ),
     ).toBe(true);
     // Alphabetical is the same duplication, so order must not matter.
     expect(
-      isErrorEnvelopeShape(declaration("ApiErrorKind", ' = "create" | "delete" | "load" | "update"')),
+      isErrorEnvelopeShape(
+        declaration(
+          "ApiErrorKind",
+          ' = "create" | "delete" | "load" | "update"',
+        ),
+      ),
     ).toBe(true);
     expect(
-      isErrorEnvelopeShape(declaration("Banner", "{ error: { kind: string; message: string } }")),
+      isErrorEnvelopeShape(
+        declaration("Banner", "{ error: { kind: string; message: string } }"),
+      ),
     ).toBe(true);
   });
 
   it("leaves a declaration that is neither a union nor an envelope alone", () => {
-    expect(isErrorEnvelopeShape(declaration("Partial", ' = "load" | "create"'))).toBe(false);
-    expect(isErrorEnvelopeShape(declaration("Slot", "{ kind: ErrorKind; retry: () => void }"))).toBe(
-      false,
-    );
+    expect(
+      isErrorEnvelopeShape(declaration("Partial", ' = "load" | "create"')),
+    ).toBe(false);
+    expect(
+      isErrorEnvelopeShape(
+        declaration("Slot", "{ kind: ErrorKind; retry: () => void }"),
+      ),
+    ).toBe(false);
     expect(isErrorEnvelopeShape(declaration("Bare", " = string"))).toBe(false);
   });
 });
@@ -380,7 +486,9 @@ describe("the duplication detectors themselves", () => {
 // three things `ARCHITECTURE-SPINE.md:263` names". AC4 is the no-`any` row
 // below, and nothing more.
 describe("the contract directory holds exactly the three things SPINE:263 names", () => {
-  const files = readdirSync(path.join(repositoryRoot, CONTRACT_DIRECTORY)).sort();
+  const files = readdirSync(
+    path.join(repositoryRoot, CONTRACT_DIRECTORY),
+  ).sort();
 
   it("is three modules and their two colocated test files", () => {
     expect(files).toEqual([
@@ -398,7 +506,10 @@ describe("the contract directory holds exactly the three things SPINE:263 names"
       .filter((file) =>
         /\bany\b/.test(
           withoutComments(
-            readFileSync(path.join(repositoryRoot, CONTRACT_DIRECTORY, file), "utf8"),
+            readFileSync(
+              path.join(repositoryRoot, CONTRACT_DIRECTORY, file),
+              "utf8",
+            ),
           ),
         ),
       );
@@ -420,8 +531,20 @@ describe("the contract directory holds exactly the three things SPINE:263 names"
       // This file is the one exception: it carries the banned words as the
       // assertion data on this very line, which is the opposite of using them.
       .filter((file) => file !== "contract.test.ts")
+      // Comments stripped, as the `any` scan already does. The rule is about
+      // what the contract *names*, not what its prose explains: `todo.ts`
+      // survived only because it writes "Completion Status" with a capital S
+      // and this regex is case-sensitive, so one lowercase "status" in a
+      // sentence would have failed the suite for no real reason.
       .filter((file) =>
-        banned.test(readFileSync(path.join(repositoryRoot, CONTRACT_DIRECTORY, file), "utf8")),
+        banned.test(
+          withoutComments(
+            readFileSync(
+              path.join(repositoryRoot, CONTRACT_DIRECTORY, file),
+              "utf8",
+            ),
+          ),
+        ),
       );
 
     expect(offenders).toEqual([]);

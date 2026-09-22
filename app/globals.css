@@ -7,8 +7,18 @@
    docs/planning-artifacts/ux-designs/ux-simple-action-2026-09-20/DESIGN.md,
    carrying its original token name. No hex literal and no Tailwind
    arbitrary-value class may appear anywhere else in the codebase; a value not
-   present in this block must be added here — with its DESIGN.md token name —
-   before it can be used.
+   present in this block is added here — with its DESIGN.md token name —
+   before it is used.
+
+   That is a convention this file cannot enforce on its own, and saying so is
+   deliberate (2026-09-21 code review). `@theme` is additive: it adds these
+   tokens to Tailwind's defaults rather than replacing them, so `bg-red-500`,
+   `p-9` and arbitrary values like `bg-[#fff]` still compile. Resetting the
+   namespaces would make the rule literal but changes what compiles
+   repository-wide, so the rule is held by review and by the one-time sweep in
+   the story's Verification section instead. app/globals.test.ts checks that
+   every DESIGN.md token is present here and carries DESIGN.md's value; it
+   does not, and cannot, check that nothing else is used.
 
    `@theme static` (rather than plain `@theme`) is deliberate: it emits every
    token as a custom property whether or not a utility currently consumes it,

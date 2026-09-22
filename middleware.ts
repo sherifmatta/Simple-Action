@@ -7,9 +7,14 @@ export function middleware() {
 }
 
 export const config = {
-  // Document requests only. `api/` and `_next/` carry the trailing slash on
-  // purpose — without it the lookahead also swallows sibling routes such as
-  // /api-docs. The `.*\..*` branch excludes anything with a file extension,
-  // which is what actually covers robots.txt, favicon.ico and /_next/data/*.json.
-  matcher: ["/((?!api/|_next/|.*\\..*).*)"],
+  // Document requests only. `api` and `_next` are matched with `(/|$)` rather
+  // than a bare trailing slash: the slash alone keeps sibling routes such as
+  // /api-docs out of the lookahead, but it also lets the extensionless `/api`
+  // itself through, which would run identity minting on an API request
+  // contrary to AD-17. The `.*\..*` branch excludes anything with a file
+  // extension, which is what covers robots.txt, favicon.ico and
+  // /_next/data/*.json. The groups are non-capturing: Next.js's route parser
+  // rejects a capturing group in a matcher outright, which fails the build.
+  // `middleware.test.ts` pins all four cases.
+  matcher: ["/((?!api(?:/|$)|_next(?:/|$)|.*\\..*).*)"],
 };

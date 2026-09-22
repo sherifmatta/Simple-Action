@@ -1,4 +1,12 @@
-import { readFileSync, readdirSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import {
+  cpSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import path from "node:path";
 import { getTableConfig } from "drizzle-orm/pg-core";
 import { describe, expect, it } from "vitest";
@@ -153,14 +161,25 @@ describe("src/server/db/schema.ts — todo (AC1, AC2, AC3, AC7)", () => {
 
   it("owns camelCase <-> snake_case mapping: JS keys are camelCase, DB names are snake_case (AC7)", () => {
     expect(Object.keys(todo)).toEqual(
-      expect.arrayContaining(["id", "ownerId", "text", "completed", "createdAt"]),
+      expect.arrayContaining([
+        "id",
+        "ownerId",
+        "text",
+        "completed",
+        "createdAt",
+      ]),
     );
   });
 });
 
 describe("drizzle/ — the committed migration (AC4, matrix row 'Migration generation')", () => {
   const drizzleDir = path.resolve(process.cwd(), "drizzle");
-  const sqlFiles = readdirSync(drizzleDir).filter((f) => f.endsWith(".sql"));
+  // Sorted: once a second migration lands and the one-file assertion below
+  // is relaxed, `readdirSync` order would otherwise decide which file every
+  // assertion in this block reads.
+  const sqlFiles = readdirSync(drizzleDir)
+    .filter((f) => f.endsWith(".sql"))
+    .sort();
 
   it("has exactly one committed SQL migration file so far", () => {
     expect(sqlFiles).toHaveLength(1);
@@ -169,7 +188,9 @@ describe("drizzle/ — the committed migration (AC4, matrix row 'Migration gener
   // Guarded rather than a bare `sqlFiles[0]!`: a missing migration file must
   // fail the assertion above with a clear message, not crash test collection
   // with a raw TypeError from `path.join(dir, undefined)` before any test runs.
-  const sql = sqlFiles[0] ? readFileSync(path.join(drizzleDir, sqlFiles[0]), "utf8") : "";
+  const sql = sqlFiles[0]
+    ? readFileSync(path.join(drizzleDir, sqlFiles[0]), "utf8")
+    : "";
 
   it("creates both tables", () => {
     expect(sql).toMatch(/CREATE TABLE "client_identity"/);
@@ -183,7 +204,9 @@ describe("drizzle/ — the committed migration (AC4, matrix row 'Migration gener
   });
 
   it("declares the token_hash unique constraint", () => {
-    expect(sql).toMatch(/CONSTRAINT "client_identity_token_hash_unique" UNIQUE\("token_hash"\)/);
+    expect(sql).toMatch(
+      /CONSTRAINT "client_identity_token_hash_unique" UNIQUE\("token_hash"\)/,
+    );
   });
 
   it("contains exactly one CREATE INDEX statement: (owner_id, id DESC) on todo (matrix row 'Index presence')", () => {
@@ -197,6 +220,75 @@ describe("drizzle/ — the committed migration (AC4, matrix row 'Migration gener
   it("neither primary key takes a DB-generated default (no gen_random_uuid/uuid_generate default on id)", () => {
     expect(sql).not.toMatch(/"id" uuid PRIMARY KEY NOT NULL DEFAULT/);
   });
+
+  // Every assertion above reads the migration that is committed today; none
+  // is derived from schema.ts. Editing the schema without running
+  // `npm run db:generate` therefore left this suite and `npm run build`
+  // green while every query against the changed table failed at runtime with
+  // "column does not exist". AD-14 makes `generate` the only committed path
+  // to a schema change — this is what holds the committed output to it.
+  //
+  // `drizzle-kit generate` reads schema files and the snapshot in `out`; it
+  // needs no database and no DATABASE_URL. Both paths must be relative to
+  // the project root, which is why the probe writes inside it rather than in
+  // the system temp directory.
+  it("is current: regenerating from schema.ts produces no new migration", () => {
+    const probeOut = path.join(
+      "node_modules",
+      ".cache",
+      `drift-probe-${process.pid}`,
+    );
+    const probeConfig = path.resolve(
+      process.cwd(),
+      `.drift-probe-${process.pid}.config.ts`,
+    );
+
+    try {
+      mkdirSync(path.resolve(process.cwd(), probeOut), { recursive: true });
+      cpSync(
+        path.join(drizzleDir, "meta"),
+        path.resolve(process.cwd(), probeOut, "meta"),
+        {
+          recursive: true,
+        },
+      );
+      writeFileSync(
+        probeConfig,
+        `import { defineConfig } from "drizzle-kit";\n` +
+          `export default defineConfig({\n` +
+          `  dialect: "postgresql",\n` +
+          `  schema: "./src/server/db/schema.ts",\n` +
+          `  out: ${JSON.stringify(probeOut)},\n` +
+          `});\n`,
+        "utf8",
+      );
+
+      execFileSync(
+        "npx",
+        ["drizzle-kit", "generate", "--config", probeConfig],
+        {
+          cwd: process.cwd(),
+          encoding: "utf8",
+          stdio: "pipe",
+        },
+      );
+
+      const generated = readdirSync(
+        path.resolve(process.cwd(), probeOut),
+      ).filter((f) => f.endsWith(".sql"));
+
+      expect(
+        generated,
+        `schema.ts has drifted from the committed migration — drizzle-kit produced ${generated.join(", ")}. Run \`npm run db:generate\` and commit the result.`,
+      ).toHaveLength(0);
+    } finally {
+      rmSync(path.resolve(process.cwd(), probeOut), {
+        recursive: true,
+        force: true,
+      });
+      rmSync(probeConfig, { force: true });
+    }
+  }, 120_000);
 });
 
 describe("package.json — push-script scope (AC6, matrix row 'Push-script scope')", () => {
@@ -219,5 +311,21 @@ describe("package.json — push-script scope (AC6, matrix row 'Push-script scope
 
   it("db:generate invokes drizzle-kit generate, the only committed-migration source (AD-14)", () => {
     expect(packageJson.scripts["db:generate"]).toBe("drizzle-kit generate");
+  });
+
+  // Added by the 2026-09-21 code review. Until this script existed the
+  // committed migration had no sanctioned way to reach a database at all:
+  // `push` is banned from every deploy path, and `generate` only writes SQL.
+  it("db:migrate is how a committed migration is applied, and the only such script", () => {
+    expect(packageJson.scripts["db:migrate"]).toBe("drizzle-kit migrate");
+    const scriptsWithMigrate = Object.entries(packageJson.scripts)
+      .filter(([, command]) => command.includes("drizzle-kit migrate"))
+      .map(([name]) => name);
+    expect(scriptsWithMigrate).toEqual(["db:migrate"]);
+  });
+
+  it("build and start do not invoke drizzle-kit migrate — Story 1.8 owns where it runs on deploy", () => {
+    expect(packageJson.scripts.build).not.toMatch(/drizzle-kit migrate/);
+    expect(packageJson.scripts.start).not.toMatch(/drizzle-kit migrate/);
   });
 });

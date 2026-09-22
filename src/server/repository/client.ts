@@ -18,8 +18,10 @@
 import { neon } from "@neondatabase/serverless";
 import { drizzle } from "drizzle-orm/neon-http";
 
-// `DATABASE_URL` is read here and nowhere else in the application (the only
-// other reader is `drizzle.config.ts`, which is the CLI's config, not the app's).
+// `DATABASE_URL` is read here and nowhere else in the application. The two
+// other readers are both tooling, not the app: `drizzle.config.ts` (the
+// drizzle-kit CLI's config) and `vitest.config.mts`, which forwards the one
+// key into the test environment so the live repository rows can reach Neon.
 // It is the sole required secret, has no committed default, and an unset value
 // fails at module load with a message naming it — not at the first query, where
 // the failure would surface as an opaque request error.

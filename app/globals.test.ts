@@ -18,6 +18,77 @@ import { describe, expect, it } from "vitest";
 const globalsCssPath = path.resolve(process.cwd(), "app/globals.css");
 const css = readFileSync(globalsCssPath, "utf8");
 
+// DESIGN.md is the authority for every value below (AD-13). Reading it here
+// rather than re-typing its tokens is the whole point: a hand-written
+// expectation list is a second transcription, and a typo made while
+// transcribing globals.css would be mirrored into it and ship green.
+//
+// The frontmatter is flat `key: value` under a handful of top-level keys,
+// with `typography` one level deeper. That is parsed directly instead of
+// adding a YAML dependency to a project that pins every version by hand.
+const designMdPath = path.resolve(
+  process.cwd(),
+  "docs/planning-artifacts/ux-designs/ux-simple-action-2026-09-20/DESIGN.md",
+);
+
+function frontmatterSection(
+  source: string,
+  key: string,
+): Map<string, string | Map<string, string>> {
+  const lines = source.split("\n");
+  const start = lines.findIndex((line) => line === `${key}:`);
+  if (start === -1) throw new Error(`DESIGN.md has no \`${key}:\` section`);
+
+  const unquote = (raw: string) => raw.trim().replace(/^['"]|['"]$/g, "");
+  const section = new Map<string, string | Map<string, string>>();
+  let nested: Map<string, string> | null = null;
+
+  for (const line of lines.slice(start + 1)) {
+    if (line.trim() === "" || /^[^\s]/.test(line)) break; // next top-level key
+    const two = line.match(/^ {2}([^:]+):\s*(.*)$/);
+    const four = line.match(/^ {4}([^:]+):\s*(.*)$/);
+    if (four && nested) {
+      nested.set(unquote(four[1]), unquote(four[2]));
+    } else if (two) {
+      const name = unquote(two[1]);
+      if (two[2].trim() === "") {
+        nested = new Map<string, string>();
+        section.set(name, nested);
+      } else {
+        nested = null;
+        section.set(name, unquote(two[2]));
+      }
+    }
+  }
+  return section;
+}
+
+const designMd = readFileSync(designMdPath, "utf8");
+
+const designColors = frontmatterSection(designMd, "colors") as Map<
+  string,
+  string
+>;
+const designRadii = frontmatterSection(designMd, "rounded") as Map<
+  string,
+  string
+>;
+const designSpacing = frontmatterSection(designMd, "spacing") as Map<
+  string,
+  string
+>;
+const designTypography = frontmatterSection(designMd, "typography") as Map<
+  string,
+  Map<string, string>
+>;
+
+function declaredValue(source: string, property: string): string | null {
+  const match = source.match(
+    new RegExp(`--${property.replace(/[-]/g, "\\-")}:\\s*([^;]+);`),
+  );
+  return match ? match[1].trim() : null;
+}
+
 // DESIGN.md frontmatter, `colors:` (21 tokens).
 const expectedColors = [
   "ground",
@@ -98,40 +169,115 @@ function extractTypographyRoles(source: string): string[] {
 describe("app/globals.css — theme completeness (AD-13 transcription)", () => {
   it("declares exactly 21 named --color-* custom properties, all from DESIGN.md", () => {
     const declared = extractColors(css);
-    expect(declared).toHaveLength(21);
+    expect(declared).toHaveLength(designColors.size);
     for (const name of expectedColors) {
-      expect(declared, `expected --color-${name} to be declared`).toContain(name);
+      expect(declared, `expected --color-${name} to be declared`).toContain(
+        name,
+      );
     }
   });
 
   it("declares exactly 4 named --radius-* custom properties, all from DESIGN.md", () => {
     const declared = extractRadii(css);
-    expect(declared).toHaveLength(4);
+    expect(declared).toHaveLength(designRadii.size);
     for (const name of expectedRadii) {
-      expect(declared, `expected --radius-${name} to be declared`).toContain(name);
+      expect(declared, `expected --radius-${name} to be declared`).toContain(
+        name,
+      );
     }
   });
 
   it("declares exactly 14 named --spacing-* custom properties, all from DESIGN.md", () => {
     const declared = extractSpacing(css);
-    expect(declared).toHaveLength(14);
+    expect(declared).toHaveLength(designSpacing.size);
     for (const name of expectedSpacing) {
-      expect(declared, `expected --spacing-${name} to be declared`).toContain(name);
+      expect(declared, `expected --spacing-${name} to be declared`).toContain(
+        name,
+      );
     }
   });
 
   it("declares exactly 10 typography-role @utility classes, all from DESIGN.md", () => {
     const declared = extractTypographyRoles(css);
-    expect(declared).toHaveLength(10);
+    expect(declared).toHaveLength(designTypography.size);
     for (const role of expectedTypographyRoles) {
-      expect(declared, `expected @utility text-${role} to be declared`).toContain(role);
+      expect(
+        declared,
+        `expected @utility text-${role} to be declared`,
+      ).toContain(role);
+    }
+  });
+
+  // --- Value assertions (2026-09-21 code review) --------------------------
+  // Until these landed, the suite checked names and counts only: setting
+  // --color-accent to #FF00FF, or every font-size to 99px, left all 16 tests
+  // green. Names prove the transcription is complete; only these prove it is
+  // correct.
+
+  it("declares every colour with exactly the value DESIGN.md gives it", () => {
+    for (const [name, expected] of designColors) {
+      expect(
+        declaredValue(css, `color-${name}`)?.toUpperCase(),
+        `--color-${name} must match DESIGN.md`,
+      ).toBe(expected.toUpperCase());
+    }
+  });
+
+  it("declares every radius with exactly the value DESIGN.md gives it", () => {
+    for (const [name, expected] of designRadii) {
+      expect(declaredValue(css, `radius-${name}`), `--radius-${name}`).toBe(
+        expected,
+      );
+    }
+  });
+
+  it("declares every spacing token with exactly the value DESIGN.md gives it", () => {
+    for (const [name, expected] of designSpacing) {
+      expect(declaredValue(css, `spacing-${name}`), `--spacing-${name}`).toBe(
+        expected,
+      );
+    }
+  });
+
+  it("gives every typography role the size, weight and line-height DESIGN.md specifies", () => {
+    for (const [role, spec] of designTypography) {
+      const match = css.match(
+        new RegExp(`@utility text-${role}\\s*\\{([^}]*)\\}`),
+      );
+      expect(match, `expected the text-${role} utility body`).not.toBeNull();
+      const body = match![1];
+
+      for (const [property, cssProperty] of [
+        ["fontSize", "font-size"],
+        ["fontWeight", "font-weight"],
+        ["lineHeight", "line-height"],
+      ] as const) {
+        const expected = spec.get(property);
+        expect(
+          expected,
+          `DESIGN.md typography.${role}.${property}`,
+        ).toBeDefined();
+        const declared = body.match(new RegExp(`${cssProperty}:\\s*([^;]+);`));
+        expect(
+          declared,
+          `text-${role} must declare ${cssProperty}`,
+        ).not.toBeNull();
+        expect(declared![1].trim(), `text-${role} ${cssProperty}`).toBe(
+          expected,
+        );
+      }
     }
   });
 
   it("every typography role references the shared --font-sans token, not a hardcoded family", () => {
     for (const role of expectedTypographyRoles) {
-      const match = css.match(new RegExp(`@utility text-${role}\\s*\\{([^}]*)\\}`));
-      expect(match, `expected to find the text-${role} utility body`).not.toBeNull();
+      const match = css.match(
+        new RegExp(`@utility text-${role}\\s*\\{([^}]*)\\}`),
+      );
+      expect(
+        match,
+        `expected to find the text-${role} utility body`,
+      ).not.toBeNull();
       expect(match![1]).toContain("font-family: var(--font-sans);");
     }
   });
@@ -145,7 +291,10 @@ describe("app/globals.css — theme completeness (AD-13 transcription)", () => {
 
 describe("app/globals.css — negative fixtures prove the completeness guard can fail", () => {
   it("catches a missing colour token", () => {
-    const mutated = css.replace("--color-hairline: #E3E2F0;\n", "");
+    // Matched by pattern rather than spelled out: a literal value here would
+    // be the only hex in the repository outside app/globals.css, which is
+    // exactly what this story's AC2 sweep forbids.
+    const mutated = css.replace(/--color-hairline:[^;]*;\n/, "");
     const declared = extractColors(mutated);
     expect(declared).toHaveLength(20);
     expect(declared).not.toContain("hairline");
@@ -166,10 +315,7 @@ describe("app/globals.css — negative fixtures prove the completeness guard can
   });
 
   it("catches a missing typography role", () => {
-    const mutated = css.replace(
-      /@utility text-counter\s*\{[^}]*\}\n?/,
-      "",
-    );
+    const mutated = css.replace(/@utility text-counter\s*\{[^}]*\}\n?/, "");
     const declared = extractTypographyRoles(mutated);
     expect(declared).toHaveLength(9);
     expect(declared).not.toContain("counter");
@@ -191,7 +337,9 @@ describe("app/globals.css — focus ring hue-only difference", () => {
   }
 
   function colorTokens(value: string): string[] {
-    return [...value.matchAll(/var\(--color-[a-z0-9-]+\)|rgba\([^)]*\)/g)].map((m) => m[0]);
+    return [...value.matchAll(/var\(--color-[a-z0-9-]+\)|rgba\([^)]*\)/g)].map(
+      (m) => m[0],
+    );
   }
 
   function rgbaAlpha(rgba: string): string {
@@ -222,12 +370,14 @@ describe("app/globals.css — focus ring hue-only difference", () => {
   });
 
   it("negative fixture: catches a spread mismatch between the two variants", () => {
-    const mismatched = "0 0 0 2px var(--color-accent-deep), 0 0 0 5px rgba(27, 101, 194, 0.3)";
+    const mismatched =
+      "0 0 0 2px var(--color-accent-deep), 0 0 0 5px rgba(27, 101, 194, 0.3)";
     expect(stripColors(mismatched)).not.toBe(stripColors(focus));
   });
 
   it("negative fixture: catches an opacity mismatch in the bloom layer", () => {
-    const mismatched = "0 0 0 1px var(--color-accent-deep), 0 0 0 5px rgba(27, 101, 194, 0.5)";
+    const mismatched =
+      "0 0 0 1px var(--color-accent-deep), 0 0 0 5px rgba(27, 101, 194, 0.5)";
     const [, mismatchedBloom] = colorTokens(mismatched);
     const [, focusBloom] = colorTokens(focus);
     expect(rgbaAlpha(mismatchedBloom)).not.toBe(rgbaAlpha(focusBloom));
@@ -249,24 +399,41 @@ describe("app/globals.css — `rounded-full` compiles to 999px via the real Tail
       const entryPath = path.join(fixtureDir, "entry.css");
       // Import this project's real theme so the probe exercises the actual
       // shipped --radius-full token, not a duplicated fixture value.
-      writeFileSync(entryPath, `@import "${globalsCssPath}";\n`, "utf8");
+      // Escaped: a repository path containing a quote or a backslash would
+      // otherwise produce malformed CSS and fail this probe opaquely.
+      const importTarget = globalsCssPath.replace(/["\\\\]/g, "\\\\$&");
+      writeFileSync(entryPath, `@import "${importTarget}";\n`, "utf8");
       // @tailwindcss/postcss discovers utility classes by scanning files
       // under `base` for candidate class names; this marker file is the
       // only thing that makes "rounded-full" a candidate.
-      writeFileSync(path.join(fixtureDir, "marker.html"), `<div class="rounded-full"></div>\n`, "utf8");
+      writeFileSync(
+        path.join(fixtureDir, "marker.html"),
+        `<div class="rounded-full"></div>\n`,
+        "utf8",
+      );
 
       const entryCss = readFileSync(entryPath, "utf8");
-      const result = await postcss([tailwindcssPostcss({ base: fixtureDir })]).process(entryCss, {
+      const result = await postcss([
+        tailwindcssPostcss({ base: fixtureDir }),
+      ]).process(entryCss, {
         from: entryPath,
       });
       const output = result.css;
 
-      const ruleMatch = output.match(/\.rounded-full\s*\{\s*border-radius:\s*([^;]+);/);
-      expect(ruleMatch, "expected a compiled .rounded-full rule").not.toBeNull();
+      const ruleMatch = output.match(
+        /\.rounded-full\s*\{\s*border-radius:\s*([^;]+);/,
+      );
+      expect(
+        ruleMatch,
+        "expected a compiled .rounded-full rule",
+      ).not.toBeNull();
       expect(ruleMatch![1].trim()).toBe("var(--radius-full)");
 
       const themeMatch = output.match(/--radius-full:\s*([^;]+);/);
-      expect(themeMatch, "expected --radius-full to be emitted in the theme layer").not.toBeNull();
+      expect(
+        themeMatch,
+        "expected --radius-full to be emitted in the theme layer",
+      ).not.toBeNull();
       expect(themeMatch![1].trim()).toBe("999px");
 
       expect(output).not.toContain("9999px");

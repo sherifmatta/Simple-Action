@@ -45,6 +45,22 @@ const noComponentFetchSyntax = [
     selector: "CallExpression[callee.property.name='fetch']",
     message: NO_FETCH,
   },
+  // `window["fetch"](url)` — a computed member access, which the
+  // property-name selector above cannot see.
+  {
+    selector: "MemberExpression[computed=true][property.value='fetch']",
+    message: NO_FETCH,
+  },
+  // `const { fetch: f } = globalThis` — a destructured rename. The key is a
+  // property, not a global reference, so no-restricted-globals misses it.
+  {
+    selector: "ObjectPattern > Property[key.name='fetch']",
+    message: NO_FETCH,
+  },
+  {
+    selector: "ObjectPattern > Property[key.value='fetch']",
+    message: NO_FETCH,
+  },
 ];
 
 // Catches aliasing — `const f = fetch; f(url)` — which a call-expression
@@ -57,36 +73,54 @@ const noComponentFetchGlobal = ["error", { name: "fetch", message: NO_FETCH }];
 
 const AD_2 = "AD-2: only src/server/repository/ may import the Drizzle client.";
 
-const noDrizzleClientImport = {
+// The package root is denied through `paths`, not here. `group` uses
+// gitignore semantics, where a bare `drizzle-orm` entry also swallows
+// everything beneath it — and a parent that is excluded can never be
+// re-included, so listing it here would silently kill the `pg-core`
+// re-allow below. `paths` matches the exact specifier and nothing else.
+const drizzleRootPath = { name: "drizzle-orm", message: AD_2 };
+
+const drizzleDenyList = [
+  "drizzle-orm/**",
+  // Raw drivers are the same wall by another name.
+  "pg",
+  "pg/**",
+  "postgres",
+  "postgres/**",
+  "@neondatabase/**",
+  "@vercel/postgres",
+  "@vercel/postgres/**",
+  // This project's own client module, by alias or by any relative path.
+  // It lives at `src/server/repository/client` (Story 1.4) — `db/client` is
+  // kept denied so the specifier is walled wherever it might be moved to.
+  // Re-exporting `db` is the last way around this wall, and only the
+  // repository can do it, which is what the whole boundary is for.
+  "@/server/repository/client",
+  "@/server/repository/client.*",
+  "**/repository/client",
+  "**/repository/client.*",
+  "@/server/db/client",
+  "@/server/db/client.*",
+  "**/db/client",
+  "**/db/client.*",
+  "./client",
+  "./client.*",
+];
+
+const noDrizzleClientImport = { group: drizzleDenyList, message: AD_2 };
+
+// src/server/db/ builds the table definitions, so it — and only it — may
+// reach the pure schema and SQL entrypoints. These negations live here rather
+// than in the shared deny-list because a negation in the shared object is an
+// exemption for every file in the repository, which is the opposite of what
+// `schema.ts` documents.
+const noDrizzleClientImportInSchema = {
   group: [
-    "drizzle-orm/**",
+    ...drizzleDenyList,
     "!drizzle-orm/pg-core",
     "!drizzle-orm/pg-core/**",
     "!drizzle-orm/sql",
     "!drizzle-orm/sql/**",
-    // Raw drivers are the same wall by another name.
-    "pg",
-    "pg/**",
-    "postgres",
-    "postgres/**",
-    "@neondatabase/**",
-    "@vercel/postgres",
-    "@vercel/postgres/**",
-    // This project's own client module, by alias or by any relative path.
-    // It lives at `src/server/repository/client` (Story 1.4) — `db/client` is
-    // kept denied so the specifier is walled wherever it might be moved to.
-    // Re-exporting `db` is the last way around this wall, and only the
-    // repository can do it, which is what the whole boundary is for.
-    "@/server/repository/client",
-    "@/server/repository/client.*",
-    "**/repository/client",
-    "**/repository/client.*",
-    "@/server/db/client",
-    "@/server/db/client.*",
-    "**/db/client",
-    "**/db/client.*",
-    "./client",
-    "./client.*",
   ],
   message: AD_2,
 };
@@ -98,8 +132,11 @@ const noDrizzleDynamicImport = [
       // The `client` tail makes the extension optional, mirroring the
       // `client.*` static patterns: a dynamically imported
       // `@/server/repository/client.js` is the same reach as the
-      // extensionless form.
-      "ImportExpression[source.value=/^(drizzle-orm\\/|pg$|postgres$|@neondatabase\\/|@vercel\\/postgres$)|(db|repository)\\/client(\\.[a-z]+)?$/]",
+      // extensionless form. Each alternative carries its own anchor — a
+      // single leading `^` binds only to the first branch — and the bare
+      // `drizzle-orm` root and the sibling `./client` form are both listed,
+      // so this matches what the static deny-list above denies.
+      "ImportExpression[source.value=/^(drizzle-orm($|\\/)|pg$|postgres$|@neondatabase\\/|@vercel\\/postgres$)|(^|\\/)(db|repository)\\/client(\\.[a-z]+)?$|^\\.{1,2}\\/client(\\.[a-z]+)?$/]",
     message: AD_2,
   },
   {
@@ -143,6 +180,10 @@ const eslintConfig = defineConfig([
     // This project:
     "node_modules/**",
     "drizzle/**",
+    // `.gitignore` and both source scans already treat this as generated; a
+    // coverage run otherwise leaves vendored JS for `--max-warnings=0` to
+    // fail the build gate on.
+    "coverage/**",
   ]),
 
   // Baseline — every file in the repository.
@@ -154,7 +195,13 @@ const eslintConfig = defineConfig([
         noUseServerDirective,
         ...noDrizzleDynamicImport,
       ],
-      "no-restricted-imports": ["error", { patterns: [noDrizzleClientImport] }],
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: [drizzleRootPath],
+          patterns: [noDrizzleClientImport],
+        },
+      ],
     },
   },
 
@@ -172,7 +219,10 @@ const eslintConfig = defineConfig([
       "no-restricted-globals": noComponentFetchGlobal,
       "no-restricted-imports": [
         "error",
-        { patterns: [noDrizzleClientImport, noServerImport] },
+        {
+          paths: [drizzleRootPath],
+          patterns: [noDrizzleClientImport, noServerImport],
+        },
       ],
     },
   },
@@ -188,13 +238,19 @@ const eslintConfig = defineConfig([
       ],
       "no-restricted-imports": [
         "error",
-        { patterns: [noDrizzleClientImport, noServerImport] },
+        {
+          paths: [drizzleRootPath],
+          patterns: [noDrizzleClientImport, noServerImport],
+        },
       ],
     },
   },
 
-  // app/ — pages and layouts are components. Route handlers are not, and they
-  // legitimately call into src/server/, so app/ is not walled off the server.
+  // app/ — pages and layouts are components. Route handlers do call into
+  // src/server/, but they are carved out by the `ignores` below and get their
+  // own block, so pages and layouts stay walled off the server: a Server
+  // Component querying the database directly skips the route-handler hop the
+  // closed graph in AR-24 is built on.
   {
     files: [within("app")],
     ignores: [within("app/api")],
@@ -206,7 +262,13 @@ const eslintConfig = defineConfig([
         ...noComponentFetchSyntax,
       ],
       "no-restricted-globals": noComponentFetchGlobal,
-      "no-restricted-imports": ["error", { patterns: [noDrizzleClientImport] }],
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: [drizzleRootPath],
+          patterns: [noDrizzleClientImport, noServerImport],
+        },
+      ],
     },
   },
 
@@ -219,7 +281,13 @@ const eslintConfig = defineConfig([
         noUseServerDirective,
         ...noDrizzleDynamicImport,
       ],
-      "no-restricted-imports": ["error", { patterns: [noDrizzleClientImport] }],
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: [drizzleRootPath],
+          patterns: [noDrizzleClientImport],
+        },
+      ],
     },
   },
 
@@ -234,15 +302,18 @@ const eslintConfig = defineConfig([
       ],
       "no-restricted-imports": [
         "error",
-        { patterns: [noDrizzleClientImport, noClientImport, noServerImport] },
+        {
+          paths: [drizzleRootPath],
+          patterns: [noDrizzleClientImport, noClientImport, noServerImport],
+        },
       ],
     },
   },
 
-  // src/server/ — everything but the repository.
+  // src/server/db/ — the schema. The one place the pure table-builder
+  // entrypoints are reachable; the Drizzle client still is not.
   {
-    files: [within("src/server")],
-    ignores: [within("src/server/repository")],
+    files: [within("src/server/db")],
     rules: {
       "no-restricted-syntax": [
         "error",
@@ -251,7 +322,30 @@ const eslintConfig = defineConfig([
       ],
       "no-restricted-imports": [
         "error",
-        { patterns: [noDrizzleClientImport, noClientImport] },
+        {
+          paths: [drizzleRootPath],
+          patterns: [noDrizzleClientImportInSchema, noClientImport],
+        },
+      ],
+    },
+  },
+
+  // src/server/ — everything but the repository and the schema.
+  {
+    files: [within("src/server")],
+    ignores: [within("src/server/repository"), within("src/server/db")],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        noUseServerDirective,
+        ...noDrizzleDynamicImport,
+      ],
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: [drizzleRootPath],
+          patterns: [noDrizzleClientImport, noClientImport],
+        },
       ],
     },
   },

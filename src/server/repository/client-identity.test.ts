@@ -6,7 +6,10 @@ import { afterAll, describe, expect, it, vi } from "vitest";
 import { clientIdentity } from "@/server/db/schema";
 import { db } from "./client";
 import * as clientIdentityRepository from "./client-identity";
-import { createClientIdentity, findClientIdentityByTokenHash } from "./client-identity";
+import {
+  createClientIdentity,
+  findClientIdentityByTokenHash,
+} from "./client-identity";
 
 // Matrix rows covered here (spec-1-4-establish-the-repository-as-the-only-database-module.md,
 // frozen `## I/O & Edge-Case Matrix`) — every row:
@@ -47,7 +50,9 @@ describe(`${REPOSITORY_DIRECTORY}/client-identity.ts — against the live branch
 
   afterAll(async () => {
     if (insertedIds.length > 0) {
-      await db.delete(clientIdentity).where(inArray(clientIdentity.id, insertedIds));
+      await db
+        .delete(clientIdentity)
+        .where(inArray(clientIdentity.id, insertedIds));
     }
   });
 
@@ -74,7 +79,9 @@ describe(`${REPOSITORY_DIRECTORY}/client-identity.ts — against the live branch
   it("findClientIdentityByTokenHash returns undefined when no row carries the hash — a normal first visit, not a failure (matrix row 'Lookup misses')", async () => {
     const absent = `test-absent-${randomUUID().replaceAll("-", "")}`;
 
-    await expect(findClientIdentityByTokenHash(absent)).resolves.toBeUndefined();
+    await expect(
+      findClientIdentityByTokenHash(absent),
+    ).resolves.toBeUndefined();
   });
 
   it("createClientIdentity rejects on a token hash already stored rather than silently no-opping (matrix row 'Create collides')", async () => {
@@ -90,7 +97,9 @@ describe(`${REPOSITORY_DIRECTORY}/client-identity.ts — against the live branch
     // would otherwise satisfy a bare `.rejects.toThrow()`. Drizzle wraps the
     // driver error in its own "Failed query" message, so the constraint and
     // the SQLSTATE sit on the cause rather than the top-level message.
-    await expect(createClientIdentity(collidingId, tokenHash)).rejects.toMatchObject({
+    await expect(
+      createClientIdentity(collidingId, tokenHash),
+    ).rejects.toMatchObject({
       cause: {
         code: "23505",
         constraint: "client_identity_token_hash_unique",
@@ -144,9 +153,17 @@ const SOURCE_EXTENSIONS = new Set([
   ".cjs",
 ]);
 
+// Kept in step with the identical set in src/shared/contract/contract.test.ts.
+// The two were copy-pasted and had already drifted: `out` and `build` were
+// missing here, so a stale build directory made this AD-2 scan walk emitted
+// JavaScript and report it as an illegal database importer.
 const SKIPPED_DIRECTORIES = new Set([
   "node_modules",
   ".next",
+  // `.gitignore` calls these generated too; `path.extname("x.d.ts")` is `.ts`,
+  // so emitted declaration files would otherwise be scanned as source.
+  "out",
+  "build",
   ".git",
   ".claude",
   ".vercel",
@@ -169,9 +186,13 @@ function sourceFiles(directory: string): string[] {
   return readdirSync(path.join(repositoryRoot, directory || "."), {
     withFileTypes: true,
   }).flatMap((entry) => {
-    const relativePath = directory ? path.join(directory, entry.name) : entry.name;
+    const relativePath = directory
+      ? path.join(directory, entry.name)
+      : entry.name;
     if (entry.isDirectory()) {
-      return SKIPPED_DIRECTORIES.has(entry.name) ? [] : sourceFiles(relativePath);
+      return SKIPPED_DIRECTORIES.has(entry.name)
+        ? []
+        : sourceFiles(relativePath);
     }
     if (!SOURCE_EXTENSIONS.has(path.extname(entry.name))) return [];
     if (SCAN_EXEMPT_FILES.has(relativePath)) return [];
@@ -197,7 +218,10 @@ function reachesTheDatabase(specifier: string): boolean {
     return true;
   }
   // This project's own client module, by alias or by any relative path.
-  return /^(\.|@\/server)/.test(specifier) && /(^|\/)client(\.[a-z]+)?$/.test(specifier);
+  return (
+    /^(\.|@\/server)/.test(specifier) &&
+    /(^|\/)client(\.[a-z]+)?$/.test(specifier)
+  );
 }
 
 function databaseImporters(): { file: string; specifier: string }[] {
@@ -215,17 +239,25 @@ describe("AD-2 — the repository is the only code that touches the database (AC
 
   it("finds the client's own driver imports, so the scan cannot pass vacuously", () => {
     const specifiers = importers
-      .filter((hit) => hit.file === path.join(REPOSITORY_DIRECTORY, "client.ts"))
+      .filter(
+        (hit) => hit.file === path.join(REPOSITORY_DIRECTORY, "client.ts"),
+      )
       .map((hit) => hit.specifier)
       .sort();
-    expect(specifiers).toEqual(["@neondatabase/serverless", "drizzle-orm/neon-http"]);
+    expect(specifiers).toEqual([
+      "@neondatabase/serverless",
+      "drizzle-orm/neon-http",
+    ]);
   });
 
   it("resolves the Drizzle client and its driver nowhere outside src/server/repository/", () => {
     const outside = importers.filter(
       (hit) => !hit.file.startsWith(`${REPOSITORY_DIRECTORY}${path.sep}`),
     );
-    expect(outside, `unexpected database reach: ${JSON.stringify(outside)}`).toEqual([]);
+    expect(
+      outside,
+      `unexpected database reach: ${JSON.stringify(outside)}`,
+    ).toEqual([]);
   });
 });
 
@@ -240,14 +272,17 @@ describe("repository scope — identity functions only (AC4, matrix row 'Reposit
   it("holds no Todo function yet — those arrive with the stories that consume them", () => {
     // The test files are excluded on purpose: they name the forbidden symbols
     // as assertion data, which is the opposite of exporting them.
-    const modules = readdirSync(path.join(repositoryRoot, REPOSITORY_DIRECTORY)).filter(
-      (file) => file.endsWith(".ts") && !file.endsWith(".test.ts"),
-    );
+    const modules = readdirSync(
+      path.join(repositoryRoot, REPOSITORY_DIRECTORY),
+    ).filter((file) => file.endsWith(".ts") && !file.endsWith(".test.ts"));
     expect(modules.sort()).toEqual(["client-identity.ts", "client.ts"]);
 
     const source = modules
       .map((file) =>
-        readFileSync(path.join(repositoryRoot, REPOSITORY_DIRECTORY, file), "utf8"),
+        readFileSync(
+          path.join(repositoryRoot, REPOSITORY_DIRECTORY, file),
+          "utf8",
+        ),
       )
       .join("\n");
 
@@ -257,8 +292,12 @@ describe("repository scope — identity functions only (AC4, matrix row 'Reposit
       "setTodoCompleted",
       "deleteTodo",
     ]) {
-      expect(source).not.toMatch(new RegExp(`export\\s+(async\\s+)?function\\s+${todoFunction}\\b`));
-      expect(source).not.toMatch(new RegExp(`export\\s+const\\s+${todoFunction}\\b`));
+      expect(source).not.toMatch(
+        new RegExp(`export\\s+(async\\s+)?function\\s+${todoFunction}\\b`),
+      );
+      expect(source).not.toMatch(
+        new RegExp(`export\\s+const\\s+${todoFunction}\\b`),
+      );
     }
   });
 });
