@@ -10,6 +10,11 @@
 // declaration of its own, which is AR-27 broken on the first day of parallel
 // work. Seeded complete, there is nothing left for them to add.
 //
+// Story 3.2 added a fifth, `COUNTER_FADE_MS`, which is that rule working
+// rather than failing: a duration belongs here, and the reason this one was
+// not seeded with the other four is that no planning document gives it a
+// number to seed — see its own note below.
+//
 // No `"use client"` directive, deliberately, and the same argument
 // `todo-row.tsx` makes: "You do not need to add the 'use client' directive to
 // every file that contains Client Components. You only need to add it to the
@@ -61,6 +66,26 @@ export const COLLAPSE_MS = 180;
  * rather than a missing decision.
  */
 export const FIRST_RUN_NUDGE_MS = 600;
+
+/**
+ * The character counter's fade-in at 450, in milliseconds.
+ *
+ * The one constant here that no document gives a number for: DESIGN.md:440
+ * and EXPERIENCE.md:144 both say the counter "fades in" and neither says how
+ * long that takes. So it is chosen rather than transcribed, and the choice is
+ * the shortest duration this module already holds — the fade has to be over
+ * before the next keystroke lands, or a fast typist sees a mark that never
+ * settles, and 180ms is inside a comfortable typing cadence. It is its own
+ * constant rather than a second consumer of `COLLAPSE_MS`, because a row
+ * collapsing and a numeral appearing are not one decision and must be free to
+ * diverge.
+ *
+ * `app/globals.css` spells the same number into `@utility char-counter`,
+ * because a CSS animation cannot read a TypeScript constant; `add-input.test.ts`
+ * compiles the stylesheet and asserts the two agree, exactly as the skeleton
+ * pulse above is asserted.
+ */
+export const COUNTER_FADE_MS = 180;
 
 /**
  * `(prefers-reduced-motion: reduce)` — written once, in this module only.

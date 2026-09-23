@@ -41,17 +41,22 @@ function elements(): string[] {
 }
 
 describe("the sticky top block is a container, not a component with contents", () => {
-  it("renders the container and its one occupant", () => {
-    // Story 2.6 filled slot 2. The input (Epic 3) and the tabs (Epic 4) are
-    // still comments, so this list grows by one per story until Story 4.3.
-    expect(elements()).toEqual(["div", "ErrorBannerRegion"]);
+  it("renders the container and its two occupants", () => {
+    // Story 2.6 filled slot 2 and Story 3.2 filled slot 1. Only the tabs
+    // (Epic 4) are still a comment, so this list grows once more, at Story
+    // 4.3. An exact list rather than a `toContain`: it counts every JSX tag
+    // in the file, so a wrapper element added around an occupant — the usual
+    // way a container quietly becomes a component with a layout of its own —
+    // shows up here.
+    expect(elements()).toEqual(["div", "AddInput", "ErrorBannerRegion"]);
   });
 
   it("writes no copy of its own", () => {
     // Story 1.7's rule for the card, applied to the block: a placeholder is a
     // thing a later story has to remember to delete. An occupant is a
     // component, so every string in the block belongs to the component that
-    // owns it — the banner's copy is `error-copy.ts`'s, not this file's.
+    // owns it — the banner's copy is `error-copy.ts`'s and the input's
+    // placeholder is `add-input.tsx`'s, not this file's.
     const text: string[] = [];
     function visit(node: ts.Node) {
       if (ts.isJsxText(node) && node.getText(sourceFile).trim() !== "") {
@@ -63,25 +68,29 @@ describe("the sticky top block is a container, not a component with contents", (
     expect(text).toEqual([]);
   });
 
-  it("holds the two unfilled slots in the order DESIGN.md fixes", () => {
+  it("holds the one unfilled slot in the order DESIGN.md fixes", () => {
     // The comment form survives only for slots nobody has filled yet. Story
-    // 4.3 AC12 is where the last one goes and the whole assertion converts to
-    // element order; until then the two forms cover the block between them,
-    // which is why the numbering is pinned rather than the mere sequence —
-    // "1." then "3." is what proves the banner sits between them.
+    // 3.2 filled slot 1, so its comment is gone and the element below has
+    // taken over the claim; Story 4.3 AC12 is where the last one goes and the
+    // whole assertion converts to element order. The numbering is still
+    // pinned rather than the mere sequence — "3." is what proves the tabs go
+    // *after* the banner rather than merely somewhere.
     const slots = [...stickySource.matchAll(/\{\/\* (\d)\. ([a-z ]+) —/g)].map(
       ([, index, name]) => `${index}. ${name}`,
     );
-    expect(slots).toEqual(["1. add input", "3. filter tabs"]);
+    expect(slots).toEqual(["3. filter tabs"]);
   });
 
-  it("places the banner region between the input's slot and the tabs' slot", () => {
+  it("places the banner region between the input and the tabs' slot", () => {
     // AC9's tab order — "immediately after the input's position and before
-    // the filter tabs" — is element order in the rendered markup, and neither
-    // neighbour exists yet. Asserting against the slot comments is what lets
-    // the claim be made now rather than deferred to the story that happens to
-    // add the second neighbour.
-    const input = stickySource.indexOf("{/* 1. add input");
+    // the filter tabs" — is element order in the rendered markup. Half of it
+    // is real now: Story 3.2 put `AddInput` above the banner, which is also
+    // what makes the input first in the product's tab order (Story 3.2 AC9,
+    // EXPERIENCE.md:194). The other neighbour is still a comment, so that
+    // half stays asserted against the slot, which is what lets the claim be
+    // made now rather than deferred to the story that adds it. The full
+    // conversion to element order is Story 4.3 AC12.
+    const input = stickySource.indexOf("<AddInput");
     const banner = stickySource.indexOf("<ErrorBannerRegion");
     const tabs = stickySource.indexOf("{/* 3. filter tabs");
 
@@ -103,6 +112,23 @@ describe("the block holds against the viewport on an opaque surface (AC6)", () =
     for (const required of ["sticky", "top-0", "z-10", "bg-card"]) {
       expect(classes).toContain(required);
     }
+  });
+
+  it("pairs the negative gutter margin with the padding that undoes it", () => {
+    // `-mx-gutter` widens the block to the card's border box so a row's
+    // shadow passes behind it rather than bleeding into the 18px gutter
+    // (DESIGN.md:360). `px-gutter` puts the contents back where they were.
+    // One without the other is not half the effect, it is a defect: the bare
+    // negative margin pushes the input out into the gutter, and the bare
+    // padding indents it twice. So the claim is the pairing rather than the
+    // presence of either — asserted in both directions, because a later
+    // story removing whichever it thought was spare is what this is for.
+    const gutter = (name: string) => classes.includes(name);
+    expect(gutter("-mx-gutter")).toBe(gutter("px-gutter"));
+    // And they are actually there, so the equality above is not two absences
+    // agreeing with each other.
+    expect(classes).toContain("-mx-gutter");
+    expect(classes).toContain("px-gutter");
   });
 
   it("gives the block no height of its own", () => {

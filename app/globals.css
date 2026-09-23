@@ -404,3 +404,129 @@
   width: 40px;
   height: 40px;
 }
+
+/* ---------------------------------------------------------------------------
+   The add input, its two trailing marks, and the block that holds them
+   (Story 3.2).
+
+   Same rule as every block above: only the value with no token behind it
+   lives here. The input's fill, radius, padding, border colour, shadow and
+   focus ring are all tokens and stay as utility classes on the element, where
+   the whole-tree scans can see them.
+
+   Four of the five recipes below exist because the value they carry has no
+   token and could not be written as a class if it had one:
+
+     - `1.5px` and `min-width` — DESIGN.md gives the border literally, and
+       `todo-card.test.ts:188` bans the whole `min-w-*` family tree-wide as
+       something that can outgrow the card. `retry-pill` above had to solve
+       exactly this and solved it the same way.
+     - `min-width: 0` on the field — a flex item's automatic minimum size is
+       its intrinsic width, and an `<input>`'s intrinsic width is its `size`
+       attribute's worth of characters, so on a narrow phone with the counter
+       showing the field would refuse to shrink and push the row wider than
+       the card. The class that says this is `min-w-0`, which the same ban
+       forbids.
+     - `(pointer: fine)` on the hint — EXPERIENCE.md:245 makes the `Enter`
+       hint's visibility a capability test rather than a width breakpoint, and
+       Tailwind has no variant for a media feature. Written here it also costs
+       no `matchMedia` call site in the product.
+     - The counter's fade — `motion.test.ts:226` bans a `transition-`,
+       `duration-` or `animate-` class anywhere in the markup, so the fade is
+       a recipe, and `:192` bans a millisecond literal outside the motion
+       module, so the number below is `COUNTER_FADE_MS` spelled a second time
+       and `add-input.test.ts` asserts the two agree.
+   --------------------------------------------------------------------------- */
+
+@utility top-block-stack {
+  /* `margin-top:10px` above the banner (mockups/key-states.html:254), read as
+     the gap between the block's stacked occupants rather than as a margin one
+     of them owns — which is what lets Story 4.3 add the third occupant
+     without a second transcription of the same number.
+
+     The same literal is the block's own top inset, and it is the smaller half
+     of `deferred-work.md`'s entry: the block is `top-0` with no padding, so
+     the moment it pins, its first occupant touches the viewport edge while
+     the card's `py-6` scrolls away. 10px is not a token and DESIGN.md gives
+     no offset for the block at all, so rather than invent a second number the
+     gap the mockup already draws between these elements is reused. At rest it
+     adds 10px above the input, inside the card's own padding. */
+  padding-top: 10px;
+  gap: 10px;
+}
+
+@utility input-add {
+  /* DESIGN.md `components.input-add.border` — `1.5px solid`. The colour is
+     not here: the element carries `border-border-control` as a utility, per
+     the rule at the top of the Story 2.4 block above. */
+  border-width: 1.5px;
+
+  /* AC9's hit area, in the dimension a class cannot say. The height half is
+     `min-h-touch-target-min` on the element; this half cannot be, because
+     `todo-card.test.ts:188` bans `min-w-*` tree-wide. Same token, read from
+     the theme rather than retyped. */
+  min-width: var(--spacing-touch-target-min);
+}
+
+@utility input-add-field {
+  /* See the block comment above: without this the field cannot shrink below
+     its intrinsic width and the row grows past the card instead. */
+  min-width: 0;
+}
+
+@utility enter-hint {
+  /* DESIGN.md `components.input-add` — "a small pill `Enter` hint sits at the
+     trailing edge on pointer-width viewports" — read through
+     EXPERIENCE.md:245, which settles that touch and pointer are told apart by
+     capability and not by width. A finger has no Enter key at any viewport
+     size, and a 700px laptop window has one. Everything else about the pill —
+     its 1px edge, its radius, its colour and its type role — is a token and a
+     class on the element. */
+  display: none;
+
+  @media (pointer: fine) {
+    display: block;
+  }
+}
+
+@keyframes counter-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@utility char-counter {
+  /* AC5's "fades in at the trailing edge". `180ms` is COUNTER_FADE_MS in
+     src/client/motion/motion.ts, spelled again because a CSS animation cannot
+     read a TypeScript constant; `add-input.test.ts` compiles this file and
+     asserts the two agree rather than trusting that they do.
+
+     A fade-in only, with no fade-out: the counter is removed the moment the
+     text drops back under 450, and an element that is gone cannot animate.
+     The asymmetry is deliberate — the appearance is the thing AC5 asks to be
+     gentle, because it arrives unbidden. */
+  animation: counter-fade-in 180ms ease-out;
+
+  /* Two digits' width, held whether the count needs them or not.
+     `tabular-nums` on the element equalises the digits' widths and nothing
+     else, so a count falling from 10 to 9 narrows this span by a character —
+     and the field beside it is `flex-1`, so it grows into whatever this gives
+     up, moving the caret and the typed text while someone is typing. The
+     counter runs from 50 down to 0, so two digits is the whole range. `ch` is
+     this element's own zero-width, which is exactly what a tabular digit
+     occupies; a `min-w-*` class would say the same thing and is banned
+     tree-wide (`todo-card.test.ts:188`), the same reason `input-add`'s width
+     floor is here. */
+  min-width: 2ch;
+
+  /* Stillness, from the one marker the motion module produces, set on the
+     input this counter sits inside. `[data-still="true"] > .char-counter` is
+     (0,2,0) against the rule above at (0,1,0), so it wins on specificity
+     rather than on source order — which it has to, because the production
+     minifier may emit it first. The value is required and the relationship is
+     the input's own child, for the same two reasons `skeleton-row` above
+     gives: matching on presence alone would suppress for a `false` marker,
+     and matching from any ancestor would let an unrelated marker elsewhere in
+     the tree do it. Under reduced motion the numeral simply appears, which is
+     the information without the movement. */
+  [data-still="true"] > & { animation: none; }
+}

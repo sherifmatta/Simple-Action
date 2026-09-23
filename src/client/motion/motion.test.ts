@@ -7,6 +7,7 @@ import { matches, readMarkup, readSources, styleSheetMatches } from "@/test-supp
 import { ruleFor, tailwindCompiler } from "@/test-support/tailwind";
 import {
   COLLAPSE_MS,
+  COUNTER_FADE_MS,
   DEPARTURE_HOLD_MS,
   FIRST_RUN_NUDGE_MS,
   SKELETON_PULSE_MS,
@@ -32,6 +33,9 @@ import {
 
 const repositoryRoot = process.cwd();
 const motionFile = path.join("src", "client", "motion", "motion.ts");
+// Story 3.2's second media-query reader, and the reason the scan below asks
+// which query rather than whether there is one.
+const pointerFile = path.join("src", "client", "device", "pointer.ts");
 
 const sources = readSources();
 const markup = readMarkup();
@@ -50,6 +54,26 @@ const matching = (
 const sourcesMatching = (pattern: RegExp): string[] => matching(sources, pattern);
 
 /**
+ * `file:query` for every media query written in a file that calls `matchMedia`.
+ *
+ * Both readers name their query as a module constant rather than inline, so
+ * the call site carries an identifier and the string is elsewhere in the same
+ * file — which is why this pairs the two by file instead of parsing the call.
+ * A file that calls `matchMedia` and declares no query string at all would
+ * report nothing and fail the assertion by absence.
+ */
+const MEDIA_QUERY = /"(\([a-z-]+\s*:\s*[a-z-]+\))"/g;
+
+function mediaQueryReaders(): string[] {
+  return sources
+    .filter(({ source }) => /\bmatchMedia\b/.test(source))
+    .flatMap(({ file, source }) =>
+      [...source.matchAll(MEDIA_QUERY)].map((match) => `${file}:${match[1]}`),
+    )
+    .sort();
+}
+
+/**
  * The interface half of the product: `app/` plus `src/client/`.
  *
  * AC3 is about *components*, and the two scans below are its shape. Running
@@ -66,7 +90,7 @@ const interfaceSources = sources.filter(
 // --- AC1: the four constants, seeded complete -------------------------------
 
 describe("the module holds every duration in the product (AC1)", () => {
-  it("names all four, including the three with no consumer yet", () => {
+  it("names them all, including the three with no consumer yet", () => {
     // Seeding it complete is the whole point: Epics 4 and 5 run in parallel
     // and both import `COLLAPSE_MS`, so a module grown one constant at a time
     // would give whichever arrived second an unmerged import or a second
@@ -75,6 +99,12 @@ describe("the module holds every duration in the product (AC1)", () => {
     expect(DEPARTURE_HOLD_MS).toBe(400);
     expect(COLLAPSE_MS).toBe(180);
     expect(FIRST_RUN_NUDGE_MS).toBe(600);
+    // Story 3.2's addition. The one duration no planning document gives a
+    // number for, which is why it was not seeded with the other four —
+    // DESIGN.md:440 and EXPERIENCE.md:144 both say the counter "fades in" and
+    // neither says over how long. Pinned here all the same, because what the
+    // stylesheet animates on has to be this number and not a second one.
+    expect(COUNTER_FADE_MS).toBe(180);
   });
 
   it("takes the pulse from DESIGN.md rather than from a chosen number", () => {
@@ -135,8 +165,29 @@ describe("the stylesheet's pulse and the module's constant are one value (AC3, A
 
 describe("the preference is read in exactly one place (AC2)", () => {
   it("is read in the motion module and in no other source file", () => {
-    expect(sourcesMatching(/\bmatchMedia\b/)).toEqual([motionFile]);
+    // Narrowed by Story 3.2, from "no other file calls `matchMedia`" to "no
+    // other file asks the *motion* question".
+    //
+    // AC2 exists so that whether the interface moves is decided once and
+    // consumed as a marker, rather than branched in a component — not so that
+    // this module owns every media query in the product. Story 3.2's
+    // autofocus is a second question with the same mechanism and no overlap:
+    // `(pointer: fine)` decides whether the caret starts in the field, cannot
+    // be expressed in CSS because it ends in a `focus()` call, and says
+    // nothing about motion. Under the old scan it could only have been built
+    // by moving an unrelated decision into this module.
+    //
+    // So the guarantee is restated rather than relaxed: the string itself is
+    // still this module's alone, and every `matchMedia` caller in the product
+    // is listed below with the query it asks — which is what stops the motion
+    // decision being re-read under another module's name.
     expect(sourcesMatching(/prefers-reduced-motion/)).toEqual([motionFile]);
+    expect(mediaQueryReaders()).toEqual(
+      [
+        `${motionFile}:(prefers-reduced-motion: reduce)`,
+        `${pointerFile}:(pointer: fine)`,
+      ].sort(),
+    );
   });
 
   it("is not read a second time in the stylesheet", () => {
@@ -160,8 +211,13 @@ describe("the preference is read in exactly one place (AC2)", () => {
     // cannot see it is not the claim it says it is.
     expect(files).toContain("middleware.ts");
     expect(files.length).toBeGreaterThanOrEqual(20);
-    // And the scan finds something when there is something to find.
-    expect(matching(interfaceSources, /useSyncExternalStore/)).toEqual([motionFile]);
+    // And the scan finds something when there is something to find. Two
+    // homes since Story 3.2, which is the shape the narrowing above admits:
+    // the mechanism is shared, the question is not.
+    expect(files).toContain(pointerFile);
+    expect([...matching(interfaceSources, /useSyncExternalStore/)].sort()).toEqual(
+      [motionFile, pointerFile].sort(),
+    );
   });
 });
 
@@ -184,6 +240,7 @@ describe("no duration is declared outside this module (AC3, AC4)", () => {
         `${motionFile}:DEPARTURE_HOLD_MS`,
         `${motionFile}:COLLAPSE_MS`,
         `${motionFile}:FIRST_RUN_NUDGE_MS`,
+        `${motionFile}:COUNTER_FADE_MS`,
         `${path.join("src", "client", "todos", "todo-list-query.ts")}:READ_DEADLINE_MS`,
       ].sort(),
     );

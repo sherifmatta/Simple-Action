@@ -166,6 +166,12 @@ const freshClient = () => new QueryClient();
  * are captured rather than discarded, so the subscription itself can be
  * exercised: without that, a wrong event name or a listener never removed is
  * invisible to the whole suite.
+ *
+ * It answers every query with the same value, which matters since Story 3.2:
+ * the card now also asks `(pointer: fine)` for autofocus, so `false` here is
+ * "no reduced motion and no pointer" and `true` is both. Every case below
+ * wants one of those two pairings; a test that needs them apart belongs in
+ * `add-input.render.test.tsx`, whose stub answers per query.
  */
 type MediaStub = {
   queries: string[];
@@ -660,5 +666,65 @@ describe("the live regions survive hydration, not only server render", () => {
     // `afterEach` unmounts `root`, which is already unmounted; re-point it so
     // that stays a no-op rather than a double unmount of a live tree.
     root = createRoot(document.createElement("div"));
+  });
+});
+
+describe("the add input, in the block with its neighbours (Story 3.2)", () => {
+  // `add-input.render.test.tsx` mounts the component alone and owns its
+  // behaviour. These two claims are about the component *in place*, which is
+  // the one thing a mount of it alone cannot see: what comes before it in the
+  // tab order, and whether it is real while the list is not.
+  //
+  // `stubMotionPreference` answers the same thing to every query, so with it
+  // set to `false` the pointer capability is absent too and the input does
+  // not autofocus. That is the right default here — a test about tab order
+  // that started with focus already in the field would be asserting less.
+
+  it("is first in the tab order, ahead of Retry (AC9)", async () => {
+    // EXPERIENCE.md:194 — "input → Retry (when the banner is occupied) → All
+    // → Active → Completed". The first two of those exist now, and the order
+    // is not arranged anywhere: it falls out of the input being slot 1 of the
+    // sticky block and the banner being slot 2.
+    stubMotionPreference(false);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(() =>
+        Promise.resolve(Response.json({ error: { kind: "load", message: "x" } }, { status: 500 })),
+      ),
+    );
+
+    await mountCard();
+
+    const focusable = [...container.querySelectorAll("input, button, [tabindex]")];
+    expect(focusable.length).toBeGreaterThanOrEqual(2);
+    expect(focusable[0]?.tagName).toBe("INPUT");
+    expect(focusable[1]?.textContent).toBe("Retry");
+    // And the pill `Enter` hint is not among them (AC7): it is a hint, not a
+    // control, and `aria-hidden` besides.
+    expect(focusable.map((element) => element.textContent)).not.toContain("Enter");
+  });
+
+  it("is real and writable while the list is still skeletal (AC1)", async () => {
+    // The other half of the claim Story 2.5's card test makes — "the card,
+    // input and filter tabs are already real and interactive while skeletons
+    // are showing" — which could not be asserted about the input until there
+    // was one.
+    stubMotionPreference(false);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(() => new Promise<Response>(() => {})),
+    );
+
+    await mountCard();
+
+    const sticky = container.querySelector(".sticky");
+    const field = container.querySelector("input");
+    expect(field, "the input did not render during the load").not.toBeNull();
+    expect(sticky?.contains(field as Node)).toBe(true);
+    expect((field as HTMLInputElement).disabled).toBe(false);
+    expect((field as HTMLInputElement).readOnly).toBe(false);
+    // The list underneath it is still skeletal, which is what makes the
+    // assertion above worth making.
+    expect(container.querySelectorAll(".skeleton-row")).toHaveLength(3);
   });
 });
