@@ -167,6 +167,18 @@ failed for user 'neondb_owner'` — the same stale `DATABASE_URL` recorded above
 That is the prior 15 plus exactly the two live rows added here (#3 and #4). No
 new kind of failure.
 
+### 2026-09-23, after the fact — the credential was refreshed and the suite is fully green
+
+The notes above record the live repository rows as failing on a stale `DATABASE_URL`. That condition is gone: the user refreshed the credential and `npm test` now reports **714 passed, 0 failed** across 34 files.
+
+This matters beyond the count. Three of this story's criteria could only ever be *asserted* while the database was unreachable, and all three are now demonstrated against the live branch:
+
+- AC3's idempotent same-owner retry returns the existing row and leaves it unmodified.
+- AC3's race — two interleaved retries for one id settle as one `created`, one `existing`, and exactly one row. This is the criterion the `ON CONFLICT (id) DO NOTHING` design was chosen for, and it had never actually run.
+- AC4's foreign owner is refused, touching nothing and carrying nothing of the other owner's row.
+
+The foreign-key path added during the review pass — a create under an owner with no `client_identity` row — also runs and rejects without writing, which is the path that produced the leaking log line `logSafeError` now closes.
+
 ## Review Triage Log
 
 One review layer ran (Blind Hunter, context-free, over the server half of the worktree). Fourteen findings; each was checked against the cited file before a verdict was written.

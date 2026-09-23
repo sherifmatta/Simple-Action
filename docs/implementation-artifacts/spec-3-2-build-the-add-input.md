@@ -97,6 +97,10 @@ Untouched, as instructed: the `pointer.ts`/`motion.ts` duplication, the counter 
 
 `npm run lint` and `npm run typecheck` clean. `npx vitest run` — 697 passed, 17 failed, all 17 in `src/server/repository/todos.test.ts` and `client-identity.test.ts` on the stale `DATABASE_URL`. Every client and app test passes. Not committed.
 
+### 2026-09-23, after the fact — the credential was refreshed
+
+The two verification lines above record server-side failures on a stale `DATABASE_URL`. That condition is gone: `npm test` now reports **714 passed, 0 failed** across 34 files, so this story's 437 client and app rows are green alongside a fully passing server half.
+
 ## Spec Change Log
 
 ### 2026-09-23 — Planning decision 5 could not be built as approved. Not edited; flagged.
