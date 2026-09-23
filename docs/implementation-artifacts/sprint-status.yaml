@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 09-21-2026 12:00
-last_updated: 09-23-2026 19:30
+last_updated: 09-23-2026 20:00
 project: Simple Action
 project_key: NOKEY
 tracking_system: file-system
@@ -56,11 +56,11 @@ development_status:
   2-6-build-the-list-region-s-resolved-states-error-empty-and-what: done
   epic-2-retrospective: optional
 
-  epic-3: in-progress
+  epic-3: done
   3-1-accept-and-validate-a-new-todo-at-the-server: done
   3-2-build-the-add-input: done
-  3-3-add-a-todo-optimistically-and-merge-the-list-that-arrives: review
-  3-4-return-the-user-s-text-when-an-add-fails: review
+  3-3-add-a-todo-optimistically-and-merge-the-list-that-arrives: done
+  3-4-return-the-user-s-text-when-an-add-fails: done
   epic-3-retrospective: optional
 
   epic-4: backlog
