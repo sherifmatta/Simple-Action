@@ -41,15 +41,17 @@ function elements(): string[] {
 }
 
 describe("the sticky top block is a container, not a component with contents", () => {
-  it("renders exactly one element", () => {
-    expect(elements()).toEqual(["div"]);
+  it("renders the container and its one occupant", () => {
+    // Story 2.6 filled slot 2. The input (Epic 3) and the tabs (Epic 4) are
+    // still comments, so this list grows by one per story until Story 4.3.
+    expect(elements()).toEqual(["div", "ErrorBannerRegion"]);
   });
 
-  it("renders no occupant and no placeholder", () => {
+  it("writes no copy of its own", () => {
     // Story 1.7's rule for the card, applied to the block: a placeholder is a
-    // thing a later story has to remember to delete. The three slots are
-    // comments, so the input (Epic 3), the banner region (Story 2.7) and the
-    // tabs (Epic 4) each add markup rather than replace someone else's.
+    // thing a later story has to remember to delete. An occupant is a
+    // component, so every string in the block belongs to the component that
+    // owns it — the banner's copy is `error-copy.ts`'s, not this file's.
     const text: string[] = [];
     function visit(node: ts.Node) {
       if (ts.isJsxText(node) && node.getText(sourceFile).trim() !== "") {
@@ -61,18 +63,31 @@ describe("the sticky top block is a container, not a component with contents", (
     expect(text).toEqual([]);
   });
 
-  it("names the three slots in the order DESIGN.md fixes", () => {
-    // The order is the whole content of this file today, so it is the thing
-    // worth pinning: a story that inserts its markup in the wrong place would
-    // otherwise be caught only once all three occupants exist.
+  it("holds the two unfilled slots in the order DESIGN.md fixes", () => {
+    // The comment form survives only for slots nobody has filled yet. Story
+    // 4.3 AC12 is where the last one goes and the whole assertion converts to
+    // element order; until then the two forms cover the block between them,
+    // which is why the numbering is pinned rather than the mere sequence —
+    // "1." then "3." is what proves the banner sits between them.
     const slots = [...stickySource.matchAll(/\{\/\* (\d)\. ([a-z ]+) —/g)].map(
       ([, index, name]) => `${index}. ${name}`,
     );
-    expect(slots).toEqual([
-      "1. add input",
-      "2. error banner region",
-      "3. filter tabs",
-    ]);
+    expect(slots).toEqual(["1. add input", "3. filter tabs"]);
+  });
+
+  it("places the banner region between the input's slot and the tabs' slot", () => {
+    // AC9's tab order — "immediately after the input's position and before
+    // the filter tabs" — is element order in the rendered markup, and neither
+    // neighbour exists yet. Asserting against the slot comments is what lets
+    // the claim be made now rather than deferred to the story that happens to
+    // add the second neighbour.
+    const input = stickySource.indexOf("{/* 1. add input");
+    const banner = stickySource.indexOf("<ErrorBannerRegion");
+    const tabs = stickySource.indexOf("{/* 3. filter tabs");
+
+    expect(input).toBeGreaterThan(-1);
+    expect(banner).toBeGreaterThan(input);
+    expect(tabs).toBeGreaterThan(banner);
   });
 });
 
@@ -80,7 +95,7 @@ describe("the block holds against the viewport on an opaque surface (AC6)", () =
   const classes = classNamesOf(stickySource, "sticky-top-block.tsx");
 
   it("carries the four classes that make it do so", () => {
-    // A required subset rather than an exact list: Story 3.3 and Story 4.4 put
+    // A required subset rather than an exact list: Story 3.2 and Story 4.3 put
     // real occupants in here and will need layout classes of their own (a
     // `flex`, a column direction, a gap), and forcing each of them to edit a
     // done story's test to add one buys nothing. What must not change is the
@@ -91,7 +106,7 @@ describe("the block holds against the viewport on an opaque surface (AC6)", () =
   });
 
   it("gives the block no height of its own", () => {
-    // The block is as tall as its occupants make it. Story 6.1 measures that
+    // The block is as tall as its occupants make it. Story 6.2 measures that
     // height live to size `scroll-padding-top` (UX-DR21), so a constant here
     // would be a second source of truth for it to disagree with.
     expect(classes.filter((name) => /^(h-|min-h-|max-h-)/.test(name))).toEqual(

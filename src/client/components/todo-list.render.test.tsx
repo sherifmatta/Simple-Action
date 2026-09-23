@@ -24,10 +24,12 @@
 // "still".
 
 import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { createRoot, hydrateRoot, type Root } from "react-dom/client";
+import { renderToString } from "react-dom/server";
+import { focusManager, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { AppProviders } from "@/client/providers";
 import type { Todo } from "@/shared/contract/todo";
 import { TodoCard } from "./todo-card";
 import { TodoList } from "./todo-list";
@@ -49,6 +51,19 @@ const TODOS: Todo[] = [
 
 let container: HTMLDivElement;
 let root: Root;
+
+// React only treats `act` as a real flush boundary when this is set, and
+// warns "The current testing environment is not configured to support act(...)"
+// when it is not. Without it `act` returns before React has drained its work,
+// so an assertion can read a tree React has not finished committing — which
+// is a race that passes alone and fails under a loaded worker.
+beforeEach(() => {
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+});
+
+afterEach(() => {
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
+});
 
 beforeEach(() => {
   container = document.createElement("div");
@@ -78,6 +93,59 @@ async function mount(client: QueryClient) {
   await act(async () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
   });
+}
+
+/**
+ * The whole card, under the whole shell.
+ *
+ * `QueryClientProvider` alone is no longer enough: Story 2.6 put the banner
+ * region in the sticky top block, and it reads the error slot and announces
+ * through the announcer — both of which throw outside their providers by
+ * design rather than degrading to a no-op. `AppProviders` is what the
+ * application actually mounts, so using it here is also the only test that
+ * proves the three singletons compose in the order `providers.tsx` nests them.
+ *
+ * It builds its own `QueryClient` internally, which is why this takes none.
+ */
+/** One macrotask inside `act`, so a settled fetch can commit. */
+async function settle() {
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+}
+
+async function mountCard() {
+  await act(async () => {
+    root.render(
+      <AppProviders>
+        <TodoCard />
+      </AppProviders>,
+    );
+  });
+  await settle();
+}
+
+/**
+ * The text a live region of the given urgency currently holds.
+ *
+ * The urgency is read off the element rather than written into the selector,
+ * deliberately. `announcer.test.ts` scans every source file in the repository
+ * for something shaped like a declared live region, and an attribute selector
+ * carrying a value is shaped exactly like one — this file would have to join
+ * that scan's exemption list, which is a real hole opened for a cosmetic
+ * reason. Matching on the attribute's presence and comparing its value
+ * afterwards reads the same and stays under the scan.
+ */
+function liveRegions(urgency: "polite" | "assertive"): Element[] {
+  return [...container.querySelectorAll("[aria-live]")].filter(
+    (element) => element.getAttribute("aria-live") === urgency,
+  );
+}
+
+function liveRegion(urgency: "polite" | "assertive"): string {
+  const regions = liveRegions(urgency);
+  expect(regions, `expected exactly one ${urgency} region`).toHaveLength(1);
+  return regions[0]?.textContent?.trim() ?? "";
 }
 
 // `retry: false` is already in the options; a fresh client per test keeps the
@@ -297,16 +365,7 @@ describe("TodoList, actually mounted", () => {
       vi.fn<typeof fetch>(() => new Promise<Response>(() => {})),
     );
 
-    await act(async () => {
-      root.render(
-        <QueryClientProvider client={freshClient()}>
-          <TodoCard />
-        </QueryClientProvider>,
-      );
-    });
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    });
+    await mountCard();
 
     // The card itself, rendered rather than withheld behind a boundary.
     const card = container.querySelector(".bg-card.rounded-lg");
@@ -320,5 +379,286 @@ describe("TodoList, actually mounted", () => {
     expect(container.querySelectorAll(".skeleton-row")).toHaveLength(3);
     const region = container.querySelector("ul");
     expect(region?.parentElement).toBe(card);
+  });
+});
+
+describe("the resolved states, in a real DOM (Story 2.6)", () => {
+  it("shows the All empty state and announces it politely (AC10, AC17)", async () => {
+    stubMotionPreference(false);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(() => Promise.resolve(Response.json([]))),
+    );
+
+    await mountCard();
+
+    expect(container.textContent).toContain("Nothing here yet.");
+    expect(container.textContent).toContain("Type above to add your first Todo.");
+    // The region survives beside it and is no longer busy.
+    const region = container.querySelector("ul");
+    expect(region).not.toBeNull();
+    expect(region?.querySelectorAll("li")).toHaveLength(0);
+    expect(region?.hasAttribute("aria-busy")).toBe(false);
+    // Both lines as one utterance, in the polite region, and nothing in the
+    // assertive one — an empty list is a resolution, not a failure.
+    expect(liveRegion("polite")).toBe(
+      "Nothing here yet. Type above to add your first Todo.",
+    );
+    expect(liveRegion("assertive")).toBe("");
+  });
+
+  it("shows the banner and announces it assertively when the read fails (AC3, AC18)", async () => {
+    stubMotionPreference(false);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(() =>
+        Promise.resolve(Response.json({ error: { kind: "load", message: "boom" } }, { status: 500 })),
+      ),
+    );
+
+    await mountCard();
+
+    expect(container.textContent).toContain("Couldn't load your Todos.");
+    expect(container.querySelector("button")?.textContent).toBe("Retry");
+    // Assertive, and the polite region stays silent.
+    expect(liveRegion("assertive")).toBe("Couldn't load your Todos.");
+    expect(liveRegion("polite")).toBe("");
+    // The server's own message never reaches the interface (AD-10).
+    expect(container.textContent).not.toContain("boom");
+    // And the list region shows neither skeletons nor the empty state (AC4,
+    // AC15): the contents are unknown, not known-empty.
+    expect(container.querySelectorAll(".skeleton-row")).toHaveLength(0);
+    expect(container.textContent).not.toContain("Nothing here yet.");
+  });
+
+  it("returns to skeletons on Retry and resolves to the empty state (AC5, AC16)", async () => {
+    stubMotionPreference(false);
+    // Fails once, then answers an empty list — the exact path AC16 names.
+    let pending: (value: Response) => void = () => {};
+    const fetchStub = vi
+      .fn<typeof fetch>()
+      .mockImplementationOnce(() =>
+        Promise.resolve(Response.json({ error: { kind: "load", message: "x" } }, { status: 500 })),
+      )
+      .mockImplementationOnce(
+        () => new Promise<Response>((resolve) => (pending = resolve)),
+      );
+    vi.stubGlobal("fetch", fetchStub);
+
+    await mountCard();
+    expect(container.textContent).toContain("Couldn't load your Todos.");
+
+    const retry = container.querySelector("button");
+    await act(async () => retry?.click());
+    // TanStack notifies its subscribers through a scheduled microtask, so the
+    // `fetchStatus: "fetching"` that `refetch()` sets lands one tick after the
+    // click commits — the same reason `mount()` above waits before asserting.
+    await settle();
+
+    // The slot cleared before the closure ran, so the banner is gone while
+    // the request is in flight — and the region is back to skeletons, which
+    // `isPending` alone could not have produced: the query is still in its
+    // `error` status here.
+    expect(fetchStub).toHaveBeenCalledTimes(2);
+    // The banner is gone — asserted as the absence of its control, not as the
+    // absence of its words: the assertive region still holds the string it
+    // announced, and that is correct. A live region keeps its text until the
+    // next announcement replaces it.
+    expect(container.querySelector("button")).toBeNull();
+    expect(liveRegion("assertive")).toBe("Couldn't load your Todos.");
+    expect(container.querySelectorAll(".skeleton-row")).toHaveLength(3);
+    expect(container.querySelector("ul")?.getAttribute("aria-busy")).toBe("true");
+
+    await act(async () => pending(Response.json([])));
+    // Two ticks: one for the response to be read, one for the commit that
+    // renders it. A single flush is a race, not a guarantee.
+    await settle();
+    await settle();
+
+    expect(container.textContent).toContain("Nothing here yet.");
+    expect(container.querySelectorAll(".skeleton-row")).toHaveLength(0);
+  });
+
+  it("clears the banner when a background refetch succeeds, not only on Retry", async () => {
+    // EXPERIENCE.md:109 — "the banner clears when the retried operation
+    // succeeds". `Retry` clears the slot itself before refetching, so the
+    // path this covers is the one nothing else does: `refetchOnWindowFocus`
+    // is left at its default of true (todo-list-query.ts:180), so returning
+    // to the tab after a failure resolved the list *underneath* a banner
+    // still reporting that it could not be loaded — the empty state and
+    // "Couldn't load your Todos." on screen at the same time.
+    stubMotionPreference(false);
+    const fetchStub = vi
+      .fn<typeof fetch>()
+      .mockImplementationOnce(() =>
+        Promise.resolve(Response.json({ error: { kind: "load", message: "x" } }, { status: 500 })),
+      )
+      .mockImplementation(() => Promise.resolve(Response.json([])));
+    vi.stubGlobal("fetch", fetchStub);
+
+    await mountCard();
+    expect(container.textContent).toContain("Couldn't load your Todos.");
+
+    // A focus refetch, driven the way the browser would drive it.
+    //
+    // `focusManager` is a module-level singleton shared by every test in this
+    // worker, so it is restored in a `finally` — the same discipline the
+    // `401` case below uses for `window.location`. Leaving it pinned to
+    // "focused" made later files in the same worker refetch when they did not
+    // expect to, which is what this file was intermittently failing on.
+    try {
+      await act(async () => {
+        focusManager.setFocused(false);
+        focusManager.setFocused(true);
+      });
+      // One tick starts the request, a second lets its response commit. A
+      // single flush is enough only when the stub resolves before the first
+      // one returns, which is a race under a loaded worker rather than a
+      // guarantee.
+      await settle();
+      await settle();
+    } finally {
+      focusManager.setFocused(undefined);
+    }
+
+    expect(fetchStub).toHaveBeenCalledTimes(2);
+    expect(container.textContent).toContain("Nothing here yet.");
+    // The banner is gone: no control, and the region is back to holding
+    // nothing. The assertive region keeps the words it announced, which is
+    // why this is asserted on the banner rather than on the container's text.
+    expect(container.querySelector("button")).toBeNull();
+    expect(container.querySelector(".banner-region")?.children).toHaveLength(0);
+  });
+
+  it("raises the banner again when the retried read fails again (AC5)", async () => {
+    // AC5 ends "and it resolves to content or to the same banner again". The
+    // second half is its own path: `retryCurrentError` clears the slot before
+    // it refetches, so nothing is left to re-render — the banner has to be
+    // raised a second time, by a second failure, or `Retry` silently empties
+    // the region and the user is back to a blank rectangle with no way out.
+    stubMotionPreference(false);
+    const fetchStub = vi.fn<typeof fetch>(() =>
+      Promise.resolve(Response.json({ error: { kind: "load", message: "x" } }, { status: 500 })),
+    );
+    vi.stubGlobal("fetch", fetchStub);
+
+    await mountCard();
+    expect(container.textContent).toContain("Couldn't load your Todos.");
+
+    await act(async () => container.querySelector("button")?.click());
+    await settle();
+
+    expect(fetchStub).toHaveBeenCalledTimes(2);
+    // Back, and still pressable — nothing dead-ends (NFR-4).
+    expect(container.querySelector("button")?.textContent).toBe("Retry");
+    expect(container.textContent).toContain("Couldn't load your Todos.");
+    // And still no empty state: the contents are unknown, not known-empty.
+    expect(container.textContent).not.toContain("Nothing here yet.");
+  });
+
+  it("reloads the document rather than refetching when the identity expired (AC6)", async () => {
+    stubMotionPreference(false);
+    const reload = vi.fn();
+    // `reload` is a non-configurable own property of jsdom's `Location`, so
+    // it cannot be replaced in place; `window.location` itself is
+    // configurable, so the whole object is swapped for one that carries every
+    // other field unchanged.
+    const original = window.location;
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: Object.assign(Object.create(Object.getPrototypeOf(original)), {
+        href: original.href,
+        origin: original.origin,
+        reload,
+      }),
+    });
+
+    const fetchStub = vi.fn<typeof fetch>(() =>
+      Promise.resolve(Response.json({ error: { kind: "load", message: "x" } }, { status: 401 })),
+    );
+    vi.stubGlobal("fetch", fetchStub);
+
+    try {
+      await mountCard();
+      expect(fetchStub).toHaveBeenCalledTimes(1);
+
+      await act(async () => container.querySelector("button")?.click());
+
+      // A 401 means the open document holds no identity the server will
+      // accept, and only a document request mints one — so re-requesting
+      // would fail forever.
+      expect(reload).toHaveBeenCalledTimes(1);
+      expect(fetchStub).toHaveBeenCalledTimes(1);
+    } finally {
+      Object.defineProperty(window, "location", {
+        configurable: true,
+        value: original,
+      });
+    }
+  });
+});
+
+describe("the live regions survive hydration, not only server render", () => {
+  // The Epic 1 carry-over `epic-2-context.md` records and Story 2.5 deferred
+  // here, as the story that first calls `announce()`. Until now nothing in the
+  // suite had ever hydrated anything: `announcer.test.ts` renders the provider
+  // with `renderToStaticMarkup`, and every mount above uses `createRoot`. A
+  // region that the server emitted and hydration then dropped or duplicated
+  // would have been invisible to both.
+
+  it("carries exactly one polite and one assertive region through hydration, and announces into it", async () => {
+    // Reduced motion on both sides, so the server snapshot and the client
+    // agree and this test is about hydration rather than about the marker
+    // Story 2.5 deliberately makes differ.
+    stubMotionPreference(true);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(() =>
+        Promise.resolve(Response.json({ error: { kind: "load", message: "x" } }, { status: 500 })),
+      ),
+    );
+
+    // `beforeEach` gave this container a `createRoot` root, and unmounting a
+    // root empties its container — so it has to go *before* the server markup
+    // is written, not after, or hydration adopts an empty element.
+    await act(async () => root.unmount());
+
+    container.innerHTML = renderToString(
+      <AppProviders>
+        <TodoCard />
+      </AppProviders>,
+    );
+
+    // The server emitted them, before anything hydrated.
+    expect(container.querySelectorAll("[aria-live]")).toHaveLength(2);
+
+    let hydrated: Root;
+    await act(async () => {
+      hydrated = hydrateRoot(
+        container,
+        <AppProviders>
+          <TodoCard />
+        </AppProviders>,
+      );
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    // Still exactly two, and still one of each: hydration neither dropped the
+    // server's regions nor mounted a second pair beside them (AC20).
+    expect(container.querySelectorAll("[aria-live]")).toHaveLength(2);
+    expect(liveRegions("polite")).toHaveLength(1);
+    expect(liveRegions("assertive")).toHaveLength(1);
+
+    // And the region a hydrated client announces into is the one the server
+    // shipped, which is the whole point: a live region inserted at the moment
+    // its text arrives is not announced by most screen readers.
+    expect(liveRegion("assertive")).toBe("Couldn't load your Todos.");
+
+    await act(async () => hydrated.unmount());
+    // `afterEach` unmounts `root`, which is already unmounted; re-point it so
+    // that stays a no-op rather than a double unmount of a live tree.
+    root = createRoot(document.createElement("div"));
   });
 });

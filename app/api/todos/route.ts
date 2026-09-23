@@ -62,7 +62,7 @@ function requestFailedResponse(method: string): Response {
  *
  * The success body is a bare JSON array with no envelope (SPINE "Error shape":
  * success responses are the bare resource or a bare array). An empty array is a
- * success, not a failure — Story 2.8's empty state is what renders it.
+ * success, not a failure — Story 2.6's empty state is what renders it.
  */
 export async function GET(request: NextRequest): Promise<Response> {
   try {

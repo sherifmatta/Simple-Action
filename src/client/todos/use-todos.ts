@@ -18,7 +18,7 @@ import { useQuery } from "@tanstack/react-query";
 import { todoListQueryOptions } from "./todo-list-query";
 
 // Re-exported so the single entry point for reading Todos is also the single
-// entry point for classifying a failed read: Story 2.7's banner imports the
+// entry point for classifying a failed read: Story 2.6's banner imports the
 // hook and the error class from one module rather than reaching past the hook
 // into the request it wraps.
 export { TodoRequestError } from "./todo-list-query";
@@ -31,7 +31,7 @@ export { TodoRequestError } from "./todo-list-query";
  * optimistic row minted in the browser is already in its final position.
  *
  * `error` is a `TodoRequestError` of kind `load` for every way the read can
- * fail. Story 2.7 maps that kind to the banner string and supplies `refetch`
+ * fail. Story 2.6 maps that kind to the banner string and supplies `refetch`
  * as the slot's retry closure (AD-9).
  *
  * Takes no arguments, deliberately. The Filter View is client state, derives

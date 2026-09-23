@@ -27,8 +27,18 @@ import type { Todo } from "@/shared/contract/todo";
 // `window` to ask, `useReducedMotion()` reports stillness, so every render
 // below carries the still marker.
 
-const { mockUseTodos } = vi.hoisted(() => ({ mockUseTodos: vi.fn() }));
+const { mockUseTodos, mockAnnounce } = vi.hoisted(() => ({
+  mockUseTodos: vi.fn(),
+  mockAnnounce: vi.fn(),
+}));
 vi.mock("@/client/todos/use-todos", () => ({ useTodos: mockUseTodos }));
+// The empty state announces its own text, and `useAnnounce()` throws outside
+// its provider by design (announcer.tsx:40) rather than returning a no-op.
+// Stubbing it keeps this file about which branch renders; that the right
+// string is announced, politely, is `empty-state.test.ts`'s.
+vi.mock("@/client/feedback/announcer", () => ({
+  useAnnounce: () => mockAnnounce,
+}));
 
 const { TodoList } = await import("./todo-list");
 
@@ -86,11 +96,48 @@ describe("the list region renders what the hook resolved to", () => {
     expect(html.split("<li").at(-1)).toContain('data-completed="true"');
   });
 
-  it("renders an empty list as an empty <ul>, not as nothing", () => {
+  it("resolves an empty list to the empty state, beside a region that stays", () => {
+    // Was "renders an empty list as an empty <ul>, not as nothing", which
+    // pinned the region as empty *and silent*. Story 2.6 is where a resolved
+    // empty list stops looking identical to a failed one.
     mockUseTodos.mockReturnValue({ isPending: false, data: [] });
     const html = render();
     expect(html).toContain("<ul");
     expect(html).not.toContain("<li");
+    expect(html).toContain("Nothing here yet.");
+    // A sibling of the region, not a child of it: a `<div>` is not valid
+    // inside a `<ul>`, and the region is what Story 2.5 made persistent.
+    expect(html.indexOf("</ul>")).toBeLessThan(html.indexOf("Nothing here yet."));
+  });
+
+  it("returns to skeletons while Retry re-runs a read that failed (AC5)", () => {
+    // `isPending` is false here — the query is `status: "error"`,
+    // `fetchStatus: "fetching"` — which is exactly the state the old branch
+    // rendered as a blank rectangle.
+    mockUseTodos.mockReturnValue({
+      isPending: false,
+      isFetching: true,
+      data: undefined,
+      error: new Error("load failed"),
+    });
+    const html = render();
+    expect(html.match(/<li/g)).toHaveLength(3);
+    expect(html).toContain("skeleton-row");
+    expect(html).not.toContain("Nothing here yet.");
+  });
+
+  it("shows no skeleton when a refetch runs over a list it already has", () => {
+    // The other half of widening the branch: a background refetch with data
+    // in hand is not a loading state, which is what keeps every optimistic
+    // mutation in Epics 3 through 5 from flashing placeholders (AC10).
+    mockUseTodos.mockReturnValue({
+      isPending: false,
+      isFetching: true,
+      data: [todo("0199a5c5-0000-7000-8000-000000000002", "send invoice")],
+    });
+    const html = render();
+    expect(html).not.toContain("skeleton-row");
+    expect(html).toContain("send invoice");
   });
 
   it("holds three skeleton rows while the initial read is in flight", () => {
@@ -108,19 +155,23 @@ describe("the list region renders what the hook resolved to", () => {
     expect(html).not.toContain("data-completed");
   });
 
-  it("holds the region open and empty when the read failed", () => {
+  it("holds the region open and empty when the read failed (AC4, AC15)", () => {
     // `isPending` is false once there is an error, and `data` stays
     // undefined: the contents are *unknown*, not known-empty, so neither
-    // skeletons nor rows may show (epic-2-context: "A load failure is not an
-    // empty list"). The banner and `Retry` are Story 2.6's.
+    // skeletons nor rows nor the empty state may show (epic-2-context: "A
+    // load failure is not an empty list"). The banner and `Retry` sit in the
+    // sticky block above, not in this region.
     mockUseTodos.mockReturnValue({
       isPending: false,
+      isFetching: false,
       data: undefined,
       error: new Error("load failed"),
     });
     const html = render();
     expect(html).toContain("<ul");
     expect(html).not.toContain("<li");
+    expect(html).not.toContain("Nothing here yet.");
+    expect(html).not.toContain("Retry");
   });
 
   it("does not map over an absent list", () => {
@@ -159,10 +210,11 @@ describe("the list region reads the one query hook", () => {
     expect(listSource).not.toMatch(/\buseState\b/);
   });
 
-  it("renders a <ul> of skeletons or rows, and nothing else", () => {
-    // Was `["ul", "TodoRow"]`. Story 2.5 adds the one branch the region was
-    // missing; it adds no second element and no wrapper.
-    expect(elements()).toEqual(["ul", "SkeletonRow", "TodoRow"]);
+  it("renders a <ul> of skeletons or rows, and the empty state beside it", () => {
+    // Was `["ul", "TodoRow"]`, then `["ul", "SkeletonRow", "TodoRow"]`. Story
+    // 2.6 adds the last branch this region has; it still adds no wrapper,
+    // which is what keeps the `<ul>` a direct child of the card.
+    expect(elements()).toEqual(["ul", "SkeletonRow", "TodoRow", "EmptyState"]);
   });
 
   it("keys rows by the Todo's id, which is its final sort position", () => {
@@ -202,13 +254,14 @@ describe("the client boundary is here and only here", () => {
 });
 
 describe("the states this story does not build are absent, not stubbed", () => {
-  it("names the one story that owns the branches still missing", () => {
+  it("refers only to stories the consolidated backlog still has", () => {
     // Story 1.7's rule, kept: a placeholder is a thing a later story has to
-    // remember to delete. The list was ["Story 2.6", "Story 2.7", "Story
-    // 2.8"] under the pre-consolidation numbering — the old 2.6 is this
-    // story and the old 2.7/2.8/2.9 are all the new 2.6, which is the
-    // `deferred-work.md` renumbering entry discharged for this file.
-    expect(listSource).toContain("Story 2.6");
+    // remember to delete. This file's own branches are all built now, so what
+    // survives is the forward reference to Story 3.3 — the one case the
+    // loading key still cannot serve. The pre-consolidation numbers must not
+    // come back; that is the `deferred-work.md` renumbering entry discharged
+    // for this file.
+    expect(listSource).toContain("Story 3.3");
     for (const gone of ["Story 2.7", "Story 2.8", "Story 2.9"]) {
       expect(listSource, `${gone} no longer exists in the backlog`).not.toContain(gone);
     }
@@ -216,11 +269,13 @@ describe("the states this story does not build are absent, not stubbed", () => {
 
   it("builds no loading state for a mutation", () => {
     // AC10: an add, a toggle and a delete are optimistic and never show a
-    // skeleton. `isPending` is true only with no data and no error, which is
-    // the initial read and nothing else; a `isFetching` here would put
-    // skeletons under every background refetch.
+    // skeleton. Story 2.6 had to widen the key — `isPending` is false while
+    // `Retry` re-runs a failed read — but the widening stays gated on `data`
+    // being absent, so a refetch over a list already in hand is still not a
+    // loading state. A bare `isFetching` would put skeletons under every
+    // background refetch and under every optimistic mutation.
     expect(listSource).toMatch(/\bisPending\b/);
-    expect(listSource).not.toMatch(/\bisFetching\b/);
+    expect(listSource).toMatch(/isFetching && data === undefined/);
     expect(listSource).not.toMatch(/\bisLoading\b/);
   });
 
@@ -243,15 +298,64 @@ describe("the region is one element that never leaves the DOM (AC11)", () => {
     // unconditional and only its contents resolve, so Story 2.6's states have
     // something to mount into and the swap costs no layout shift.
     const states = [
-      { isPending: true, data: undefined },
-      { isPending: false, data: [] },
-      { isPending: false, data: [todo("0199a5c5-0000-7000-8000-000000000002", "x")] },
-      { isPending: false, data: undefined, error: new Error("load failed") },
+      { isPending: true, isFetching: true, data: undefined },
+      { isPending: false, isFetching: false, data: [] },
+      {
+        isPending: false,
+        isFetching: false,
+        data: [todo("0199a5c5-0000-7000-8000-000000000002", "x")],
+      },
+      {
+        isPending: false,
+        isFetching: false,
+        data: undefined,
+        error: new Error("load failed"),
+      },
     ];
     for (const state of states) {
       mockUseTodos.mockReturnValue(state);
       expect(render(), JSON.stringify(state)).toMatch(/^<ul /);
     }
+  });
+
+  it("tells assistive technology when the region is working, and when it is not", () => {
+    // The Story 2.5 deferral this story owns. The skeletons are
+    // `aria-hidden` and carry no text, so without `aria-busy` a screen-reader
+    // user cannot tell a list that is still loading from one that resolved to
+    // nothing — both are an empty, unnamed `<ul>`.
+    mockUseTodos.mockReturnValue({
+      isPending: true,
+      isFetching: true,
+      data: undefined,
+    });
+    expect(render()).toContain('aria-busy="true"');
+
+    // Not busy once it has resolved, and not busy after a failure: a failed
+    // read is finished, not working.
+    for (const settled of [
+      { isPending: false, isFetching: false, data: [] },
+      {
+        isPending: false,
+        isFetching: false,
+        data: undefined,
+        error: new Error("load failed"),
+      },
+    ]) {
+      mockUseTodos.mockReturnValue(settled);
+      expect(render(), JSON.stringify(settled)).not.toContain("aria-busy");
+    }
+  });
+
+  it("names the region, so what is busy is identifiable", () => {
+    // `aria-busy` on an unnamed container reports that *something* is
+    // working. The name is the vocabulary's own (`Todo List`), which
+    // epic-2-context fixes as used verbatim in code as well as in copy.
+    mockUseTodos.mockReturnValue({
+      isPending: false,
+      isFetching: false,
+      data: [],
+    });
+    expect(render()).toContain('aria-label="Todo List"');
   });
 });
 

@@ -34,12 +34,15 @@ export function TodoCard() {
       {/*
         The list region, which Story 2.4 turned from the empty element Story
         2.3 left into the component that owns it. Story 2.5's skeleton rows
-        and Story 2.6's error banner, empty state and announcements are
-        branches inside it rather than siblings here, because all of them are
-        the same region resolving. (Story numbers swept to the consolidated
-        backlog while this file was open: the old 2.6 is 2.5, and the old
-        2.7/2.8/2.9 are all 2.6.) The card stays a Server Component — the
-        client boundary is `TodoList`.
+        and Story 2.6's empty state are branches inside it rather than
+        siblings here, because both are the same region resolving.
+
+        Story 2.6's error banner is the one thing that is *not*: DESIGN.md
+        fixes the vertical order as add input → error banner region → filter
+        tabs → list, so the banner belongs to `StickyTopBlock` above and
+        reaches this card only through it. An earlier revision of this comment
+        claimed otherwise. The card stays a Server Component — the client
+        boundary is `TodoList`.
       */}
       <TodoList />
     </div>

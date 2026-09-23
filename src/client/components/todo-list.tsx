@@ -17,27 +17,40 @@
 // The order those contents resolve in is the whole of this component:
 //
 //   in flight  -> three skeleton rows, in the Active row's geometry
-//   resolved   -> one row per Todo, in the order the server sent them
+//   resolved   -> one row per Todo, or the empty state when there are none
 //   otherwise  -> nothing, and the region is still here
 //
 // "Otherwise" is a failed read, and rendering nothing is deliberate rather
 // than unfinished. A failure leaves the list's contents *unknown* rather than
 // known-empty, so it may show neither skeletons nor an empty state
-// (epic-2-context: "A load failure is not an empty list"). The banner, the
-// `Retry` control, the empty state and every announcement are Story 2.6's,
-// and they are a comment rather than placeholder markup for the reason
-// Stories 1.7 and 2.3 both give: a placeholder is a thing a later story has
-// to remember to delete.
+// (epic-2-context: "A load failure is not an empty list").
+//
+// Note what this component does *not* import to make that true: there is no
+// error type here and nothing tests one. A failed read leaves `data`
+// undefined, so gating the empty state on `data` being defined excludes the
+// failure case with no condition that mentions it — Story 2.6's AC4 and AC15
+// hold because no code path exists that could break them. AC14's "no flash of
+// the empty state on the way to content" falls out of the same fact: during
+// loading `data` is undefined too, so there is no frame it could appear in.
+//
+// What the region owes a failed read is what it does above: stay in the DOM
+// and show nothing. The banner that reports the failure is not here — see the
+// note at the `<ul>` below.
 //
 // `isPending` is true only when there is no data and no error, which is
-// precisely "the initial load is in flight". It is false for every optimistic
-// mutation, which is what keeps an add, a toggle or a delete from ever
-// showing a skeleton (AC10). Two later stories widen the branch rather than
-// re-key it here: Story 2.6 must return the region to skeletons while `Retry`
-// re-runs a read that is currently in the `error` state, and Story 3.3 must
-// keep the skeletons pulsing beneath an optimistic row added during load
-// (EXPERIENCE.md:149), which an `isPending` keyed to cache contents cannot do
-// once the cache has been written to.
+// precisely "the initial load is in flight" — but it is false the moment a
+// read fails, so after `Retry` the query is `status: "error"`,
+// `fetchStatus: "fetching"` and this region would show a blank rectangle
+// rather than the skeletons Story 2.6 AC5 requires. Hence the second
+// disjunct. It stays keyed to `data` being *absent* rather than to fetching
+// alone, which is what still keeps an add, a toggle or a delete from ever
+// showing a skeleton (Story 2.5 AC10).
+//
+// Story 3.3 is the case this still does not cover: skeletons pulsing beneath
+// an optimistic row added during load (EXPERIENCE.md:149), where writing that
+// row into the cache makes `data` defined. It needs a key that is not derived
+// from cache contents at all, and choosing one here would be guessing at that
+// story's shape.
 //
 // The client boundary is here rather than on the card or the row. `TodoCard`
 // stays a Server Component — it holds no state and reads nothing — and
@@ -56,32 +69,56 @@
 import { useReducedMotion } from "@/client/motion/motion";
 import { useTodos } from "@/client/todos/use-todos";
 
+import { EmptyState } from "./empty-state";
 import { SKELETON_ROW_KEYS, SkeletonRow } from "./skeleton-row";
 import { TodoRow } from "./todo-row";
 
 export function TodoList() {
-  const { isPending, data } = useTodos();
+  const { isPending, isFetching, data } = useTodos();
+  const loading = isPending || (isFetching && data === undefined);
   // One attribute, set from the product's only reader of the preference; the
   // recipes in `app/globals.css` derive the stillness from it (AR-28). No
   // component branches on a duration and no `className` here is computed.
   const still = useReducedMotion();
 
   return (
-    <ul
-      data-still={still ? true : undefined}
-      className="flex flex-col gap-row-gap"
-    >
+    <>
       {/*
-        The empty state — Story 2.6. It is a branch of this region.
-        Its error banner is not: DESIGN.md fixes the order as add input →
-        error banner region → filter tabs → list, and `sticky-top-block.tsx`
-        already reserves slot 2 for it. A banner inside a `<ul>` would also
-        be invalid content. What this region owes a failed read is what it
-        does above — stay in the DOM and show nothing.
+        The error banner is deliberately not here: DESIGN.md fixes the order
+        as add input → error banner region → filter tabs → list, and
+        `sticky-top-block.tsx` holds slot 2 for it. A banner inside a `<ul>`
+        would also be invalid content.
+
+        `aria-busy` and the region's name are what make the three states
+        distinguishable without sight. Without them a screen-reader user
+        cannot tell a list that is still loading from one that resolved to
+        nothing — the skeletons are `aria-hidden` and carry no text, so both
+        read as an empty list. Story 2.5 deferred this here, as the story that
+        owns what the region announces.
       */}
-      {isPending
-        ? SKELETON_ROW_KEYS.map((key) => <SkeletonRow key={key} />)
-        : data?.map((todo) => <TodoRow key={todo.id} todo={todo} />)}
-    </ul>
+      <ul
+        aria-busy={loading ? true : undefined}
+        aria-label="Todo List"
+        data-still={still ? true : undefined}
+        className="flex flex-col gap-row-gap"
+      >
+        {loading
+          ? SKELETON_ROW_KEYS.map((key) => <SkeletonRow key={key} />)
+          : data?.map((todo) => <TodoRow key={todo.id} todo={todo} />)}
+      </ul>
+      {/*
+        A sibling of the region rather than a child of it, and a fragment
+        rather than a wrapper. The panel is a `<div>`, which is not valid
+        inside a `<ul>`; wrapping both in an element instead would put
+        something between the card and the region, which `todo-card.test.ts`
+        and the mount test both assert is not there.
+
+        Only `all` is reachable in this epic. Epic 4 ships the Filter Views,
+        which is what makes the other two variants selectable.
+      */}
+      {data !== undefined && data.length === 0 ? (
+        <EmptyState variant="all" />
+      ) : null}
+    </>
   );
 }

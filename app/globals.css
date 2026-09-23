@@ -330,3 +330,77 @@
      which is holding the layout, not animating. */
   [data-still="true"] > & > * { animation: none; }
 }
+
+/* ---------------------------------------------------------------------------
+   The resolved states of the list region (Story 2.6).
+
+   Same rule as the recipes above: only the value with no token behind it
+   lives here. Every colour, radius and spacing value in the banner and the
+   empty state has a token and stays a utility class on the element, where it
+   is visible in the markup and in the whole-tree scans.
+   --------------------------------------------------------------------------- */
+
+@utility banner-region {
+  /* The region is part of the layout occupied or empty, "so appearing does
+     not shift the list" (DESIGN.md:426, EXPERIENCE.md:109) — which is only
+     true if the space is reserved, so it is reserved here.
+
+     The reservation is the banner's own minimum height, derived from the
+     tokens that produce it rather than transcribed: the row is
+     `items-center`, so its height is its tallest child, and that is `Retry`
+     at `{spacing.touch-target-min}` — 44px, which DESIGN.md:354 makes a hard
+     floor and Story 2.6 AC9 requires. Add the banner's `{spacing.4}` padding
+     on each side and its 1px border on each side.
+
+     The mockup's `min-height:48px` (mockups/key-states.html:259) is
+     deliberately *not* used, and is the trap here: it pairs with a
+     `.retry { min-height:32px }` (:266) that fails the 44px floor, so 48px
+     was the right floor for a pill this product cannot ship. Taking it would
+     under-reserve by 22px and the list would jump the first time an error
+     appeared — which is precisely what this recipe exists to prevent.
+
+     `2px` is the two 1px borders. `border-width` has no token in this
+     product; it is Tailwind's own `border` default, and DESIGN.md:175 gives
+     the banner `1px solid` literally.
+
+     Still one line tall by assumption: a message that wraps is taller than
+     any fixed reservation and shifts the list anyway. Every string this
+     story ships is far short of that, and the residual is recorded in
+     deferred-work.md rather than asserted away. */
+  min-height: calc(
+    var(--spacing-touch-target-min) + 2 * var(--spacing-4) + 2px
+  );
+}
+
+@utility retry-pill {
+  /* DESIGN.md `components.error-banner.retry-border` — `1.5px solid`. The
+     colour is not here: the element carries `border-danger-text` as a
+     utility, per the rule at the top of the Story 2.4 block above. */
+  border-width: 1.5px;
+
+  /* `{spacing.touch-target-min}`, which DESIGN.md:354 names Retry in. The
+     height half of AC9 is the `min-h-touch-target-min` class on the element;
+     this half cannot be, because `todo-card.test.ts:190` bans the whole
+     `min-w-*` family tree-wide as something that can outgrow the card. Same
+     token, read from the theme rather than retyped. */
+  min-width: var(--spacing-touch-target-min);
+}
+
+@utility empty-panel {
+  /* DESIGN.md `components.empty-state.border` — `1.5px dashed`. The colour
+     is the element's own `border-hairline`. Hairline is decorative-only and
+     does not clear 3:1 (DESIGN.md:294), which is permitted here and only
+     here because this edge identifies nothing operable — the empty state
+     carries no control at all (AC13). */
+  border-width: 1.5px;
+  border-style: dashed;
+}
+
+@utility empty-ring {
+  /* DESIGN.md `components.empty-state` — `ring-size: 40px`. The one perfect
+     circle in the product (DESIGN.md:390) and the only non-row use of
+     `{colors.row-complete}` (DESIGN.md:286); the radius and the mint fill are
+     both tokens and stay on the element as `rounded-full bg-row-complete`. */
+  width: 40px;
+  height: 40px;
+}

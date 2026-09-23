@@ -205,7 +205,7 @@ export const todoListQueryOptions = queryOptions<
  * on a document request the shell is served with no cookie at all, and every
  * API call it makes afterwards is `401`.
  *
- * In that state Story 2.7's `Retry` re-requests, receives `401` again, and does
+ * In that state Story 2.6's `Retry` re-requests, receives `401` again, and does
  * so forever — the designed recovery affordance is a dead button. Only a fresh
  * document request mints. So `Retry` must consult this: when it is true the
  * recovery is `location.reload()`, not `refetch()`.
