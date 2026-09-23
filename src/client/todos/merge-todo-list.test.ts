@@ -2,7 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import type { Todo } from "@/shared/contract/todo";
 
-import { mergeTodoListById, upsertTodoById } from "./merge-todo-list";
+import {
+  mergeTodoListById,
+  removeTodoById,
+  upsertTodoById,
+} from "./merge-todo-list";
 
 // Covers epics.md Story 3.3 AC3, AC5, AC7 and AC8 — AD-16's merge rule, as a
 // pure function over three values.
@@ -161,5 +165,54 @@ describe("upsertTodoById — the optimistic insert and its silent confirmation (
     expect(upsertTodoById(undefined, todo(NEWEST, "post the form"))).toEqual([
       todo(NEWEST, "post the form"),
     ]);
+  });
+});
+
+// --- Story 3.4 AC1: the rollback -------------------------------------------
+
+describe("removing the row a failed create inserted (Story 3.4 AC1)", () => {
+  it("removes that id and leaves every other row exactly as it was", () => {
+    const before = [
+      todo(NEWEST, "post the form"),
+      todo(MIDDLE, "buy milk"),
+      todo(OLDEST, "call mum"),
+    ];
+
+    const after = removeTodoById(before, MIDDLE);
+
+    expect(after).toEqual([todo(NEWEST, "post the form"), todo(OLDEST, "call mum")]);
+    // Identity, not just equality: a rollback that rebuilt the surviving rows
+    // would be a rollback touching Todos this mutation never created.
+    expect(after[0]).toBe(before[0]);
+    expect(after[1]).toBe(before[2]);
+  });
+
+  it("leaves a list that never held the id alone", () => {
+    const before = [todo(NEWEST, "post the form")];
+    expect(removeTodoById(before, MIDDLE)).toEqual(before);
+  });
+
+  it("removes the row without restoring anything a concurrent write did", () => {
+    // AD-16's whole reason for forbidding a snapshot. The list this create
+    // started against held one Todo; by the time it failed, a second one had
+    // arrived. Restoring the snapshot would take that second Todo away — a
+    // change this mutation never made and has no business reversing.
+    const atSubmit = [todo(MIDDLE, "buy milk")];
+    const atFailure = [
+      todo(NEWEST, "post the form"),
+      todo(OLDEST, "call mum"),
+      ...atSubmit,
+    ];
+
+    const after = removeTodoById(atFailure, NEWEST);
+
+    expect(after.map((row) => row.id)).toEqual([OLDEST, MIDDLE]);
+    expect(after.map((row) => row.id)).not.toEqual(atSubmit.map((row) => row.id));
+  });
+
+  it("answers an empty list when the cache holds nothing yet", () => {
+    // The add-during-load race, failing: the create was raised before any
+    // list existed, so there is nothing to remove the row from.
+    expect(removeTodoById(undefined, NEWEST)).toEqual([]);
   });
 });

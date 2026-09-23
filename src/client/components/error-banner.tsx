@@ -36,7 +36,7 @@
 // `motion.test.ts:221-227` scans the markup surface for a `transition-`,
 // `duration-`, `delay-` or `animate-` class to make sure nobody adds one.
 
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
 
 import { useAnnounce } from "@/client/feedback/announcer";
 import { ERROR_COPY, RETRY_LABEL } from "@/client/feedback/error-copy";
@@ -55,16 +55,11 @@ export function ErrorBannerRegion() {
   // (`use-todos.ts` says why), so a banner keyed on it would tear itself and
   // its `Retry` down the moment the user typed a Todo into a list that failed
   // to load — EXPERIENCE.md requires the opposite there.
-  const { readFailure, refetch } = useTodos();
+  const { readFailure, isFetching, refetch } = useTodos();
   const announce = useAnnounce();
 
-  // What this component last put in the slot. A ref rather than state, and
-  // deliberately not a dependency of the effect below: the slot itself cannot
-  // be one, because raising into it would re-run the effect that raised and
-  // raise again, forever.
-  const reported = useRef<unknown>(null);
-
-  // Keep the slot in step with the read (AC3, AC5, AC6).
+  // Keep the slot in step with the read (Story 2.6 AC3, AC5, AC6; Story 3.4
+  // AC7).
   //
   // An effect rather than a handler because a query has nowhere else to
   // report from: TanStack v5 removed `onError` from `useQuery`, and
@@ -78,9 +73,36 @@ export function ErrorBannerRegion() {
   // reporting. That is AD-9's "captures exactly the operation that failed and
   // its arguments", applied to a read whose only argument is which failure it
   // was.
+  //
+  // `slot` is a dependency, which Story 2.6 could not allow, and the two
+  // guards below are what make that safe. An empty slot is the only state
+  // this raises into, so the raise that fills it is also what stops the pass
+  // it triggers — no ref recording what was last raised, which is what Story
+  // 2.6 needed and what `deferred-work.md` recorded twice against this file.
+  // Both entries are discharged by the pair:
+  //
+  //  - A failed add raises `create` over a load failure (AD-9), and the read
+  //    is still failing. Nothing used to re-run when that add's banner was
+  //    later cleared, so the user was left with no banner, no `Retry` and a
+  //    list region whose contents are unknown. Emptying the slot now re-runs
+  //    this effect, and the load failure — still true, and no longer being
+  //    reported by anything — is raised again.
+  //  - A background refetch succeeding used to clear the slot outright. It
+  //    clears only a `load` entry now, so a failed add's banner survives a
+  //    read that has nothing to say about it (EXPERIENCE.md:109, "of the
+  //    same kind").
+  //
+  // `isFetching` is the second guard and it separates the two ways the slot
+  // empties. `retryCurrentError` clears before it calls the closure, so a
+  // `Retry` on *this* banner leaves exactly the state the paragraph above
+  // raises into — an empty slot over a failing read — and without this the
+  // banner the user just dismissed would be back in the same commit. The
+  // difference is that a re-request is in flight: it is about to answer, and
+  // the answer is what decides. A `create` retry starts no read, so that
+  // path is untouched.
   useEffect(() => {
     if (readFailure !== null) {
-      reported.current = readFailure;
+      if (slot !== null || isFetching) return;
       raiseError({
         kind: readFailure.kind,
         retry: () => {
@@ -108,19 +130,10 @@ export function ErrorBannerRegion() {
     // loaded — the empty state and "Couldn't load your Todos." on screen at
     // once.
     //
-    // Guarded on having raised something rather than on what the slot holds,
-    // because reading the slot here is what would make this effect re-run
-    // itself. In this epic the two are the same: a `load` error is the only
-    // thing anything raises. Epic 3 is where they diverge — a `create` error
-    // raised while a load failure is showing replaces it, and then a
-    // succeeding read must *not* clear that newer error. Recorded in
-    // deferred-work.md rather than guarded here, because nothing can reach
-    // that state until the first mutation exists.
-    if (reported.current !== null) {
-      reported.current = null;
-      clearError();
-    }
-  }, [readFailure, raiseError, clearError, refetch]);
+    // By kind, so a read that has nothing to say about a failed add does not
+    // take the add's banner down with its own.
+    clearError("load");
+  }, [readFailure, slot, isFetching, raiseError, clearError, refetch]);
 
   // Announce whatever the slot currently holds, assertively (AC18).
   //

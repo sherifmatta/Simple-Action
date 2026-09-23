@@ -1,5 +1,5 @@
-// AD-16's merge rule, as two pure functions (epics.md Story 3.3 AC3, AC5,
-// AC7, AC8).
+// AD-16's merge rule, as three pure functions (epics.md Story 3.3 AC3, AC5,
+// AC7, AC8; Story 3.4 AC1).
 //
 // EXPERIENCE.md makes the input live before the Todo List has arrived, so a
 // create and a read are routinely in flight at the same time over one cache
@@ -45,6 +45,29 @@ export function upsertTodoById(list: readonly Todo[] | undefined, todo: Todo): T
 
   if (replaced.some((row) => row.id === todo.id)) return replaced;
   return [...replaced, todo].sort(byIdDescending);
+}
+
+/**
+ * `list` without the row of that id (Story 3.4 AC1).
+ *
+ * The rollback, and it is deliberately the narrowest operation that could be
+ * one. AD-16 forbids restoring a whole-list snapshot: a snapshot taken when
+ * this create started predates every change a *concurrent* mutation has made
+ * since, so putting it back would undo work this mutation never did. Removing
+ * one id by value cannot reach any row but its own, whatever else is in
+ * flight.
+ *
+ * `undefined` in, empty out. A create that fails before any list exists —
+ * the add-during-load race, failing — leaves the cache holding an empty list
+ * rather than nothing, which is the same state and is what `setQueryData`
+ * writes either way. `listLanded` is what decides whether that empty list is
+ * an empty *Todo List*, and it is untouched by this (`todo-list-query.ts`).
+ */
+export function removeTodoById(
+  list: readonly Todo[] | undefined,
+  id: string,
+): Todo[] {
+  return (list ?? []).filter((row) => row.id !== id);
 }
 
 /**

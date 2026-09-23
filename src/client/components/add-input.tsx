@@ -49,7 +49,15 @@
 // through `src/client/device/pointer.ts` for the same reason the preference
 // is read through the motion module: one question, one home.
 
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import {
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type Ref,
+} from "react";
+import { flushSync } from "react-dom";
 
 import { usePointerCapability } from "@/client/device/pointer";
 import { useReducedMotion } from "@/client/motion/motion";
@@ -85,6 +93,36 @@ export const ENTER_HINT_LABEL = "Enter";
 export const COUNTER_APPEARS_AT = 450;
 
 /**
+ * What the field's owner may do to the text in it (Story 3.4 AC2, AC4, AC5).
+ *
+ * Story 3.2 gave this component one seam, `onSubmit`, and the text went one
+ * way through it. A failed add reverses the direction: the submitted string
+ * has to come back, the caret has to land at its end, and `Retry` has to read
+ * whatever is in the field at the moment it is pressed rather than whatever
+ * was submitted.
+ *
+ * It is a handle rather than a lifted `value`/`onChange` pair because two of
+ * the three are focus-and-selection work — the case React's own guidance
+ * names for `useImperativeHandle` — and because the text itself has a settled
+ * home here: the counter, the 500-character stop and the whitespace-only
+ * branch are all written against this component's own state, and mirroring
+ * that string in the parent would put two owners on one value for the sake of
+ * a failure path.
+ *
+ * All three read the DOM node rather than the state, which is what lets the
+ * handle be built once instead of on every keystroke. A controlled input's
+ * value and its state are the same string by definition.
+ */
+export type AddInputHandle = {
+  /** The text in the field right now (AC4). */
+  currentText: () => string;
+  /** Put `text` back, focused, caret at the end (AC2). */
+  restore: (text: string) => void;
+  /** Empty the field and keep the caret in it, as a submit does (AC5). */
+  clearAndFocus: () => void;
+};
+
+/**
  * The field, and nothing behind it.
  *
  * `onSubmit` is required, and what it does is deliberately unknown here.
@@ -94,7 +132,13 @@ export const COUNTER_APPEARS_AT = 450;
  * and discarding it — cannot be reached by rendering it with no props.
  * `add-todo.tsx` is the caller that knows there is a server.
  */
-export function AddInput({ onSubmit }: { onSubmit: (text: string) => void }) {
+export function AddInput({
+  onSubmit,
+  ref,
+}: {
+  onSubmit: (text: string) => void;
+  ref?: Ref<AddInputHandle>;
+}) {
   const [text, setText] = useState("");
   const field = useRef<HTMLInputElement>(null);
   const autofocused = useRef(false);
@@ -120,6 +164,45 @@ export function AddInput({ onSubmit }: { onSubmit: (text: string) => void }) {
     autofocused.current = true;
     if (pointer === "fine") field.current?.focus();
   }, [pointer]);
+
+  // The handle, built once (AC2, AC4, AC5).
+  //
+  // `flushSync` in `restore` is what makes the caret placement below the
+  // thing that decides where the caret goes. It is called from the create
+  // mutation's `onError` — a promise callback — so without it the `setText`
+  // is still queued when the next two lines run, `setSelectionRange` clamps
+  // against the empty string the submit left behind, and the caret lands at
+  // the end only because setting an `<input>`'s `value` happens to move it
+  // there (HTML, the value setter). That is a real rule and it agrees with
+  // this one, which is why no test separates them; it is also React's commit
+  // order and the browser's selection restoration deciding a thing this
+  // component states outright. Flushing first is the documented use of
+  // `flushSync`: a state update you must read the DOM after.
+  //
+  // It is load-bearing on its own in the case the rule above cannot reach —
+  // a retry that fails again restores the *same* string, so the value setter
+  // never runs and the explicit call is all there is.
+  //
+  // `clearAndFocus` needs no flush, because focusing an element does not
+  // depend on what it contains.
+  useImperativeHandle(
+    ref,
+    (): AddInputHandle => ({
+      currentText: () => field.current?.value ?? "",
+      restore(next: string) {
+        flushSync(() => setText(next));
+        const node = field.current;
+        if (node === null) return;
+        node.focus();
+        node.setSelectionRange(next.length, next.length);
+      },
+      clearAndFocus() {
+        setText("");
+        field.current?.focus();
+      },
+    }),
+    [],
+  );
 
   // AC2 and AC3, which are one branch: a submit either creates and clears, or
   // does nothing at all and leaves the text where it is.

@@ -30,8 +30,21 @@ export type ErrorSlot = ErrorSlotEntry | null;
 /** No error showing. */
 export const EMPTY_ERROR_SLOT: ErrorSlot = null;
 
+/**
+ * `clear` without a `kind` empties the slot whatever it holds; with one it
+ * empties the slot only if that is the kind it holds.
+ *
+ * The conditional form exists because from Story 3.4 on, more than one
+ * operation raises. A background read succeeding is grounds for taking down
+ * the banner that said the read failed, and grounds for nothing else — and
+ * the banner that is showing by then may be a failed add's, which the read
+ * knows nothing about. EXPERIENCE.md:109 is explicit that a success clears
+ * the banner "of the *same kind*", so the kind belongs in the transition
+ * rather than in a check the caller is trusted to write.
+ */
 export type ErrorSlotAction =
-  { type: "raise"; error: ErrorSlotEntry } | { type: "clear" };
+  | { type: "raise"; error: ErrorSlotEntry }
+  | { type: "clear"; kind?: ErrorKind };
 
 /**
  * The slot's only transitions.
@@ -41,6 +54,9 @@ export type ErrorSlotAction =
  * without retrying the replaced operation" — true by construction rather than
  * by a rule someone has to remember, because this function never reads
  * `slot.retry` and has no way to invoke it.
+ *
+ * A conditional `clear` that does not match returns `slot` itself rather than
+ * a copy, so a no-op dispatch changes no identity and re-renders nothing.
  *
  * Retrying is deliberately *not* an action here. Invoking a caller-supplied
  * closure is a side effect, and React invokes reducers twice under Strict Mode
@@ -56,6 +72,7 @@ export function errorSlotReducer(
     case "raise":
       return action.error;
     case "clear":
+      if (action.kind !== undefined && slot?.kind !== action.kind) return slot;
       return EMPTY_ERROR_SLOT;
   }
 }

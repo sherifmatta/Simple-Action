@@ -19,6 +19,9 @@ import {
   useReducer,
 } from "react";
 import type { ReactNode } from "react";
+
+import type { ErrorKind } from "@/shared/contract/errors";
+
 import {
   EMPTY_ERROR_SLOT,
   errorSlotReducer,
@@ -31,8 +34,15 @@ export type ErrorSlotContextValue = {
   error: ErrorSlot;
   /** Replaces whatever the slot held. The displaced operation is not retried. */
   raiseError: (error: ErrorSlotEntry) => void;
-  /** Empties the slot without retrying. */
-  clearError: () => void;
+  /**
+   * Empties the slot without retrying.
+   *
+   * With a `kind`, empties it only if that is the kind it holds — which is
+   * what lets an operation take down its *own* banner without taking down one
+   * a different operation raised over it (EXPERIENCE.md:109, "of the same
+   * kind").
+   */
+  clearError: (kind?: ErrorKind) => void;
   /**
    * Invokes the current entry's closure and empties the slot.
    *
@@ -72,8 +82,8 @@ export function ErrorSlotProvider({ children }: { children: ReactNode }) {
     dispatch({ type: "raise", error: next });
   }, []);
 
-  const clearError = useCallback(() => {
-    dispatch({ type: "clear" });
+  const clearError = useCallback((kind?: ErrorKind) => {
+    dispatch({ type: "clear", kind });
   }, []);
 
   // The closure is invoked here rather than inside the reducer: React

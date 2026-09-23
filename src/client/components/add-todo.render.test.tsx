@@ -18,14 +18,19 @@
 // that knows nothing about the new Todo, and the Todo is still there
 // afterwards — never dropped, never duplicated (AC7).
 
+import { focusManager } from "@tanstack/react-query";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { RETRY_LABEL } from "@/client/feedback/error-copy";
 import { AppProviders } from "@/client/providers";
 import type { Todo } from "@/shared/contract/todo";
 
 import { TodoCard } from "./todo-card";
+
+/** The envelope the server answers a refused create with. */
+const REFUSED = { error: { kind: "create", message: "diagnostic" } };
 
 const EXISTING: Todo = {
   id: "0199a2b0-0000-7000-8000-00000000000b",
@@ -90,8 +95,8 @@ type Transport = {
   /** The read also exposes its `AbortSignal`, which is how AC4 is asserted. */
   read: Deferred & { signal: () => AbortSignal | undefined };
   create: Deferred;
-  /** The body of the one `POST`, parsed. Read off the stub, never off the global. */
-  createdBody: () => { id: string; text: string };
+  /** The body of a `POST`, parsed. Read off the stub, never off the global. */
+  createdBody: (index?: number) => { id: string; text: string };
 };
 
 /**
@@ -145,9 +150,11 @@ function stubFetch(): Transport {
       resolve: answer("create"),
       calls: () => seen.create,
     },
-    createdBody: () => {
-      expect(bodies, "no create request was sent").not.toHaveLength(0);
-      return JSON.parse(bodies[0] ?? "{}") as { id: string; text: string };
+    createdBody: (index = 0) => {
+      expect(bodies.length, `create request ${index} was never sent`).toBeGreaterThan(
+        index,
+      );
+      return JSON.parse(bodies[index] ?? "{}") as { id: string; text: string };
     },
   };
 }
@@ -192,11 +199,56 @@ function rows(): string[] {
   );
 }
 
-function politeAnnouncement(): string {
-  const regions = [...container.querySelectorAll("[aria-live]")].filter(
-    (element) => element.getAttribute("aria-live") === "polite",
+/** The one `<input>` in the card — the add field. */
+function addField(): HTMLInputElement {
+  const field = container.querySelector("input");
+  expect(field, "the add input did not render").not.toBeNull();
+  return field as HTMLInputElement;
+}
+
+/** Type into the field without submitting, as the user correcting their text. */
+async function type(text: string): Promise<void> {
+  const field = addField();
+  await act(async () => {
+    nativeValue.call(field, text);
+    field.dispatchEvent(new window.Event("input", { bubbles: true }));
+  });
+}
+
+/**
+ * What the banner region says, or `""` when it holds nothing.
+ *
+ * Read out of the region rather than off the card, because the announcer's
+ * assertive live region keeps the last message it read and `container
+ * .textContent` therefore still contains a string the banner has let go of.
+ */
+function bannerMessage(): string {
+  const region = container.querySelector(".banner-region");
+  expect(region, "the banner region did not render").not.toBeNull();
+  return region?.textContent?.replace(new RegExp(`${RETRY_LABEL}$`), "").trim() ?? "";
+}
+
+/** The banner's `Retry`, or `undefined` when no banner is showing. */
+function retryControl(): HTMLButtonElement | undefined {
+  return [...container.querySelectorAll("button")].find(
+    (button) => button.textContent?.trim() === RETRY_LABEL,
   );
-  expect(regions, "expected exactly one polite region").toHaveLength(1);
+}
+
+async function pressRetry(): Promise<void> {
+  const control = retryControl();
+  expect(control, `no ${RETRY_LABEL} was showing`).toBeDefined();
+  await act(async () => {
+    control?.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  });
+  await settle();
+}
+
+function liveRegion(urgency: "polite" | "assertive"): string {
+  const regions = [...container.querySelectorAll("[aria-live]")].filter(
+    (element) => element.getAttribute("aria-live") === urgency,
+  );
+  expect(regions, `expected exactly one ${urgency} region`).toHaveLength(1);
   return regions[0]?.textContent?.trim() ?? "";
 }
 
@@ -310,7 +362,7 @@ describe("a Todo added to a list that has already arrived", () => {
     );
 
     // AC9 — the text, then `added`, politely. EXPERIENCE.md:277.
-    expect(politeAnnouncement()).toBe("send invoice, added");
+    expect(liveRegion("polite")).toBe("send invoice, added");
   });
 
   it("keeps the load-failure banner when the list failed and a Todo is typed anyway", async () => {
@@ -348,5 +400,400 @@ describe("a Todo added to a list that has already arrived", () => {
     // Story 3.2's rule, now reachable through the wired path: a mis-press
     // keeps what was typed rather than eating it.
     expect(container.querySelector("input")?.value).toBe("   \t  ");
+  });
+});
+
+// --- Story 3.4: what a failed add costs the user ----------------------------
+//
+// AC1-AC5 and AC7, through the mounted card. `merge-todo-list.test.ts` proves
+// the rollback removes one row and `error-slot.test.ts` proves a clear can
+// name its kind; neither says the user gets their sentence back. That is what
+// these do, and they do it by reading the field's `value` and its caret rather
+// than by matching the source that sets them.
+
+describe("a Todo the server refused", () => {
+  it("takes its row back and returns the text, caret at the end (AC1, AC2, AC3)", async () => {
+    const { read, create } = stubFetch();
+    await mountCard();
+    await read.resolve([EXISTING]);
+
+    await submit("  send invoice  ");
+    expect(rows()).toEqual(["send invoice", "book dentist"]);
+    expect(addField().value).toBe("");
+
+    await create.resolve(REFUSED, 500);
+
+    // AC1 — the row this mutation inserted, and only it.
+    expect(rows()).toEqual(["book dentist"]);
+
+    // AC2 — the trimmed text it actually submitted, focused, caret at the end.
+    const field = addField();
+    expect(field.value).toBe("send invoice");
+    expect(document.activeElement).toBe(field);
+    expect(field.selectionStart).toBe("send invoice".length);
+    expect(field.selectionEnd).toBe("send invoice".length);
+
+    // AC3 — its own string, not the save string, and announced assertively.
+    expect(bannerMessage()).toBe("Couldn't add that Todo.");
+    expect(liveRegion("assertive")).toBe("Couldn't add that Todo.");
+    expect(retryControl()).toBeDefined();
+  });
+
+  it("retries the same id with the text now in the field, and clears on success (AC4, AC5)", async () => {
+    const { read, create, createdBody } = stubFetch();
+    await mountCard();
+    await read.resolve([EXISTING]);
+
+    await submit("send invoce");
+    await create.resolve(REFUSED, 500);
+
+    // The user fixes their typo in the text that came back.
+    await type("send invoice");
+    await pressRetry();
+
+    expect(create.calls()).toBe(2);
+    // AC4 — the same id, so Story 3.1's endpoint treats it as one create and
+    // not two; the text is the one on screen when `Retry` was pressed.
+    expect(createdBody(1).id).toBe(createdBody(0).id);
+    expect(createdBody(1).text).toBe("send invoice");
+    expect(createdBody(0).text).toBe("send invoce");
+
+    // The row is optimistic again, and the field still holds the text —
+    // AC2's "not cleared again until the add succeeds".
+    expect(rows()).toEqual(["send invoice", "book dentist"]);
+    expect(addField().value).toBe("send invoice");
+
+    const confirmed = {
+      id: createdBody(1).id,
+      text: "send invoice",
+      completed: false,
+      createdAt: "2026-09-23T10:00:00.000Z",
+    };
+    await create.resolve(confirmed, 201);
+
+    // AC5 — exactly where a first-time submit leaves things.
+    expect(rows()).toEqual(["send invoice", "book dentist"]);
+    expect(addField().value).toBe("");
+    expect(document.activeElement).toBe(addField());
+    expect(retryControl()).toBeUndefined();
+    expect(liveRegion("polite")).toBe("send invoice, added");
+  });
+
+  it("retries nothing when the field no longer holds a Todo, and lets the banner go", async () => {
+    // EXPERIENCE.md:115 — a `Retry` with nothing left to re-attempt does
+    // nothing and the banner clears. Reached here by the user emptying the
+    // field rather than by the row having been deleted, which is the only
+    // form of it this epic can produce.
+    const { read, create } = stubFetch();
+    await mountCard();
+    await read.resolve([EXISTING]);
+
+    await submit("send invoice");
+    await create.resolve(REFUSED, 500);
+
+    await type("   ");
+    await pressRetry();
+
+    expect(create.calls()).toBe(1);
+    expect(retryControl()).toBeUndefined();
+    expect(bannerMessage()).toBe("");
+    expect(rows()).toEqual(["book dentist"]);
+  });
+
+  it("keeps its banner when a background read succeeds under it", async () => {
+    // The first of the two guards `deferred-work.md` recorded against
+    // `error-banner.tsx`. A read succeeding is grounds for taking down the
+    // banner that said the read failed, and grounds for nothing else —
+    // EXPERIENCE.md:109's "of the same kind". Before the slot's clear took a
+    // kind, a focus refetch landing after a failed add wiped the add's
+    // banner and its `Retry` with it.
+    const { read, create } = stubFetch();
+    await mountCard();
+    await read.resolve([EXISTING]);
+
+    await submit("send invoice");
+    await create.resolve(REFUSED, 500);
+    expect(bannerMessage()).toBe("Couldn't add that Todo.");
+
+    try {
+      await act(async () => {
+        focusManager.setFocused(false);
+        focusManager.setFocused(true);
+      });
+      await settle();
+      await read.resolve([EXISTING]);
+    } finally {
+      focusManager.setFocused(undefined);
+    }
+
+    expect(read.calls()).toBe(2);
+    expect(bannerMessage()).toBe("Couldn't add that Todo.");
+    expect(retryControl()).toBeDefined();
+    expect(addField().value).toBe("send invoice");
+  });
+
+  it("gives the load failure its banner back when the add's is cleared (AC7)", async () => {
+    // The second guard. A `create` entry displaces a `load` one (AD-9), and
+    // the read is still broken underneath it — so when the add's banner goes,
+    // the user was left with no banner, no `Retry` and a list region whose
+    // contents are unknown, which is the exact ambiguity Story 2.6 exists to
+    // remove. The load failure is raised again instead.
+    const { read, create } = stubFetch();
+    await mountCard();
+    await read.resolve({ error: { kind: "load", message: "diagnostic" } }, 500);
+    expect(bannerMessage()).toBe("Couldn't load your Todos.");
+
+    await submit("send invoice");
+    // AC7 — the optimistic row stands over a failed load, and the banner is
+    // still the load's until the create answers.
+    expect(rows()).toEqual(["send invoice"]);
+    expect(bannerMessage()).toBe("Couldn't load your Todos.");
+
+    await create.resolve(REFUSED, 500);
+    expect(bannerMessage()).toBe("Couldn't add that Todo.");
+
+    await pressRetry();
+
+    expect(create.calls()).toBe(2);
+    expect(bannerMessage()).toBe("Couldn't load your Todos.");
+    expect(retryControl()).toBeDefined();
+  });
+
+  it("does not put the load banner straight back when its own Retry is pressed", async () => {
+    // The `isFetching` half of the same guard. `retryCurrentError` clears the
+    // slot *before* calling the closure, so a `Retry` on the load banner
+    // leaves exactly the state the test above raises into — an empty slot
+    // over a still-failing read — and the banner the user just dismissed
+    // would be back in the same commit.
+    //
+    // Reached only over a list that has already landed: before the first
+    // response there is no data, so TanStack nulls `error` when the refetch
+    // starts and the question never arises. With data in hand the error
+    // survives the refetch, and the only thing separating "dismissed" from
+    // "still unreported" is that a request is in flight.
+    const { read } = stubFetch();
+    await mountCard();
+    await read.resolve([EXISTING]);
+
+    try {
+      await act(async () => {
+        focusManager.setFocused(false);
+        focusManager.setFocused(true);
+      });
+      await settle();
+      await read.resolve({ error: { kind: "load", message: "diagnostic" } }, 500);
+      expect(bannerMessage()).toBe("Couldn't load your Todos.");
+
+      await pressRetry();
+
+      // The re-request is in flight and has not answered. Nothing is showing.
+      expect(read.calls()).toBe(3);
+      expect(bannerMessage()).toBe("");
+      expect(retryControl()).toBeUndefined();
+
+      await read.resolve([EXISTING]);
+    } finally {
+      focusManager.setFocused(undefined);
+    }
+
+    expect(bannerMessage()).toBe("");
+    expect(rows()).toEqual(["book dentist"]);
+  });
+
+  it("does not eat a Todo the user started typing while an earlier add was in flight", async () => {
+    // Why the clear in `onSuccess` is guarded on the id whose text was
+    // returned rather than run for every confirmation. A plain submit already
+    // cleared the field on Enter; clearing again when the server answers
+    // would take whatever the user has typed since — and this epic's whole
+    // rhythm is that the next Todo can be typed without waiting.
+    const { read, create } = stubFetch();
+    await mountCard();
+    await read.resolve([EXISTING]);
+
+    await submit("send invoice");
+    await type("book flights");
+
+    await create.resolve(
+      {
+        id: "0199a2d0-0000-7000-8000-00000000000d",
+        text: "send invoice",
+        completed: false,
+        createdAt: "2026-09-23T10:00:00.000Z",
+      },
+      201,
+    );
+
+    expect(addField().value).toBe("book flights");
+  });
+
+  it("puts the caret back at the end when a retry fails on the same text", async () => {
+    // The restore runs again with a string the field already holds, so React
+    // re-renders nothing and the browser's own "setting `value` moves the
+    // caret to the end" never fires. Only the explicit selection call is
+    // left, and the user has been sitting mid-sentence since the last
+    // failure.
+    const { read, create } = stubFetch();
+    await mountCard();
+    await read.resolve([EXISTING]);
+
+    await submit("send invoice");
+    await create.resolve(REFUSED, 500);
+
+    const field = addField();
+    await act(async () => field.setSelectionRange(4, 4));
+    expect(field.selectionStart).toBe(4);
+
+    await pressRetry();
+    await create.resolve(REFUSED, 500);
+
+    expect(addField().value).toBe("send invoice");
+    expect(addField().selectionStart).toBe("send invoice".length);
+  });
+
+  it("reloads the document rather than re-sending when the identity expired", async () => {
+    // The read has had this escape since Story 2.6 and the create reaches the
+    // same `401`: the route handler refuses any `/api/**` request without a
+    // valid Client Identity and `middleware.ts` mints one only on a document
+    // request. Without it `Retry` re-`POST`s into the same refusal for as
+    // long as the page is open — a dead button on the one operation whose
+    // whole purpose is to work the second time.
+    const { read, create } = stubFetch();
+    const reload = vi.fn();
+    // `reload` is a non-configurable own property of jsdom's `Location`, so
+    // the whole `window.location` is swapped, as `todo-list.render.test.tsx`
+    // does it for the read.
+    const original = window.location;
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: Object.assign(Object.create(Object.getPrototypeOf(original)), {
+        href: original.href,
+        origin: original.origin,
+        reload,
+      }),
+    });
+
+    try {
+      await mountCard();
+      await read.resolve([EXISTING]);
+
+      await submit("send invoice");
+      await create.resolve({ error: { kind: "create", message: "x" } }, 401);
+      expect(bannerMessage()).toBe("Couldn't add that Todo.");
+
+      await pressRetry();
+
+      expect(reload).toHaveBeenCalledTimes(1);
+      expect(create.calls()).toBe(1);
+    } finally {
+      Object.defineProperty(window, "location", {
+        configurable: true,
+        value: original,
+      });
+    }
+  });
+
+  it("keeps an unconfirmed row through the list a load Retry brings back (AC7)", async () => {
+    // AC7's third clause. The row is optimistic and still unanswered, the
+    // read has failed under it, and `Retry` re-requests a list that cannot
+    // know about the Todo — so the merge is what has to keep it, exactly as
+    // it does for the first response.
+    const { read, create, createdBody } = stubFetch();
+    await mountCard();
+    await read.resolve({ error: { kind: "load", message: "diagnostic" } }, 500);
+
+    await submit("send invoice");
+    expect(rows()).toEqual(["send invoice"]);
+    expect(bannerMessage()).toBe("Couldn't load your Todos.");
+
+    await pressRetry();
+    expect(read.calls()).toBe(2);
+    // The list the server has, which predates the create it has not answered.
+    await read.resolve([EXISTING]);
+
+    expect(rows()).toEqual(["send invoice", "book dentist"]);
+    expect(bannerMessage()).toBe("");
+    expect(create.calls()).toBe(1);
+
+    // And it collapses to one entry rather than two when the create is
+    // finally confirmed.
+    await create.resolve(
+      {
+        id: createdBody(0).id,
+        text: "send invoice",
+        completed: false,
+        createdAt: "2026-09-23T10:00:00.000Z",
+      },
+      201,
+    );
+    expect(rows()).toEqual(["send invoice", "book dentist"]);
+  });
+
+  it("leaves a Todo the user has started typing alone, and retries its own text", async () => {
+    // The mirror of the confirmation guard. AC2 returns the submitted text so
+    // that a failure costs nothing typed; writing it over a half-typed Todo
+    // would cost precisely that, and this epic's whole rhythm is that the
+    // next Todo can be started before the last one has answered. The failed
+    // text is not lost — it is in the retry closure, and `Retry` re-sends it.
+    const { read, create, createdBody } = stubFetch();
+    await mountCard();
+    await read.resolve([EXISTING]);
+
+    await submit("send invoice");
+    await type("book flights");
+    await create.resolve(REFUSED, 500);
+
+    expect(addField().value).toBe("book flights");
+    expect(bannerMessage()).toBe("Couldn't add that Todo.");
+
+    await pressRetry();
+
+    expect(create.calls()).toBe(2);
+    expect(createdBody(1).id).toBe(createdBody(0).id);
+    expect(createdBody(1).text).toBe("send invoice");
+    // And the half-typed Todo is still where the user left it.
+    expect(addField().value).toBe("book flights");
+    expect(rows()).toEqual(["send invoice", "book dentist"]);
+  });
+
+  it("re-sends the same id when the user presses Enter on the text that came back", async () => {
+    // Enter is the key their hands are on, and the banner's `Retry` is a
+    // mouse away. Both are the same operation, so both reuse the id the
+    // failure minted: Story 3.1's endpoint answers a create for an existing
+    // id with the existing row, so a request that arrived and whose response
+    // did not produces one Todo rather than two.
+    const { read, create, createdBody } = stubFetch();
+    await mountCard();
+    await read.resolve([EXISTING]);
+
+    await submit("send invoice");
+    await create.resolve(REFUSED, 500);
+    expect(addField().value).toBe("send invoice");
+
+    await submit("send invoice now");
+
+    expect(create.calls()).toBe(2);
+    expect(createdBody(1).id).toBe(createdBody(0).id);
+    expect(createdBody(1).text).toBe("send invoice now");
+    expect(rows()).toEqual(["send invoice now", "book dentist"]);
+  });
+
+  it("mints a fresh id for an ordinary Enter, with no failure behind it", async () => {
+    const { read, create, createdBody } = stubFetch();
+    await mountCard();
+    await read.resolve([EXISTING]);
+
+    await submit("send invoice");
+    await create.resolve(
+      {
+        id: createdBody(0).id,
+        text: "send invoice",
+        completed: false,
+        createdAt: "2026-09-23T10:00:00.000Z",
+      },
+      201,
+    );
+    await submit("book flights");
+
+    expect(createdBody(1).id).not.toBe(createdBody(0).id);
   });
 });

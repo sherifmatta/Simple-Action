@@ -230,10 +230,12 @@ describe("no duration is declared outside this module (AC3, AC4)", () => {
         (match) => `${file}:${match[1]}`,
       ),
     );
-    // `READ_DEADLINE_MS` is the one exemption and is named rather than
-    // pattern-excluded: it is a network deadline, not a motion duration —
-    // how long a read may take before it is abandoned (Story 2.2). Nothing
-    // animates on it and no second module needs it.
+    // The two exemptions are named rather than pattern-excluded: both are
+    // network deadlines, not motion durations — how long a read (Story 2.2)
+    // and a create (Story 3.4) may take before they are abandoned. Nothing
+    // animates on either. Naming them is the point: a third would have to be
+    // added here deliberately, which is where the question "is this really a
+    // deadline?" gets asked.
     expect([...declarations].sort()).toEqual(
       [
         `${motionFile}:SKELETON_PULSE_MS`,
@@ -242,6 +244,7 @@ describe("no duration is declared outside this module (AC3, AC4)", () => {
         `${motionFile}:FIRST_RUN_NUDGE_MS`,
         `${motionFile}:COUNTER_FADE_MS`,
         `${path.join("src", "client", "todos", "todo-list-query.ts")}:READ_DEADLINE_MS`,
+        `${path.join("src", "client", "todos", "create-todo.ts")}:CREATE_DEADLINE_MS`,
       ].sort(),
     );
   });

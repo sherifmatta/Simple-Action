@@ -188,3 +188,57 @@ describe("the provider keeps the side effect out of the reducer", () => {
     expect(body).toMatch(/const entry = error;/);
   });
 });
+
+// --- Story 3.4: clearing by kind -------------------------------------------
+
+describe("a clear may name the kind it is entitled to clear (Story 3.4)", () => {
+  it("still empties the slot when no kind is named", () => {
+    const raised = errorSlotReducer(EMPTY_ERROR_SLOT, {
+      type: "raise",
+      error: entry("create", () => {}),
+    });
+    expect(errorSlotReducer(raised, { type: "clear" })).toBeNull();
+  });
+
+  it("empties the slot when the kind matches", () => {
+    const raised = errorSlotReducer(EMPTY_ERROR_SLOT, {
+      type: "raise",
+      error: entry("load", () => {}),
+    });
+    expect(errorSlotReducer(raised, { type: "clear", kind: "load" })).toBeNull();
+  });
+
+  it("leaves a different kind alone, which is the whole point of the argument", () => {
+    // EXPERIENCE.md:109 — a success clears the banner "of the same kind". A
+    // background read succeeding says nothing about an add that failed, and
+    // before this argument existed it took that banner down with it.
+    const raised = errorSlotReducer(EMPTY_ERROR_SLOT, {
+      type: "raise",
+      error: entry("create", () => {}),
+    });
+
+    const after = errorSlotReducer(raised, { type: "clear", kind: "load" });
+
+    expect(after).toBe(raised);
+    expect(after?.kind).toBe("create");
+  });
+
+  it("retries nothing it declines to clear", () => {
+    const retry = vi.fn();
+    const raised = errorSlotReducer(EMPTY_ERROR_SLOT, {
+      type: "raise",
+      error: entry("create", retry),
+    });
+
+    errorSlotReducer(raised, { type: "clear", kind: "load" });
+    errorSlotReducer(raised, { type: "clear", kind: "create" });
+
+    expect(retry).not.toHaveBeenCalled();
+  });
+
+  it("is a no-op on an empty slot whichever kind is named", () => {
+    expect(
+      errorSlotReducer(EMPTY_ERROR_SLOT, { type: "clear", kind: "create" }),
+    ).toBeNull();
+  });
+});

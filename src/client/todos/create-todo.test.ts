@@ -3,11 +3,15 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { Todo } from "@/shared/contract/todo";
 
-import { createTodo } from "./create-todo";
+import { CREATE_DEADLINE_MS, createTodo } from "./create-todo";
 import { mergeTodoListById } from "./merge-todo-list";
 import { CREATE_TODO_MUTATION_KEY, unconfirmedCreateIds } from "./pending-creates";
 import { TODOS_QUERY_KEY } from "./query-keys";
-import { TodoRequestError, todoListQueryOptions } from "./todo-list-query";
+import {
+  READ_DEADLINE_MS,
+  TodoRequestError,
+  todoListQueryOptions,
+} from "./todo-list-query";
 
 // Covers epics.md Story 3.3 AC1, AC4, AC5 and AC7 at the layer below React:
 // what goes on the wire, what comes back off it, and — the half that matters
@@ -87,6 +91,49 @@ describe("createTodo — what goes on the wire (AC1)", () => {
   it("rejects a success that is not an object, rather than caching it", async () => {
     stubFetch(() => Promise.resolve(Response.json([OPTIMISTIC], { status: 201 })));
     await expect(createTodo(OPTIMISTIC)).rejects.toMatchObject({ kind: "create" });
+  });
+});
+
+describe("createTodo gives up rather than hanging (Story 3.4)", () => {
+  it("sends a signal that is already aborting on the deadline", () => {
+    const timeout = vi.spyOn(AbortSignal, "timeout");
+    const stub = stubFetch(() =>
+      Promise.resolve(Response.json(OPTIMISTIC, { status: 201 })),
+    );
+
+    void createTodo(OPTIMISTIC);
+
+    expect(timeout).toHaveBeenCalledWith(CREATE_DEADLINE_MS);
+    const [, init] = stub.mock.calls[0] ?? [];
+    expect(init?.signal).toBeInstanceOf(AbortSignal);
+    timeout.mockRestore();
+  });
+
+  it("gives up at the same 15s the read does, in real milliseconds", () => {
+    // Asserted as a number rather than against `READ_DEADLINE_MS`, which the
+    // constant is currently an alias of — comparing an alias to what it
+    // aliases pins nothing. What is worth pinning is the value a hung create
+    // actually waits, and that it is the read's: two different numbers would
+    // only invite a reader to look for the difference between a connection
+    // that hangs on a `GET` and one that hangs on a `POST`, and there is
+    // none.
+    expect(CREATE_DEADLINE_MS).toBe(15_000);
+    expect(READ_DEADLINE_MS).toBe(15_000);
+  });
+
+  it("classifies a create abandoned on the deadline as kind `create`", async () => {
+    // The whole reason for the deadline. Without it this rejection never
+    // arrives, so `onError` never runs — no rollback, no banner, no text
+    // returned. AD-10 classifies by the operation attempted, and a timeout
+    // brings back no response at all to classify by.
+    stubFetch(() =>
+      Promise.reject(new DOMException("signal timed out", "TimeoutError")),
+    );
+
+    await expect(createTodo(OPTIMISTIC)).rejects.toMatchObject({
+      kind: "create",
+      status: undefined,
+    });
   });
 });
 

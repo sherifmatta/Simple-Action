@@ -79,7 +79,11 @@ beforeEach(() => {
   slot.raiseError.mockReset();
   slot.retryCurrentError.mockReset();
   mockAnnounce.mockReset();
-  mockUseTodos.mockReturnValue({ readFailure: null, refetch: vi.fn() });
+  mockUseTodos.mockReturnValue({
+    readFailure: null,
+    isFetching: false,
+    refetch: vi.fn(),
+  });
 });
 
 describe("the region is part of the layout whether or not it holds a message (AC2)", () => {
@@ -221,7 +225,11 @@ describe("a failed read reaches the slot, with the right closure (AC5, AC6)", ()
   });
 
   it("raises nothing while the read is healthy", () => {
-    mockUseTodos.mockReturnValue({ readFailure: null, refetch: vi.fn() });
+    mockUseTodos.mockReturnValue({
+    readFailure: null,
+    isFetching: false,
+    refetch: vi.fn(),
+  });
     render();
     expect(slot.raiseError).not.toHaveBeenCalled();
     // The healthy branch clears rather than returning early, which is the
@@ -229,16 +237,46 @@ describe("a failed read reaches the slot, with the right closure (AC5, AC6)", ()
     // down the banner reporting that the read failed (EXPERIENCE.md:109).
     // Exercised end to end in `todo-list.render.test.tsx`.
     expect(bannerCode).toMatch(/if \(readFailure !== null\)/);
-    expect(bannerCode).toMatch(/reported\.current = null;\s*\n\s*clearError\(\);/);
+    expect(bannerCode).toMatch(/clearError\("load"\);/);
   });
 
-  it("clears only what it raised itself", () => {
-    // The guard is on having raised something, not on what the slot holds:
-    // reading the slot in that effect is what would make it re-run itself
-    // after every raise. A slot read there would be a loop.
-    expect(bannerCode).toMatch(/if \(reported\.current !== null\)/);
-    expect(bannerCode).not.toMatch(/\}, \[readFailure[^\]]*\bslot\b/);
+  it("clears the load kind only, so a failed add's banner survives a read", () => {
+    // Story 3.4. Until a second kind existed, a healthy read cleared the slot
+    // outright; from here on the slot it would clear may be reporting a
+    // failed add, which a read that has just succeeded knows nothing about.
+    // EXPERIENCE.md:109 — a success clears the banner "of the same kind".
+    // That the reducer honours the argument is `error-slot.test.ts`'s; that
+    // this file passes one is here, and both together are exercised against a
+    // real slot in `add-todo.render.test.tsx`.
+    // Both halves: the kind is passed, and the unqualified form — which would
+    // take any banner down — appears nowhere. The first on its own would pass
+    // with the clear deleted outright, and the second on its own would pass
+    // on a file that never clears at all.
+    expect(bannerCode).toMatch(/clearError\("load"\)/);
+    expect(bannerCode).not.toMatch(/clearError\(\)/);
   });
+
+  it("raises into an empty slot only, and never over another kind", () => {
+    // What replaces Story 2.6's `reported` ref. That ref existed because
+    // reading the slot in the effect that writes to it loops; keying the
+    // raise on the slot being *empty* does not, because the raise is what
+    // ends the loop. The gain is that emptying the slot — clearing a failed
+    // add's banner while the read is still broken — re-runs this effect and
+    // brings the load failure back, which the ref could never see.
+    //
+    // `isFetching` is the second half of the same guard, and it separates the
+    // two ways the slot empties: `retryCurrentError` clears *before* calling
+    // the closure, so a `Retry` on this very banner leaves an empty slot over
+    // a still-failing read — and without it the banner the user just
+    // dismissed would be back in the same commit. A re-request is in flight
+    // there and is about to answer; a `create` retry starts no read, so that
+    // path is untouched. Both are driven for real in
+    // `add-todo.render.test.tsx`.
+    expect(bannerCode).toMatch(/if \(slot !== null \|\| isFetching\) return;/);
+    expect(bannerCode).toMatch(/\}, \[readFailure, slot, isFetching,/);
+    expect(bannerCode).not.toMatch(/reported/);
+  });
+
 });
 
 describe("Retry goes through the slot, not around it (AC7, AC8)", () => {

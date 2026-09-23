@@ -11,7 +11,30 @@
 
 import type { Todo } from "@/shared/contract/todo";
 
-import { TODOS_ENDPOINT, TodoRequestError } from "./todo-list-query";
+import {
+  READ_DEADLINE_MS,
+  TODOS_ENDPOINT,
+  TodoRequestError,
+} from "./todo-list-query";
+
+/**
+ * How long a create may take before it is abandoned (Story 3.4).
+ *
+ * The read's reasoning, unchanged and reached by the same route: `retry:
+ * false` means nothing gives up on its own and `networkMode: "always"` means
+ * a request is attempted rather than paused, and neither helps against a
+ * connection that is accepted and then never answered. Without a deadline
+ * that create stays pending forever — no failure, so no rollback, no banner
+ * and no text returned, which is every promise this story makes, silently
+ * unkept. The stuck interface NFR-4 forbids, at the one point the product
+ * could still reach it.
+ *
+ * The same 15s as the read, because it answers the same question about the
+ * same connection and two numbers would only invite a reader to look for the
+ * difference. `motion.test.ts`'s scan names this and `READ_DEADLINE_MS` as
+ * its two exemptions: both are network deadlines, nothing animates on either.
+ */
+export const CREATE_DEADLINE_MS = READ_DEADLINE_MS;
 
 /**
  * The create request body (Story 3.1's `CreateTodoRequest`).
@@ -36,10 +59,11 @@ function createBody(todo: Todo): string {
  * the first to ask, which is precisely what an idempotent endpoint exists to
  * make irrelevant.
  *
- * Every failure becomes kind `create`, including a transport failure where no
- * response arrived at all — AD-10 classifies by the operation attempted, not
- * by the response shape, which is why an error with no status still has a
- * kind (AC6 of Story 3.4, reached through this function).
+ * Every failure becomes kind `create`, including the deadline above firing
+ * and a transport failure where no response arrived at all. AD-10 classifies
+ * by the operation attempted, not by the response shape, which is why an
+ * error with no status still has a kind (AC6 of Story 3.4, reached through
+ * this function).
  *
  * The response body is trusted exactly as far as `readTodoList` trusts the
  * list's: it must be an object, and nothing more is checked. Per-field
@@ -51,6 +75,12 @@ export async function createTodo(todo: Todo): Promise<Todo> {
       method: "POST",
       headers: { "content-type": "application/json", accept: "application/json" },
       body: createBody(todo),
+      // The deadline, and the only signal on this request. No caller signal
+      // is threaded in the way the read threads the query's: a create that
+      // was abandoned because the page moved on is a Todo the user asked for
+      // and did not get, where an abandoned read is a list nobody is looking
+      // at any more.
+      signal: AbortSignal.timeout(CREATE_DEADLINE_MS),
     });
 
     if (!response.ok) {
