@@ -1,10 +1,10 @@
 import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { errorKindForMethod } from "@/server/http/route-failure";
 import { IDENTITY_COOKIE_NAME } from "./identity-cookie";
 import { hashIdentityToken, mintIdentityToken } from "./identity-token";
 import {
-  errorKindForMethod,
   privateToTheCaller,
   resolveClientIdentity,
   unauthorizedIdentityResponse,
@@ -100,6 +100,10 @@ describe("resolveClientIdentity", () => {
   });
 });
 
+// Story 4.1 moved `errorKindForMethod` to `@/server/http/route-failure`, so
+// that the failure helpers depend on nothing but the shared contract. These
+// rows stay here: `unauthorizedIdentityResponse` below is the caller whose
+// kind they pin, and the function is imported from its new home above.
 describe("errorKindForMethod (AD-10)", () => {
   it.each([
     ["GET", "load"],

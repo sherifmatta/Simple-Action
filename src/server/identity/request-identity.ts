@@ -5,7 +5,8 @@
 // Issuing is `middleware.ts`'s alone (AC6), which is why the repository's create
 // is not imported here — only its lookup is.
 import type { NextRequest } from "next/server";
-import type { ErrorEnvelope, ErrorKind } from "@/shared/contract/errors";
+import type { ErrorEnvelope } from "@/shared/contract/errors";
+import { errorKindForMethod } from "@/server/http/route-failure";
 import type { ClientIdentity } from "@/server/repository/client-identity";
 import { findClientIdentityByTokenHash } from "@/server/repository/client-identity";
 import { IDENTITY_COOKIE_NAME } from "./identity-cookie";
@@ -27,29 +28,6 @@ export async function resolveClientIdentity(
   if (!token) return undefined;
 
   return findClientIdentityByTokenHash(await hashIdentityToken(token));
-}
-
-/**
- * The error kind for a request that failed before it did anything.
- *
- * AD-10 classifies a failure by the operation attempted rather than by the
- * response, and under `app/api/` the method is the operation: the REST verbs of
- * ARCHITECTURE-SPINE's endpoint table map one-to-one onto the four kinds. `GET`
- * is the default rather than a case of its own, so a method nobody planned for
- * still produces a kind the single error slot can classify.
- */
-export function errorKindForMethod(method: string): ErrorKind {
-  switch (method.toUpperCase()) {
-    case "POST":
-      return "create";
-    case "PUT":
-    case "PATCH":
-      return "update";
-    case "DELETE":
-      return "delete";
-    default:
-      return "load";
-  }
 }
 
 /**

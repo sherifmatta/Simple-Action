@@ -10,6 +10,7 @@ import {
   isValidTodoText,
   TODO_TEXT_MAX_LENGTH,
 } from "@/shared/contract/validation";
+import { drizzleQueryError } from "@/test-support/drizzle-error";
 import * as routeModule from "./route";
 import { CREATE_FAILED_MESSAGE, GET, LOAD_FAILED_MESSAGE, POST } from "./route";
 
@@ -44,27 +45,6 @@ const todoOf = (id: string, text: string) => ({
   createdAt: "2026-09-22T10:00:00.000Z",
 });
 
-/**
- * A driver failure shaped exactly as Drizzle constructs one.
- *
- * `DrizzleQueryError` is `` new Error(`Failed query: ${query}\nparams: ${params}`) ``
- * (`node_modules/drizzle-orm/errors.js`), thrown around every statement by
- * `drizzle-orm/pg-core/session.js`'s `queryWithCache` — so the bound
- * parameters, the submitted Todo text among them, are part of `error.message`
- * itself and not merely of some property a handler could decline to read.
- *
- * Built here rather than written out per fixture, because an AC11 assertion is
- * only worth what its fixture is: a made-up separator or made-up params would
- * let the row pass green against a leak production still has. `${params}` on an
- * array is `Array.prototype.join(",")`, which is what the template above does
- * too.
- */
-function drizzleQueryError(query: string, params: string[]): Error {
-  return Object.assign(new Error(`Failed query: ${query}\nparams: ${params}`), {
-    query,
-    params,
-  });
-}
 
 const requestWith = (cookie?: string, method = "GET") =>
   new NextRequest("https://simple-action.test/api/todos", {
@@ -287,9 +267,12 @@ describe("the route's exported surface", () => {
   ]);
 
   it("exports GET, POST and their two message constants, and no third HTTP method", () => {
-    // `POST` joined this file with Story 3.1. `PATCH` and `DELETE` arrive with
-    // Epics 4 and 5 and update this list again; until then an extra export is
-    // an endpoint nobody designed.
+    // `POST` joined this file with Story 3.1, and this file is where the
+    // *collection* endpoints live. `PATCH` does not join it: Story 4.1 put it
+    // at `app/api/todos/[id]/route.ts`, where the path segment names the Todo,
+    // and Epic 5's `DELETE` lands in that same file. So this list is final
+    // unless `/api/todos` itself grows a method, and an extra export here is an
+    // endpoint nobody designed.
     const surface = Object.keys(routeModule)
       .filter((name) => !SEGMENT_CONFIG.has(name))
       .sort();

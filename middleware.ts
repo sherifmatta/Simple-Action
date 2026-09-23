@@ -3,14 +3,13 @@ import type { NextRequest } from "next/server";
 
 import { IDENTITY_COOKIE_ATTRIBUTES, IDENTITY_COOKIE_NAME } from "@/server/identity/identity-cookie";
 import { hashIdentityToken, mintIdentityId, mintIdentityToken } from "@/server/identity/identity-token";
+import { logSafeError, requestFailedResponse } from "@/server/http/route-failure";
 import {
-  errorKindForMethod,
   privateToTheCaller,
   resolveClientIdentity,
   unauthorizedIdentityResponse,
 } from "@/server/identity/request-identity";
 import { createClientIdentity } from "@/server/repository/client-identity";
-import type { ErrorEnvelope } from "@/shared/contract/errors";
 
 // The one identity-issuing path in the codebase (AD-17, Story 1.6 AC6).
 //
@@ -45,14 +44,13 @@ function isApiRequest(pathname: string): boolean {
 // failure is reported as one, enveloped (AD-10) and classified by the operation
 // attempted, and the client's single error slot offers its Retry.
 function identityUnavailableResponse(method: string): Response {
-  const body: ErrorEnvelope = {
-    error: {
-      kind: errorKindForMethod(method),
-      message: "The Client Identity store is unreachable.",
-    },
-  };
-
-  return privateToTheCaller(Response.json(body, { status: 503 }));
+  return privateToTheCaller(
+    requestFailedResponse(
+      method,
+      503,
+      "The Client Identity store is unreachable.",
+    ),
+  );
 }
 
 export async function middleware(request: NextRequest) {
@@ -100,12 +98,14 @@ export async function middleware(request: NextRequest) {
     // Retry (AD-9), and the next document request mints. Letting this throw
     // would make a database blip look like a broken product.
     //
-    // The message only — never the error object, which carries the query, and
-    // never the token.
-    console.error(
-      "Client Identity unavailable:",
-      error instanceof Error ? error.message : "unknown error",
-    );
+    // The statement summary only. `error.message` whole is not safe: Drizzle
+    // builds its message as `` `Failed query: ${query}\nparams: ${params}` ``
+    // (`node_modules/drizzle-orm/errors.js`), and the parameters bound by the
+    // two statements this `try` runs are the stored token hash and a new
+    // identity id — so logging the message whole would write a credential
+    // derivative into a log line. `logSafeError` cuts at `\nparams:`, which is
+    // also what every route handler's catch block uses.
+    console.error("Client Identity unavailable:", logSafeError(error));
 
     return api ? identityUnavailableResponse(request.method) : NextResponse.next();
   }

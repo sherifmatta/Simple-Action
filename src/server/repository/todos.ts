@@ -1,9 +1,9 @@
 // Repository functions for the Todo (AD-2, AD-5).
 //
-// The first Todo module. `setTodoCompleted` and `deleteTodo` arrive in Epics 4
-// and 5 and join this file, as `createTodo` did with Story 3.1; all of them
-// take `ownerId` first (AD-2), because a Todo is an owned resource and a query
-// that forgets the owner returns somebody else's list.
+// The first Todo module. `setTodoCompleted` joined it with Story 4.1 and
+// `deleteTodo` arrives in Epic 5, as `createTodo` did with Story 3.1; all of
+// them take `ownerId` first (AD-2), because a Todo is an owned resource and a
+// query that forgets the owner returns somebody else's list.
 //
 // These functions return the wire `Todo` shape rather than the Drizzle row,
 // which is a deliberate departure from `client-identity.ts`. A Client Identity
@@ -142,4 +142,53 @@ export async function createTodo(
   if (!row) return { outcome: "foreign-owner" };
 
   return { outcome: "existing", todo: toWireTodo(row) };
+}
+
+/**
+ * Sets one Todo's Completion Status to the value asked for, and reports back
+ * the stored row — or `undefined` when the caller owns no such Todo.
+ *
+ * A **set**, never a toggle (epics.md Story 4.1 AC1, AC2). The value the user
+ * asked for travels all the way down: nothing here reads the current column to
+ * decide what to write, so a retry of a request whose answer the browser never
+ * saw stores the same value a second time rather than flipping it back (AC3).
+ * Idempotency is the shape of the operation, not a guard that remembered to run.
+ *
+ * One statement, not a read-then-write. `neon-http` has no interactive
+ * transaction (`client.ts`), so a check-then-update would be racy — and it
+ * would also hold the other owner's row in memory on the very path that is
+ * supposed to learn nothing about it. The `WHERE` clause *is* the ownership
+ * check, and `RETURNING` reports whether it matched.
+ *
+ * `undefined` therefore covers both "no such Todo" and "not the caller's Todo",
+ * and covers them indistinguishably: the two states produce the same empty
+ * result, so this function could not tell them apart even if a later change
+ * wanted it to. That is what lets the route handler answer `404` to both
+ * without a decision of its own (AC4).
+ *
+ * Only `completed` is in the `SET`: `text` and `created_at` are untouched by
+ * this path, which is why the returned row still carries the text the person
+ * typed and the server's original timestamp.
+ *
+ * @param ownerId The Client Identity the Todo must belong to. First, and never
+ *   optional (AD-2, AC5) — an update that forgets the owner is an update to
+ *   somebody else's Todo.
+ * @param id The Todo's id, already checked for canonical UUIDv7 form by the
+ *   route handler before it reaches here.
+ * @param completed The Completion Status to store, as the caller asked for it.
+ */
+export async function setTodoCompleted(
+  ownerId: string,
+  id: string,
+  completed: boolean,
+): Promise<Todo | undefined> {
+  const updated = await db
+    .update(todo)
+    .set({ completed })
+    .where(and(eq(todo.id, id), eq(todo.ownerId, ownerId)))
+    .returning(wireColumns);
+
+  const row = updated.at(0);
+
+  return row && toWireTodo(row);
 }

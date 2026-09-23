@@ -10,6 +10,7 @@ import {
   IDENTITY_COOKIE_NAME,
 } from "@/server/identity/identity-cookie";
 import { hashIdentityToken } from "@/server/identity/identity-token";
+import { drizzleQueryError } from "@/test-support/drizzle-error";
 import { config, middleware } from "./middleware";
 
 // Story 1.6 AC1 (mint on a document request with no cookie), AC2 (the cookie's
@@ -349,6 +350,31 @@ describe("when the identity store is unreachable", () => {
     const line = logged.mock.calls.flat().join(" ");
     expect(line).toContain("Failed query");
     expect(line).not.toContain("d".repeat(64));
+    logged.mockRestore();
+  });
+
+  it("cuts the bound parameters out of a real Drizzle rejection", async () => {
+    // The row above uses a fixture with no `\nparams:` section at all, so it
+    // passes whether or not the redaction happens. This one is shaped the way
+    // Drizzle actually constructs a query error — the bound parameter of this
+    // lookup is the *stored token hash*, a credential derivative — so it fails
+    // if `error.message` is ever logged whole again.
+    const tokenHash = await hashIdentityToken("d".repeat(64));
+    const statement =
+      'select "id", "token_hash", "created_at" from "client_identity" where "client_identity"."token_hash" = $1';
+    repository.findClientIdentityByTokenHash.mockRejectedValue(
+      drizzleQueryError(statement, [tokenHash]),
+    );
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await middleware(request("/", { cookie: someCookie }));
+
+    const line = logged.mock.calls.flat().join(" ");
+    // The statement this repository wrote survives — a log line that said
+    // nothing would pass the two absences below and help nobody at 3am.
+    expect(line).toContain(`Failed query: ${statement}`);
+    expect(line).not.toContain("params:");
+    expect(line).not.toContain(tokenHash);
     logged.mockRestore();
   });
 });

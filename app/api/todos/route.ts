@@ -1,14 +1,16 @@
 import type { NextRequest } from "next/server";
 
 import {
-  errorKindForMethod,
+  logSafeError,
+  requestFailedResponse,
+} from "@/server/http/route-failure";
+import {
   privateToTheCaller,
   resolveClientIdentity,
   unauthorizedIdentityResponse,
 } from "@/server/identity/request-identity";
 import { createTodo, listTodos } from "@/server/repository/todos";
 import { isCanonicalUuidV7 } from "@/server/validation/todo-id";
-import type { ErrorEnvelope } from "@/shared/contract/errors";
 import { isValidTodoText } from "@/shared/contract/validation";
 
 // The first route handler in the codebase (AD-1: every client-server
@@ -56,64 +58,6 @@ export const LOAD_FAILED_MESSAGE = "The Todo List could not be read.";
  * assert equality rather than "some string", which a driver error would satisfy.
  */
 export const CREATE_FAILED_MESSAGE = "The Todo could not be created.";
-
-/**
- * The most a caught value is allowed to contribute to a log line.
- *
- * Not defensiveness: Drizzle puts the bound parameters of the failing statement
- * into the error's own `message`. `DrizzleQueryError` is constructed as
- * `` new Error(`Failed query: ${query}\nparams: ${params}`) ``
- * (`node_modules/drizzle-orm/errors.js`, `DrizzleQueryError`'s constructor) and
- * is thrown around every query from `drizzle-orm/pg-core/session.js`'s
- * `queryWithCache`. The submitted Todo text is a bound parameter of the
- * `createTodo` insert, so `console.error(error.message)` would put that text in
- * a log line — exactly what SPINE "Logging" and AC11 forbid.
- *
- * Everything from the `\nparams:` line onwards is therefore cut, leaving the
- * statement summary, which is SQL this repository wrote and carries nothing of
- * the caller's. `error.name` is the fallback for a message that is empty or was
- * entirely params, so a failure is never logged as a blank line.
- *
- * Applied in both catch blocks, and not only in `POST`'s. `GET`'s bound
- * parameter is an owner id today, but insulation that depends on which query
- * happens to be running is insulation that breaks the first time a query
- * changes — and `resolveClientIdentity` runs inside both.
- */
-function logSafeError(error: unknown): string {
-  if (!(error instanceof Error)) return "unknown error";
-
-  const [summary] = error.message.split("\nparams:");
-
-  return summary.trim() || error.name || "unknown error";
-}
-
-/**
- * The enveloped refusal for a request this endpoint would not or could not
- * serve.
- *
- * The kind comes from `errorKindForMethod` rather than a literal, for the same
- * reason `unauthorizedIdentityResponse` takes a method: AD-10 classifies a
- * failure by the operation attempted, and this file now serves two. A hardcoded
- * `load` would report a failed create to the single error slot as a failed
- * read, and the slot would show the wrong copy.
- *
- * The message is a parameter and never composed from a caught error.
- * `ErrorEnvelope["error"]["message"]` is an unconstrained `string` crossing the
- * wire, so a driver error interpolated here would put SQL text — table names,
- * the failing statement — in the browser. Every caller passes one of the two
- * module constants above; the real error is logged instead.
- */
-function requestFailedResponse(
-  method: string,
-  status: number,
-  message: string,
-): Response {
-  const body: ErrorEnvelope = {
-    error: { kind: errorKindForMethod(method), message },
-  };
-
-  return Response.json(body, { status });
-}
 
 /**
  * `GET /api/todos` — the caller's Todo List, ordered `id DESC` (AD-5).

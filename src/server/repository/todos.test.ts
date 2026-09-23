@@ -4,12 +4,17 @@ import { clientIdentity, todo } from "@/server/db/schema";
 import { mintIdentityId } from "@/server/identity/identity-token";
 import { db } from "./client";
 import * as todosRepository from "./todos";
-import { createTodo, listTodos } from "./todos";
+import { createTodo, listTodos, setTodoCompleted } from "./todos";
 
 // Story 2.1 AC1 (the wire shape), AC2 (`id DESC`, never `created_at`), AC3 (the
 // `ownerId`-first signature) and AC4 (one caller's rows only), live against the
 // Neon branch `DATABASE_URL` points at — the pattern Story 1.4 established, and
 // the only way to prove an ordering and a `WHERE` clause actually hold.
+//
+// Story 4.1 AC1, AC3, AC4 and AC5 join them again for `setTodoCompleted`: that
+// the owner scoping lives in the `UPDATE`'s own `WHERE`, and that a repeat
+// stores the value asked for rather than its inverse, are both properties of
+// the statement the database runs and of nothing a mock could stand in for.
 //
 // Story 3.1 AC1, AC3, AC4 and AC5 join them for `createTodo`. Its idempotency
 // is `ON CONFLICT (id) DO NOTHING` plus an owner-scoped read, which is SQL the
@@ -337,13 +342,170 @@ describe("createTodo — against the live branch", () => {
   });
 });
 
+describe("setTodoCompleted — against the live branch", () => {
+  // No `submittedId()` equivalent here: every row this describe writes goes in
+  // through `insertTodo`, which registers it for cleanup itself. `createTodo`
+  // needs its own because the id is registered before the *repository* writes
+  // it, and nothing else would.
+
+  /** The stored row, `owner_id` included — what no wire shape may carry. */
+  async function storedRow(id: string) {
+    const rows = await db.select().from(todo).where(eq(todo.id, id));
+    return rows.at(0);
+  }
+
+  it("sets completed to true and returns the row in the shared contract's shape (AC1)", async () => {
+    const ownerId = await freshOwner();
+    const id = freshId();
+    await insertTodo({ id, ownerId, text: "Buy milk" });
+
+    const updated = await setTodoCompleted(ownerId, id, true);
+
+    expect(updated).toBeDefined();
+    if (!updated) throw new Error("unreachable");
+    // The keys, exactly — an extra one would mean `owner_id` reached the wire.
+    expect(Object.keys(updated).sort()).toEqual([
+      "completed",
+      "createdAt",
+      "id",
+      "text",
+    ]);
+    expect(updated.completed).toBe(true);
+    // An ISO-8601 UTC string, not a Date (SPINE "Dates").
+    expect(updated.createdAt).toMatch(/^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/);
+    // And the column itself moved, not only the returned object.
+    await expect(storedRow(id)).resolves.toMatchObject({ completed: true });
+  });
+
+  it("sets completed to false on a row that was completed (AC1)", async () => {
+    const ownerId = await freshOwner();
+    const id = freshId();
+    await insertTodo({ id, ownerId, text: "Buy milk", completed: true });
+
+    const updated = await setTodoCompleted(ownerId, id, false);
+
+    expect(updated?.completed).toBe(false);
+    await expect(storedRow(id)).resolves.toMatchObject({ completed: false });
+  });
+
+  it("stores the value asked for a second time rather than its inverse (AC3)", async () => {
+    // The reason this is a set and not a toggle: a retry of a request whose
+    // answer the browser never saw must leave the same value behind. A toggle
+    // would pass the row above and fail here.
+    const ownerId = await freshOwner();
+    const id = freshId();
+    await insertTodo({ id, ownerId, text: "Buy milk" });
+
+    const first = await setTodoCompleted(ownerId, id, true);
+    const second = await setTodoCompleted(ownerId, id, true);
+
+    expect(second).toEqual(first);
+    expect(second?.completed).toBe(true);
+    await expect(storedRow(id)).resolves.toMatchObject({ completed: true });
+  });
+
+  it("settles two concurrent repeats on the value both asked for (AC3)", async () => {
+    // Every other row in this describe is sequential; this one issues both
+    // updates at once, which is what a browser retrying a toggle actually
+    // does. What it demonstrates is that interleaving changes neither answer
+    // nor the stored value — not that a read-then-write implementation would
+    // fail here, because with both requests asking for the same value it
+    // would not. The set-rather-than-toggle shape is what the sequential
+    // repeat above pins; this row pins that concurrency does not disturb it.
+    const ownerId = await freshOwner();
+    const id = freshId();
+    await insertTodo({ id, ownerId, text: "Buy milk" });
+
+    const [first, second] = await Promise.all([
+      setTodoCompleted(ownerId, id, true),
+      setTodoCompleted(ownerId, id, true),
+    ]);
+
+    expect(first?.completed).toBe(true);
+    expect(second?.completed).toBe(true);
+    await expect(storedRow(id)).resolves.toMatchObject({ completed: true });
+  });
+
+  it("leaves text and created_at exactly as they were (AC1)", async () => {
+    const ownerId = await freshOwner();
+    const id = freshId();
+    const createdAt = new Date("2026-09-20T09:30:00.000Z");
+    await insertTodo({ id, ownerId, text: "Buy  milk and\tbread", createdAt });
+
+    const updated = await setTodoCompleted(ownerId, id, true);
+
+    expect(updated?.text).toBe("Buy  milk and\tbread");
+    expect(updated?.createdAt).toBe(createdAt.toISOString());
+    await expect(storedRow(id)).resolves.toMatchObject({
+      text: "Buy  milk and\tbread",
+      createdAt,
+      ownerId,
+    });
+  });
+
+  it("answers undefined and touches nothing for a Todo another owner holds (AC4)", async () => {
+    const theirs = await freshOwner();
+    const mine = await freshOwner();
+    const id = freshId();
+    await insertTodo({ id, ownerId: theirs, text: "their Todo" });
+    const before = await storedRow(id);
+    // `storedRow` answers `undefined` for a row that is not there, so without
+    // this the comparison below is `undefined === undefined` and passes for a
+    // seeding insert that silently wrote nothing.
+    expect(before).toBeDefined();
+
+    const refused = await setTodoCompleted(mine, id, true);
+
+    // Nothing back, and nothing changed — every column, `completed` included.
+    expect(refused).toBeUndefined();
+    await expect(storedRow(id)).resolves.toEqual(before);
+  });
+
+  it("answers undefined for a well-formed id that names no row at all", async () => {
+    // The same answer as the foreign owner above, from the same empty result:
+    // the owner-scoped `WHERE` makes the two states indistinguishable, which
+    // is what lets the route handler answer `404` to both without choosing.
+    const ownerId = await freshOwner();
+
+    await expect(setTodoCompleted(ownerId, freshId(), true)).resolves.toBe(
+      undefined,
+    );
+  });
+
+  it("changes no other row of the caller's own list", async () => {
+    const ownerId = await freshOwner();
+    const [target, bystander] = [freshId(), freshId()];
+    await insertTodo({ id: target, ownerId, text: "the one being set" });
+    await insertTodo({ id: bystander, ownerId, text: "the one left alone" });
+
+    await setTodoCompleted(ownerId, target, true);
+
+    await expect(storedRow(bystander)).resolves.toMatchObject({
+      completed: false,
+      text: "the one left alone",
+    });
+  });
+
+  it("takes three parameters, none of them defaulted or rest (AC5)", () => {
+    // Arity, and only arity: `Function.length` cannot see which parameter is
+    // which, so this would pass just as well for `(id, completed, ownerId)`.
+    // What pins `ownerId` *first* is the live rows above — the foreign-owner
+    // and unknown-id rows both call `setTodoCompleted(owner, id, value)` and
+    // would fail against any other order, because the `WHERE` would then be
+    // matching an owner id against `todo.id`. This row is the compiler's half:
+    // a fourth parameter, or a defaulted third, would change it.
+    expect(setTodoCompleted.length).toBe(3);
+  });
+});
+
 describe("repository scope — the Todo module", () => {
-  it("exports the list and the create and nothing more yet; set and delete arrive with Epics 4 and 5", () => {
+  it("exports the list, the create and the set, and nothing more yet; delete arrives with Epic 5", () => {
     // `CreateTodoResult` is a type and emits no runtime value, so it does not
     // appear here — the surface this pins is the functions.
     expect(Object.keys(todosRepository).sort()).toEqual([
       "createTodo",
       "listTodos",
+      "setTodoCompleted",
     ]);
   });
 });
