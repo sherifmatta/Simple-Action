@@ -237,6 +237,40 @@
 }
 
 /* ---------------------------------------------------------------------------
+   The checkbox's hit area (Story 4.2 AC13).
+
+   DESIGN.md draws the mark at 21px and UX-DR29 requires 44px of touch target,
+   so the two numbers disagree by design: the visible square stays small and
+   the *reachable* square is padded out around it. Padding the element itself
+   would move the mark relative to the text beside it and grow the row, and
+   `min-w-*` and `h-*` are both banned as classes — tree-wide by
+   `todo-card.test.ts` and over the row's own classes by `todo-row.test.ts`.
+
+   So the hit area is an overlay rather than a size: a centred, transparent
+   `::after` on the control, which extends what the pointer can hit without
+   contributing anything to layout. `checkbox-box` still draws 21px; nothing
+   here touches it.
+
+   `{spacing.touch-target-min}` is read from the theme rather than retyped,
+   which is the `retry-pill` and `input-add` precedent — the same token, in the
+   one place a class cannot say it.
+   --------------------------------------------------------------------------- */
+
+@utility checkbox-hit-area {
+  position: relative;
+
+  &::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: var(--spacing-touch-target-min);
+    height: var(--spacing-touch-target-min);
+    transform: translate(-50%, -50%);
+  }
+}
+
+/* ---------------------------------------------------------------------------
    Skeleton rows (Story 2.5; DESIGN.md `components.skeleton-row`,
    mockups/key-states.html).
 

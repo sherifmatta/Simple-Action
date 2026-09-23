@@ -122,6 +122,53 @@ const noUnapprovedQueryKey = [
   },
 ];
 
+// --- AD-8: the list read has one home, `src/client/todos/`. -----------------
+// The symmetry `deferred-work.md` records as missing since Story 2.2: AD-1's
+// `fetch` wall, AD-2's Drizzle wall, AD-8's query-key wall and AD-12's
+// live-region wall are all restated per block, and `useQuery` itself had none
+// — so a component could hold the list read of its own, bypassing `useTodos`.
+// Today that is harmless (same key, same options, one cache entry); the harm
+// needs a second options object, and a second options object is exactly what
+// this denies. The entry named "the first story that adds a second hook to
+// `src/client/todos/`" as the owner, because that is where the rule can be
+// written against more than one call site — Story 4.2's `useSetCompleted`.
+//
+// `useMutation` is deliberately not denied. A mutation holds no cache entry of
+// its own and is written per operation, so a wall around it would forbid the
+// normal shape rather than a second source of truth.
+
+const AD_8_ONE_READ =
+  "AD-8: the Todo List is read in src/client/todos/ and nowhere else. Call useTodos() — a second useQuery is a second source of truth for one cache entry.";
+
+const noStrayUseQuery = [
+  {
+    selector: "CallExpression[callee.name=/^use(Suspense)?Quer(y|ies)$/]",
+    message: AD_8_ONE_READ,
+  },
+  // `ReactQuery.useQuery(…)` and any other qualified spelling, which
+  // `callee.name` cannot see.
+  {
+    selector:
+      "CallExpression[callee.property.name=/^use(Suspense)?Quer(y|ies)$/]",
+    message: AD_8_ONE_READ,
+  },
+];
+
+// The selectors above match the *called* identifier, so `import { useQuery as
+// readList }` renames its way past both. The import is the one place the hook
+// cannot hide: whatever it is called afterwards, it arrives through this
+// specifier under one of these four names.
+const noQueryHookImport = {
+  name: "@tanstack/react-query",
+  importNames: [
+    "useQuery",
+    "useQueries",
+    "useSuspenseQuery",
+    "useSuspenseQueries",
+  ],
+  message: AD_8_ONE_READ,
+};
+
 // --- AD-12: one live region, one announcer. ---------------------------------
 // Exactly one polite and one assertive live region exist, and they are
 // declared in src/client/feedback/announcer.tsx. Everything that wants to say
@@ -278,13 +325,15 @@ const noServerImport = {
 // near-identical edits and a block missed in the paste failed nothing — the
 // fixture suite reaches only some of the ten paths.
 //
-// The two genuine exemptions stay explicit, as subtractions you can read:
-// `src/server/repository/` is the one module allowed the Drizzle client, and
-// `src/client/feedback/announcer.tsx` is the one file allowed `aria-live`.
+// The three genuine exemptions stay explicit, as subtractions you can read:
+// `src/server/repository/` is the one module allowed the Drizzle client,
+// `src/client/feedback/announcer.tsx` is the one file allowed `aria-live`, and
+// `src/client/todos/` is the one directory allowed `useQuery`.
 const baseRestrictedSyntax = [
   noUseServerDirective,
   ...noAriaLive,
   ...noUnapprovedQueryKey,
+  ...noStrayUseQuery,
   ...noDrizzleDynamicImport,
 ];
 
@@ -325,7 +374,7 @@ const eslintConfig = defineConfig([
       "no-restricted-imports": [
         "error",
         {
-          paths: [drizzleRootPath],
+          paths: [drizzleRootPath, noQueryHookImport],
           patterns: [noDrizzleClientImport],
         },
       ],
@@ -346,21 +395,26 @@ const eslintConfig = defineConfig([
       "no-restricted-imports": [
         "error",
         {
-          paths: [drizzleRootPath],
+          paths: [drizzleRootPath, noQueryHookImport],
           patterns: [noDrizzleClientImport, noServerImport],
         },
       ],
     },
   },
 
-  // src/client/todos/ — the sanctioned fetch site. Still walled off the server.
+  // src/client/todos/ — the sanctioned fetch site and the one home of the list
+  // read. Still walled off the server.
   {
     files: [within("src/client/todos")],
     rules: {
       "no-restricted-syntax": [
         "error",
-        ...baseRestrictedSyntax,
+        ...baseExcept(noStrayUseQuery),
       ],
+      // `noQueryHookImport` is the other half of that exemption and is
+      // deliberately absent here: this is the directory that may import the
+      // read hooks, which is what makes the clause in every other block a wall
+      // rather than a ban.
       "no-restricted-imports": [
         "error",
         {
@@ -389,7 +443,7 @@ const eslintConfig = defineConfig([
       "no-restricted-imports": [
         "error",
         {
-          paths: [drizzleRootPath],
+          paths: [drizzleRootPath, noQueryHookImport],
           patterns: [noDrizzleClientImport, noServerImport],
         },
       ],
@@ -407,7 +461,7 @@ const eslintConfig = defineConfig([
       "no-restricted-imports": [
         "error",
         {
-          paths: [drizzleRootPath],
+          paths: [drizzleRootPath, noQueryHookImport],
           patterns: [noDrizzleClientImport],
         },
       ],
@@ -425,7 +479,7 @@ const eslintConfig = defineConfig([
       "no-restricted-imports": [
         "error",
         {
-          paths: [drizzleRootPath],
+          paths: [drizzleRootPath, noQueryHookImport],
           patterns: [noDrizzleClientImport, noClientImport, noServerImport],
         },
       ],
@@ -444,7 +498,7 @@ const eslintConfig = defineConfig([
       "no-restricted-imports": [
         "error",
         {
-          paths: [drizzleRootPath],
+          paths: [drizzleRootPath, noQueryHookImport],
           patterns: [noDrizzleClientImportInSchema, noClientImport],
         },
       ],
@@ -463,7 +517,7 @@ const eslintConfig = defineConfig([
       "no-restricted-imports": [
         "error",
         {
-          paths: [drizzleRootPath],
+          paths: [drizzleRootPath, noQueryHookImport],
           patterns: [noDrizzleClientImport, noClientImport],
         },
       ],
@@ -478,7 +532,10 @@ const eslintConfig = defineConfig([
         "error",
         ...baseExcept(noDrizzleDynamicImport),
       ],
-      "no-restricted-imports": ["error", { patterns: [noClientImport] }],
+      "no-restricted-imports": [
+        "error",
+        { paths: [noQueryHookImport], patterns: [noClientImport] },
+      ],
     },
   },
 
@@ -499,7 +556,7 @@ const eslintConfig = defineConfig([
       "no-restricted-imports": [
         "error",
         {
-          paths: [drizzleRootPath],
+          paths: [drizzleRootPath, noQueryHookImport],
           patterns: [noDrizzleClientImport, noServerImport],
         },
       ],

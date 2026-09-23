@@ -29,7 +29,9 @@ import { renderToString } from "react-dom/server";
 import { focusManager, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { AnnouncerProvider } from "@/client/feedback/announcer";
 import { AppProviders } from "@/client/providers";
+import { TODOS_QUERY_KEY } from "@/client/todos/query-keys";
 import type { Todo } from "@/shared/contract/todo";
 import { TodoCard } from "./todo-card";
 import { TodoList } from "./todo-list";
@@ -78,10 +80,18 @@ afterEach(async () => {
 });
 
 async function mount(client: QueryClient) {
+  // `QueryClientProvider` alone stopped being enough at Story 4.2: the list
+  // now holds `useSetCompleted()`, which announces a confirmed toggle through
+  // `useAnnounce()` — and that throws outside its provider by design rather
+  // than degrading to a no-op. The error slot is still not needed here, which
+  // is the shape of this story: a refused toggle reverts and says nothing
+  // (Story 4.4 owns the banner).
   await act(async () => {
     root.render(
       <QueryClientProvider client={client}>
-        <TodoList />
+        <AnnouncerProvider>
+          <TodoList />
+        </AnnouncerProvider>
       </QueryClientProvider>,
     );
   });
@@ -385,6 +395,211 @@ describe("TodoList, actually mounted", () => {
     expect(container.querySelectorAll(".skeleton-row")).toHaveLength(3);
     const region = container.querySelector("ul");
     expect(region?.parentElement).toBe(card);
+  });
+});
+
+describe("the checkbox, through the mounted list (Story 4.2)", () => {
+  // `use-set-completed.test.ts` proves what the cache does with an answer, and
+  // `todo-row.render.test.tsx` proves the control calls its handler. Neither
+  // can see that the two are joined: a row whose `onToggle` reached nothing, or
+  // a hook held per row instead of per list, would leave both green.
+  //
+  // What makes this worth its weight is the last step. AC7 is "when the page
+  // is reloaded, the Completion Status is the toggled one" — a claim about the
+  // *server's* confirmation persisting rather than the optimistic change
+  // having rendered. A unit suite cannot reload a page; remounting against a
+  // fresh `QueryClient` whose `GET` answers the persisted row is the closest
+  // it gets, and it is close enough to catch the failure that matters: a
+  // mutation whose success path never replaced the guess.
+
+  /**
+   * A `fetch` that answers the list read and each `PATCH` independently.
+   *
+   * One resolver per row rather than one shared slot: a single `pending` that
+   * every `PATCH` overwrote left the earlier mutation unsettled forever, so a
+   * case that confirmed both rows would hang with nothing to point at.
+   */
+  function stubTransport(stored: Todo[]) {
+    const patches: { url: string; body: unknown }[] = [];
+    const pending = new Map<string, (response: Response) => void>();
+
+    const stub = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (init?.method === "PATCH") {
+        patches.push({ url, body: JSON.parse(String(init.body)) });
+        return new Promise<Response>((resolve) => pending.set(url, resolve));
+      }
+      return Promise.resolve(Response.json(stored));
+    });
+    vi.stubGlobal("fetch", stub);
+
+    const answer = async (todo: Todo, response: Response) => {
+      const resolve = pending.get(`/api/todos/${todo.id}`);
+      expect(resolve, `no PATCH is in flight for ${todo.id}`).toBeDefined();
+      resolve!(response);
+      await settle();
+      await settle();
+    };
+
+    return {
+      patches,
+      /** Answer the `PATCH` the way Story 4.1's endpoint does: the row, bare. */
+      confirm: async (todo: Todo) => {
+        stored = stored.map((row) => (row.id === todo.id ? todo : row));
+        await answer(todo, Response.json(todo));
+      },
+      /** Refuse it, the way the route handler refuses everything (AD-10). */
+      refuse: (todo: Todo) =>
+        answer(
+          todo,
+          Response.json(
+            { error: { kind: "update", message: "diagnostic" } },
+            { status: 500 },
+          ),
+        ),
+      /** What a reload would read. */
+      persisted: () => stored,
+    };
+  }
+
+  const checkboxes = () => [...container.querySelectorAll('[role="checkbox"]')];
+
+  it("flips the row before the request resolves, and keeps the server's row after (AC1, AC7)", async () => {
+    stubMotionPreference(false);
+    const transport = stubTransport(TODOS);
+
+    const client = freshClient();
+    await mount(client);
+
+    // `send invoice` is the Active row, first in `id DESC` order.
+    const [checkbox] = checkboxes();
+    expect(checkbox?.getAttribute("aria-checked")).toBe("false");
+
+    await act(async () => (checkbox as HTMLElement).click());
+    await settle();
+
+    // The request went out with the value asked for, to that row's own URL.
+    expect(transport.patches).toHaveLength(1);
+    expect(transport.patches[0]?.url).toBe(`/api/todos/${TODOS[0].id}`);
+    expect(transport.patches[0]?.body).toEqual({ completed: true });
+
+    // And the interface already answered, with the request still in flight.
+    expect(checkboxes()[0]?.getAttribute("aria-checked")).toBe("true");
+    const rows = [...container.querySelectorAll("li")];
+    expect(rows[0]?.hasAttribute("data-completed")).toBe(true);
+    // The row did not move: ordering is `id DESC` and Completion Status is not
+    // a sort key (AC2).
+    expect(rows.map((row) => row.textContent)).toEqual([
+      expect.stringContaining("send invoice"),
+      expect.stringContaining("book dentist"),
+    ]);
+
+    // The server's row differs from the optimistic guess in a second field, on
+    // purpose. Confirming with a row identical to the guess makes this case
+    // pass with `onSuccess`'s `setQueryData` deleted — the cache would still
+    // hold the browser's guess and nothing on screen would differ, which is
+    // exactly the failure AC7 exists to catch. `createdAt` is the server's to
+    // set and the client's guess of it is never right.
+    const STORED_AT = "2026-09-23T11:22:33.000Z";
+    await transport.confirm({
+      ...TODOS[0],
+      completed: true,
+      createdAt: STORED_AT,
+    });
+
+    // Still Completed, and now on the server's own record rather than the
+    // guess: the confirmation actually replaced the row.
+    expect(checkboxes()[0]?.getAttribute("aria-checked")).toBe("true");
+    expect(transport.persisted()[0].completed).toBe(true);
+    expect(client.getQueryData<Todo[]>(TODOS_QUERY_KEY)?.[0]).toEqual({
+      ...TODOS[0],
+      completed: true,
+      createdAt: STORED_AT,
+    });
+
+    // The reload, as near as this suite gets: a fresh cache, a fresh mount,
+    // and a `GET` answering what the server now holds.
+    await act(async () => root.unmount());
+    container.remove();
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+
+    const reloaded = freshClient();
+    await mount(reloaded);
+
+    expect(checkboxes()[0]?.getAttribute("aria-checked")).toBe("true");
+    expect(container.querySelectorAll("[data-completed]")).toHaveLength(2);
+    expect(reloaded.getQueryData<Todo[]>(TODOS_QUERY_KEY)?.[0].createdAt).toBe(
+      STORED_AT,
+    );
+  });
+
+  it("puts the row back when the server refuses the change (AC4)", async () => {
+    // The interface half of the rollback. `use-set-completed.test.ts` proves
+    // the cache reverts; nothing until now showed the checkbox un-checking.
+    // And it is silent: a refused toggle says nothing here — no banner, no
+    // announcement — because Story 4.4 owns all three.
+    stubMotionPreference(false);
+    const transport = stubTransport(TODOS);
+
+    await mount(freshClient());
+    await act(async () => (checkboxes()[0] as HTMLElement).click());
+    await settle();
+
+    expect(checkboxes()[0]?.getAttribute("aria-checked")).toBe("true");
+
+    await transport.refuse(TODOS[0]);
+
+    expect(checkboxes()[0]?.getAttribute("aria-checked")).toBe("false");
+    expect(container.querySelectorAll("[data-completed]")).toHaveLength(1);
+    // The other row, which nothing asked about, is untouched (AC5).
+    expect(checkboxes()[1]?.getAttribute("aria-checked")).toBe("true");
+    expect(liveRegion("polite")).toBe("");
+    expect(liveRegion("assertive")).toBe("");
+  });
+
+  it("announces the confirmed toggle politely, once (AC6)", async () => {
+    stubMotionPreference(false);
+    const transport = stubTransport(TODOS);
+
+    await mount(freshClient());
+    await act(async () => (checkboxes()[0] as HTMLElement).click());
+    await settle();
+
+    // Nothing yet: AC6 is "given a *successful* toggle, when it completes".
+    expect(liveRegion("polite")).toBe("");
+
+    await transport.confirm({ ...TODOS[0], completed: true });
+
+    expect(liveRegion("polite")).toBe("send invoice, Completed");
+    expect(liveRegion("assertive")).toBe("");
+  });
+
+  it("toggles two rows independently, both against the one cache entry", async () => {
+    // Named for what it proves. Whether the list holds one hook or one per row
+    // is a source-level claim and `todo-list.test.ts` makes it; what a mount
+    // can show is that two rows toggled in succession each send their own
+    // request and neither disturbs the other's optimistic value — the shape
+    // the per-entity rollback depends on.
+    stubMotionPreference(false);
+    const transport = stubTransport(TODOS);
+
+    await mount(freshClient());
+    const [first, second] = checkboxes();
+
+    await act(async () => (first as HTMLElement).click());
+    await act(async () => (second as HTMLElement).click());
+    await settle();
+
+    expect(transport.patches.map(({ body }) => body)).toEqual([
+      { completed: true },
+      { completed: false },
+    ]);
+    expect(checkboxes().map((box) => box.getAttribute("aria-checked"))).toEqual([
+      "true",
+      "false",
+    ]);
   });
 });
 

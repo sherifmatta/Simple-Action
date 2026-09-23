@@ -27,11 +27,20 @@ import type { Todo } from "@/shared/contract/todo";
 // `window` to ask, `useReducedMotion()` reports stillness, so every render
 // below carries the still marker.
 
-const { mockUseTodos, mockAnnounce } = vi.hoisted(() => ({
+const { mockUseTodos, mockAnnounce, mockSetCompleted } = vi.hoisted(() => ({
   mockUseTodos: vi.fn(),
   mockAnnounce: vi.fn(),
+  mockSetCompleted: vi.fn(),
 }));
 vi.mock("@/client/todos/use-todos", () => ({ useTodos: mockUseTodos }));
+// Story 4.2 gave this component a second hook. `useSetCompleted` reaches for a
+// `QueryClient` and the announcer, both of which throw outside their providers
+// by design — and what it does with them is `use-set-completed.test.ts`'s
+// subject, not this file's. What belongs here is that the list holds *one*
+// instance and hands it to every row, which the assertions below cover.
+vi.mock("@/client/todos/use-set-completed", () => ({
+  useSetCompleted: () => mockSetCompleted,
+}));
 // The empty state announces its own text, and `useAnnounce()` throws outside
 // its provider by design (announcer.tsx:40) rather than returning a no-op.
 // Stubbing it keeps this file about which branch renders; that the right
@@ -238,6 +247,18 @@ describe("the list region reads the one query hook", () => {
     // instead of them (AC6). Still no wrapper, which is what keeps the `<ul>`
     // a direct child of the card.
     expect(elements()).toEqual(["ul", "TodoRow", "SkeletonRow", "EmptyState"]);
+  });
+
+  it("holds one toggle hook for the whole list and hands it to every row", () => {
+    // AR-28's sibling rule, one level up: the row is presentational, so the
+    // mutation lives here and arrives as a prop. A `useSetCompleted()` inside
+    // `TodoRow` would be one mutation observer per row and would make every
+    // markup test of the row mount two providers to exercise neither.
+    expect(listSource.match(/useSetCompleted\(\)/g)).toHaveLength(1);
+    expect(listSource).toMatch(/onToggle=\{setCompleted\}/);
+    // And the list itself never reads Completion Status — `todo-row.tsx` is
+    // the one file that does (`todo-row.test.ts` asserts the whole surface).
+    expect(listSource).not.toMatch(/\.completed\b/);
   });
 
   it("keys rows by the Todo's id, which is its final sort position", () => {

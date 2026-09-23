@@ -230,12 +230,13 @@ describe("no duration is declared outside this module (AC3, AC4)", () => {
         (match) => `${file}:${match[1]}`,
       ),
     );
-    // The two exemptions are named rather than pattern-excluded: both are
-    // network deadlines, not motion durations — how long a read (Story 2.2)
-    // and a create (Story 3.4) may take before they are abandoned. Nothing
-    // animates on either. Naming them is the point: a third would have to be
-    // added here deliberately, which is where the question "is this really a
-    // deadline?" gets asked.
+    // The three exemptions are named rather than pattern-excluded: all are
+    // network deadlines, not motion durations — how long a read (Story 2.2), a
+    // create (Story 3.4) and a Completion Status update (Story 4.2) may take
+    // before they are abandoned. Nothing animates on any of them. Naming them
+    // is the point: the third had to be added here deliberately, which is
+    // where the question "is this really a deadline?" gets asked — and it is,
+    // for the same connection and with the same 15s answer.
     expect([...declarations].sort()).toEqual(
       [
         `${motionFile}:SKELETON_PULSE_MS`,
@@ -245,6 +246,7 @@ describe("no duration is declared outside this module (AC3, AC4)", () => {
         `${motionFile}:COUNTER_FADE_MS`,
         `${path.join("src", "client", "todos", "todo-list-query.ts")}:READ_DEADLINE_MS`,
         `${path.join("src", "client", "todos", "create-todo.ts")}:CREATE_DEADLINE_MS`,
+        `${path.join("src", "client", "todos", "set-completed.ts")}:SET_COMPLETED_DEADLINE_MS`,
       ].sort(),
     );
   });

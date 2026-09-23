@@ -76,6 +76,7 @@
 // reset — Tailwind's preflight already strips the marker, margin and padding.
 
 import { useReducedMotion } from "@/client/motion/motion";
+import { useSetCompleted } from "@/client/todos/use-set-completed";
 import { useTodos } from "@/client/todos/use-todos";
 
 import { EmptyState } from "./empty-state";
@@ -85,6 +86,13 @@ import { TodoRow } from "./todo-row";
 export function TodoList() {
   const { isFetching, data, listLanded } = useTodos();
   const loading = isFetching && !listLanded;
+  // One hook instance for the whole list, passed down to every row — the
+  // `add-todo.tsx` split applied one level up. `useSetCompleted` needs a
+  // `QueryClientProvider` and an `AnnouncerProvider` above it, and calling it
+  // inside `TodoRow` would make every test of the row's markup mount two
+  // providers to exercise neither. `TodoRow` stays presentational and knows
+  // only that something happens when its checkbox is pressed.
+  const setCompleted = useSetCompleted();
   // One attribute, set from the product's only reader of the preference; the
   // recipes in `app/globals.css` derive the stillness from it (AR-28). No
   // component branches on a duration and no `className` here is computed.
@@ -111,7 +119,9 @@ export function TodoList() {
         data-still={still ? true : undefined}
         className="flex flex-col gap-row-gap"
       >
-        {data?.map((todo) => <TodoRow key={todo.id} todo={todo} />)}
+        {data?.map((todo) => (
+          <TodoRow key={todo.id} todo={todo} onToggle={setCompleted} />
+        ))}
         {loading
           ? SKELETON_ROW_KEYS.map((key) => <SkeletonRow key={key} />)
           : null}

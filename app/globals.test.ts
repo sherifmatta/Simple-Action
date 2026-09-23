@@ -322,6 +322,65 @@ describe("app/globals.css — negative fixtures prove the completeness guard can
   });
 });
 
+describe("app/globals.css — the checkbox's 44px hit area (Story 4.2 AC13)", () => {
+  /** One `@utility` block, read whole — the nested `&::after` included. */
+  function recipe(name: string): string {
+    const opening = css.indexOf(`@utility ${name} {`);
+    expect(opening, `expected @utility ${name} to be declared`).toBeGreaterThan(
+      -1,
+    );
+
+    let depth = 0;
+    let end = css.indexOf("{", opening);
+    for (; end < css.length; end += 1) {
+      if (css[end] === "{") depth += 1;
+      else if (css[end] === "}") {
+        depth -= 1;
+        if (depth === 0) break;
+      }
+    }
+    expect(depth, `unbalanced braces in @utility ${name}`).toBe(0);
+    return css.slice(opening, end + 1);
+  }
+
+  // This is the only place the number is checkable. The hit area is an overlay
+  // rather than a size, so nothing about the control's own box says 44px — a
+  // test that read the element's classes would see `checkbox-box`'s 21px and
+  // conclude the touch target was 21px too.
+  it("sizes the hit area from {spacing.touch-target-min} in both dimensions", () => {
+    const hitArea = recipe("checkbox-hit-area");
+
+    expect(hitArea).toContain("width: var(--spacing-touch-target-min)");
+    expect(hitArea).toContain("height: var(--spacing-touch-target-min)");
+    // Read from the theme rather than retyped, which is `retry-pill`'s and
+    // `input-add`'s precedent — and the token itself is still 44px.
+    expect(css).toContain("--spacing-touch-target-min: 44px");
+    // An overlay needs a containing block, or it centres on the card.
+    expect(hitArea).toContain("position: relative");
+    expect(hitArea).toContain("position: absolute");
+    // Every declaration that makes the square exist and sit right, because
+    // each is separately deletable with the two above still passing. Without
+    // `content` there is no pseudo-element at all; without the offsets and the
+    // translate the 44px square hangs down and to the right of the mark, over
+    // the Todo's text, and measures 44px of the wrong 44px.
+    expect(hitArea).toContain('content: ""');
+    expect(hitArea).toContain("top: 50%");
+    expect(hitArea).toContain("left: 50%");
+    expect(hitArea).toContain("transform: translate(-50%, -50%)");
+  });
+
+  it("leaves the 21px mark alone, which is the half AC13 protects", () => {
+    // "And the mark itself is unchanged." A hit area implemented as padding or
+    // as a height would have grown the box and moved the text beside it; this
+    // one contributes nothing to layout, so `checkbox-box` still reads 21px.
+    const box = recipe("checkbox-box");
+    expect(box).toContain("width: 21px");
+    expect(box).toContain("height: 21px");
+    expect(box).not.toContain("--spacing-touch-target-min");
+  });
+
+});
+
 describe("app/globals.css — focus ring hue-only difference", () => {
   function shadowValue(source: string, name: string): string {
     const match = source.match(new RegExp(`--${name}:\\s*([^;]+);`));

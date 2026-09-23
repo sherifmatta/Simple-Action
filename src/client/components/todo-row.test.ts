@@ -64,9 +64,36 @@ function attributeNames(): string[] {
   return found;
 }
 
-describe("the row is a list item holding a glyph and the Todo's text", () => {
-  it("renders the checkbox glyph before the text, inside one <li>", () => {
-    expect(elements()).toEqual(["li", "span", "svg", "path", "span"]);
+/**
+ * Where a rule's selector starts in the emitted CSS.
+ *
+ * Three pairs in this row are two utilities of the same property on the same
+ * element — `hidden`/`group-aria-checked/box:block`, the two checked fills and
+ * the two focus rings — so which one wins is decided by the cascade rather
+ * than by intent. Specificity settles all three, and source order is the
+ * backstop: if a pair ever tied, the wrong half would paint with every other
+ * assertion in this file still green, and for the fills that means `accent` on
+ * mint at 2.97:1 — the exact WCAG 1.4.11 failure the `accent-deep` step-down
+ * exists to prevent.
+ *
+ * Anchored selectors, not substring probes — a bare `indexOf(".hidden")` would
+ * also match `.hiddenish` (2026-09-22 review).
+ */
+function ruleIndex(css: string, pattern: RegExp): number {
+  const found = css.match(pattern);
+  if (found === null || found.index === undefined) {
+    throw new Error(`no rule matched ${pattern}`);
+  }
+  return found.index;
+}
+
+describe("the row is a list item holding a checkbox and the Todo's text", () => {
+  it("renders the checkbox before the text, inside one <li>", () => {
+    // Was `["li", "span", "svg", "path", "span"]`. Story 4.2 turns the
+    // decorative glyph into the control that toggles, so the first `span` is a
+    // `button` — and it is still first, which is AC14's tab order falling out
+    // of document order rather than being arranged.
+    expect(elements()).toEqual(["li", "button", "svg", "path", "span"]);
   });
 
   it("renders no copy of its own — the only text is the Todo's", () => {
@@ -128,12 +155,15 @@ describe("a Completed row changes three cues and its shadow at once (AC2, AC3)",
     expect(ruleFor(css, "data-completed:bg-row-complete")).toContain(
       "var(--color-row-complete)",
     );
-    expect(ruleFor(css, "group-data-completed:bg-accent-deep")).toContain(
-      "var(--color-accent-deep)",
-    );
-    expect(ruleFor(css, "group-data-completed:border-accent-deep")).toContain(
-      "var(--color-accent-deep)",
-    );
+    // Since Story 4.2 the fill is gated on the control's own `aria-checked`
+    // as well as on the row marker — one attribute drives the picture and the
+    // accessible state together, so they cannot disagree (AC11).
+    expect(
+      ruleFor(css, "group-data-completed:aria-checked:bg-accent-deep"),
+    ).toContain("var(--color-accent-deep)");
+    expect(
+      ruleFor(css, "group-data-completed:aria-checked:border-accent-deep"),
+    ).toContain("var(--color-accent-deep)");
     expect(ruleFor(css, "group-data-completed:text-text-completed")).toContain(
       "var(--color-text-completed)",
     );
@@ -169,35 +199,34 @@ describe("a Completed row changes three cues and its shadow at once (AC2, AC3)",
 
   it("survives colour being removed, because two cues are not colour (AC3)", async () => {
     const css = await compiled;
-    // The checkbox glyph is drawn in both statuses and revealed by the marker,
-    // so the cue is a display change, not a hue. The strikethrough is a line.
-    // Either alone reads in greyscale; the mint fill is the third, redundant
-    // cue — DESIGN.md:493's 1.4.1 argument for a 1.32:1 fill pair.
-    expect(ruleFor(css, "group-data-completed:block")).toContain(
+    // The checkbox glyph is drawn in both statuses and revealed by the
+    // control's own checked state, so the cue is a display change, not a hue.
+    // The strikethrough is a line. Either alone reads in greyscale; the mint
+    // fill is the third, redundant cue — DESIGN.md:493's 1.4.1 argument for a
+    // 1.32:1 fill pair.
+    //
+    // Was gated on `group-data-completed:`. Story 4.2 moved it onto the named
+    // `group/box` for the reason the fill moved: the glyph and `aria-checked`
+    // now derive from one attribute, so a bug that breaks the accessible state
+    // breaks the picture too rather than hiding behind it.
+    expect(ruleFor(css, "group-aria-checked/box:block")).toContain(
       "display: block",
     );
     expect(rowClasses).toContain("hidden");
-    expect(rowClasses).toContain("group-data-completed:block");
+    expect(rowClasses).toContain("group-aria-checked/box:block");
+    expect(rowClasses).toContain("group/box");
 
     // Both are `display` utilities on the same element, so which one wins is
     // decided by the cascade rather than by intent. Specificity settles it on
-    // its own: the variant rule is a class plus `:is(:where(.group)[data-…] *)`,
-    // and `:where()` contributes nothing while `[data-completed]` contributes
-    // an attribute selector, so it is (0,2,0) against `.hidden`'s (0,1,0).
-    // Source order is the backstop, and it is asserted because if both ever
-    // tied the glyph would vanish in both statuses with every assertion above
-    // still green. Anchored selectors, not substring probes — a bare
-    // `indexOf(".hidden")` would also match `.hiddenish` (2026-09-22 review).
-    const at = (pattern: RegExp) => {
-      const found = css.match(pattern);
-      if (found === null || found.index === undefined) {
-        throw new Error(`no rule matched ${pattern}`);
-      }
-      return found.index;
-    };
-    expect(at(/\.group-data-completed\\:block(?![\w\-\\/])/)).toBeGreaterThan(
-      at(/\.hidden(?![\w\-\\/])/),
-    );
+    // its own: the variant rule is a class plus
+    // `:is(:where(.group\/box)[aria-checked="true"] *)`, and `:where()`
+    // contributes nothing while the attribute selector contributes one level,
+    // so it is (0,2,0) against `.hidden`'s (0,1,0).
+    // Source order is the backstop — see `ruleIndex` above.
+    const at = (pattern: RegExp) => ruleIndex(css, pattern);
+    expect(
+      at(/\.group-aria-checked\\\/box\\:block(?![\w\-\\/])/),
+    ).toBeGreaterThan(at(/\.hidden(?![\w\-\\/])/));
   });
 
   it("draws the checkbox at DESIGN.md's untokenised size and border", async () => {
@@ -210,9 +239,99 @@ describe("a Completed row changes three cues and its shadow at once (AC2, AC3)",
     expect(ruleFor(css, "border-border-control")).toContain(
       "var(--color-border-control)",
     );
-    // The checked fill steps down to `accent-deep` because `accent` on mint is
-    // 2.97:1 and fails WCAG 1.4.11 (DESIGN.md:412, 491).
-    expect(rowClasses).not.toContain("group-data-completed:bg-accent");
+    // The checked fill steps down to `accent-deep` on a Completed row because
+    // `accent` on mint is 2.97:1 and fails WCAG 1.4.11 (DESIGN.md:412, 491).
+    // Was `expect(rowClasses).not.toContain("group-data-completed:bg-accent")`,
+    // which pinned the accent-on-Active spelling as *absent* — the state was
+    // unreachable while the box was a picture of `todo.completed`. Story 4.2
+    // gives it a reachable home on the control's own checked state, which is
+    // the `deferred-work.md` entry naming this story.
+    expect(rowClasses).toContain("aria-checked:bg-accent");
+    expect(rowClasses).toContain("aria-checked:border-accent");
+    expect(ruleFor(css, "aria-checked:bg-accent")).toContain(
+      "var(--color-accent)",
+    );
+    expect(ruleFor(css, "aria-checked:border-accent")).toContain(
+      "var(--color-accent)",
+    );
+    // And the two are different colours, or the step-down is decorative.
+    expect(css).toContain("--color-accent:");
+    expect(css).toContain("--color-accent-deep:");
+
+    // Which of the two paints on a Completed row is the whole 1.4.11
+    // argument, and it is decided by the cascade. Specificity settles it —
+    // (0,3,0) against (0,2,0) — and source order is the backstop, exactly as
+    // it is for the glyph's `hidden`/`block` pair above.
+    expect(
+      ruleIndex(
+        css,
+        /\.group-data-completed\\:aria-checked\\:bg-accent-deep(?![\w\-\\/])/,
+      ),
+    ).toBeGreaterThan(ruleIndex(css, /\.aria-checked\\:bg-accent(?![\w\-\\/])/));
+    expect(
+      ruleIndex(
+        css,
+        /\.group-data-completed\\:aria-checked\\:border-accent-deep(?![\w\-\\/])/,
+      ),
+    ).toBeGreaterThan(
+      ruleIndex(css, /\.aria-checked\\:border-accent(?![\w\-\\/])/),
+    );
+  });
+
+  it("rings the focused checkbox in the hue that clears 1.4.11 on its ground (AC12)", async () => {
+    const css = await compiled;
+
+    // `--shadow-focus-on-complete` has been declared since Story 1.2 with
+    // zero consumers; this is its first. `app/globals.test.ts` already proves
+    // the two rings differ in hue alone, so what is left to assert here is
+    // which row gets which — and that both are gated, never chosen in JS.
+    expect(rowClasses).toContain("focus-visible:shadow-focus");
+    expect(rowClasses).toContain(
+      "group-data-completed:focus-visible:shadow-focus-on-complete",
+    );
+    // Tailwind inlines the shadow recipe rather than referencing the token, so
+    // the assertion is on the hue it resolved to — which is the thing AC12 is
+    // about. `app/globals.test.ts:325-380` is what proves the two rings differ
+    // in hue *alone*; this proves which ring each row gets.
+    const ring = ruleFor(css, "focus-visible:shadow-focus");
+    expect(ring).toContain(":focus-visible");
+    expect(ring).toContain("var(--color-accent)");
+    expect(ring).toContain("box-shadow:");
+
+    const ringOnComplete = ruleFor(
+      css,
+      "group-data-completed:focus-visible:shadow-focus-on-complete",
+    );
+    expect(ringOnComplete).toContain("[data-completed]");
+    expect(ringOnComplete).toContain("var(--color-accent-deep)");
+    expect(ringOnComplete).toContain("box-shadow:");
+
+    // Same pair, same cascade question, same backstop: a Completed row's
+    // focused checkbox must take the deepened ring, or the ring it draws is
+    // the one that measures 2.97:1 on mint.
+    expect(
+      ruleIndex(
+        css,
+        /\.group-data-completed\\:focus-visible\\:shadow-focus-on-complete(?![\w\-\\/])/,
+      ),
+    ).toBeGreaterThan(
+      ruleIndex(css, /\.focus-visible\\:shadow-focus(?![\w\-\\/])/),
+    );
+  });
+
+  it("pads the 21px mark to a 44px hit area without resizing it (AC13)", async () => {
+    const css = await compiled;
+
+    // The recipe rather than a class, because `min-w-*` is banned tree-wide
+    // and `h-*` over this row's own classes — see the block below. The 44px
+    // itself is asserted in `app/globals.test.ts`, which reads the stylesheet
+    // rather than the compiled output; here it only has to be *on the box*.
+    expect(rowClasses).toContain("checkbox-hit-area");
+    const hitArea = ruleFor(css, "checkbox-hit-area");
+    expect(hitArea).toContain("position: relative");
+    // Still 21px: the hit area contributes nothing to layout, so the mark and
+    // the text beside it do not move.
+    expect(ruleFor(css, "checkbox-box")).toContain("width: 21px");
   });
 });
 
@@ -239,16 +358,37 @@ describe("Completion Status is expressed exactly once (AC4)", () => {
     // `className` a computed expression, which `dynamicClassNames()` in
     // `todo-card.test.ts` rejects outright; that guard and this one are the
     // same rule seen from two sides.
+    //
+    // Story 4.2 widens this twice. The utilities now include the checkbox's
+    // own fill, border and focus ring; and the gates now include the control's
+    // `aria-checked` and `focus-visible` alongside the row marker. Neither
+    // weakens the rule — the guard's purpose was never "no controls", it was
+    // "no class picked in JavaScript", and an attribute variant on the control
+    // itself is as far from a branch as one on the row.
+    const STATUS_UTILITIES =
+      /^(bg-row-complete|shadow-row-complete|text-text-completed|strikethrough-completed|bg-accent|border-accent|bg-accent-deep|border-accent-deep|shadow-focus|shadow-focus-on-complete)$/;
+    const GATES = new Set([
+      "data-completed",
+      "group-data-completed",
+      "aria-checked",
+      "focus-visible",
+    ]);
+
     const statusClasses = rowClasses.filter((name) =>
-      /(^|:)(bg-row-complete|shadow-row-complete|text-text-completed|strikethrough-completed|bg-accent-deep|border-accent-deep)$/.test(
-        name,
-      ),
+      STATUS_UTILITIES.test(name.split(":").at(-1) ?? ""),
     );
-    expect(statusClasses.length).toBeGreaterThan(0);
+    // Ten of them since this story: two on the `<li>`, six on the control and
+    // two on the text. Exact, not a floor — a class silently dropped from the
+    // control is precisely what a floor would let through.
+    expect(statusClasses).toHaveLength(10);
     for (const name of statusClasses) {
-      expect(name, `${name} must be gated on the marker`).toMatch(
-        /^(data-completed|group-data-completed):/,
-      );
+      const gates = name.split(":").slice(0, -1);
+      expect(gates, `${name} must be gated, not chosen`).not.toEqual([]);
+      for (const gate of gates) {
+        expect(GATES.has(gate), `${name} is gated on an unknown \`${gate}\``).toBe(
+          true,
+        );
+      }
     }
   });
 });
@@ -294,29 +434,55 @@ describe("a long Todo wraps and the row grows (AC5)", () => {
   });
 });
 
-describe("the row body is not a click target (AC6)", () => {
-  it("carries no handler, no tab stop and no role", () => {
-    // EXPERIENCE.md:105 — there is no editing, so a row click has nothing to
-    // open. Story 4.3 makes the checkbox the control that toggles; until then
-    // nothing here is reachable by pointer or keyboard.
+describe("the checkbox is the only control, and the row body is not one (AC6, AC8-AC10, AC14)", () => {
+  it("carries exactly one handler, on the checkbox, and no tab stop of its own", () => {
+    // Was "carries no handler, no tab stop and no role" — the row body still
+    // carries none of those (EXPERIENCE.md:105: there is no editing, so a row
+    // click has nothing to open). What changed is that the glyph became the
+    // control, so the file now holds exactly one handler and exactly one role.
     const names = attributeNames();
-    expect(names.filter((name) => /^on[A-Z]/.test(name))).toEqual([]);
+    expect(names.filter((name) => /^on[A-Z]/.test(name))).toEqual(["onClick"]);
+    expect(names.filter((name) => name === "role")).toEqual(["role"]);
+    // `tabIndex` is absent on purpose (AC14): a `<button>` is focusable
+    // already, and any explicit value here would be arranging a tab order that
+    // document order gives for free.
     expect(names).not.toContain("tabIndex");
-    expect(names).not.toContain("role");
     expect(names).not.toContain("href");
   });
 
-  it("renders no interactive element", () => {
-    for (const tag of ["button", "a", "input", "label", "select"]) {
-      expect(elements(), `${tag} is a control this story does not have`).not.toContain(tag);
+  it("gets Enter and Space from the platform rather than from a key handler", () => {
+    // AC9 wants both keys. A native `<input type="checkbox">` activates on
+    // Space only, so meeting AC9 with one means hand-writing `onKeyDown` and
+    // keeping it in step with the click path. A `<button>` gets both through
+    // one `onClick` — which is why the *absence* of a key handler is the
+    // assertion, and why `todo-row.render.test.tsx` presses the keys.
+    const names = attributeNames();
+    expect(names.filter((name) => /^onKey/.test(name))).toEqual([]);
+    expect(rowSource).toMatch(/type="button"/);
+    // The `<button>` is the one control this row has. Everything else in the
+    // original list stays forbidden: a `<label>` would make the row body a
+    // click target (EXPERIENCE.md:105), an `<input type="checkbox">` is the
+    // activation path this story rejected, and a link or a select in a Todo
+    // row is nothing this product has.
+    for (const tag of ["a", "input", "label", "select"]) {
+      expect(elements(), `${tag} is a control this row does not have`).not.toContain(tag);
     }
   });
 
-  it("hides the decorative glyph from assistive technology", () => {
-    // The glyph is a picture of the state, not the state. Story 4.3 replaces
-    // it with a real checkbox carrying `checked`, which is what will put
-    // Completion Status on the accessibility tree.
-    expect(attributeNames()).toContain("aria-hidden");
+  it("exposes Completion Status as a checked state, not as decoration (AC10)", () => {
+    // Was "hides the decorative glyph from assistive technology". That was the
+    // placeholder Story 2.4 shipped and `deferred-work.md` recorded: a screen
+    // reader heard `book dentist` for an Active row and `book dentist` for a
+    // Completed one. The control is what puts the status on the accessibility
+    // tree, and it does so as a side effect of being a control.
+    const names = attributeNames();
+    expect(names).not.toContain("aria-hidden");
+    expect(names).toContain("aria-checked");
+    // Named by the Todo's own text, borrowed from the element that renders it
+    // rather than duplicated into a label that could drift from it.
+    expect(names).toContain("aria-labelledby");
+    expect(names).toContain("id");
+    expect(rowSource).toMatch(/role="checkbox"/);
   });
 });
 
@@ -341,7 +507,7 @@ describe("the rendered row carries the marker and nothing else varies", () => {
   };
 
   const render = (todo: Todo) =>
-    renderToStaticMarkup(createElement(TodoRow, { todo }));
+    renderToStaticMarkup(createElement(TodoRow, { todo, onToggle: () => {} }));
 
   it("marks a Completed Todo and leaves an Active one unmarked", () => {
     expect(render({ ...fixture, completed: true })).toContain(
@@ -350,14 +516,34 @@ describe("the rendered row carries the marker and nothing else varies", () => {
     expect(render(fixture)).not.toContain("data-completed=");
   });
 
-  it("differs between the two statuses by the marker alone (AC4)", () => {
+  it("differs between the two statuses by the two attributes alone (AC4, AC10)", () => {
     // This is AR-28 stated as an equality rather than as a convention: if any
-    // cue were picked in JavaScript instead of derived from the marker, these
-    // two strings would differ somewhere else as well.
-    const completed = render({ ...fixture, completed: true });
-    expect(completed.replace(' data-completed="true"', "")).toEqual(
-      render(fixture),
-    );
+    // cue were picked in JavaScript instead of derived from an attribute,
+    // these two strings would differ somewhere else as well.
+    //
+    // Two attributes since Story 4.2, not one, and that is the criterion
+    // rather than a loosening: `data-completed` is the row's variant marker
+    // and `aria-checked` is the control's state, and AC11 keys the checkbox's
+    // fill on the second precisely so the picture and the accessible state
+    // cannot disagree. Everything else about the two renders is still
+    // identical.
+    const completed = render({ ...fixture, completed: true })
+      .replace(' data-completed="true"', "")
+      .replace('aria-checked="true"', 'aria-checked="false"');
+    expect(completed).toEqual(render(fixture));
+  });
+
+  it("names the checkbox with the row's own text element (AC10)", () => {
+    const html = render(fixture);
+    // Prefixed, because a UUIDv7 usually starts with a digit and an id
+    // starting with a digit is legal HTML but not a valid CSS identifier.
+    expect(html).toContain(`aria-labelledby="todo-${fixture.id}-text"`);
+    expect(html).toContain(`id="todo-${fixture.id}-text"`);
+    expect(html).toMatch(/id="[A-Za-z_-]/);
+    // Unique per row because the Todo's id is, so two rows in one list cannot
+    // borrow each other's name.
+    const other = render({ ...fixture, id: "0199a5c5-0000-7000-8000-000000000001" });
+    expect(other).not.toContain(`"${fixture.id}-text"`);
   });
 
   it("renders the Todo's text whole, however long it is (AC5)", () => {

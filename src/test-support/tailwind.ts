@@ -72,9 +72,17 @@ export function tailwindCompiler(): {
  * silent pass this whole module exists to prevent (2026-09-22 code review).
  */
 export function ruleFor(css: string, className: string): string {
+  // `:` and `/` are both escaped *in the emitted CSS* — Tailwind writes
+  // `group-aria-checked/box:block` as `.group-aria-checked\/box\:block` — so
+  // each has to be matched as a backslash plus itself rather than as itself.
+  // The `/` half arrived with Story 4.2's first named group; before that no
+  // class under test carried one, and a helper that quietly failed to match
+  // reported it as "Tailwind emitted no rule", which is the one error message
+  // guaranteed to send a reader to the wrong file.
   const escaped = className
     .replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
-    .replace(/:/g, "\\\\:");
+    .replace(/:/g, "\\\\:")
+    .replace(/\//g, "\\\\/");
   const opening = css.match(
     new RegExp(`\\.${escaped}(?![\\w\\-\\\\/])[^{}]*\\{`),
   );

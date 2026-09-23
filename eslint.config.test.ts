@@ -514,7 +514,80 @@ const positionalQueryKeyViolations: Violation[] = [
   },
 ];
 
-violations.push(...queryKeyViolations, ...positionalQueryKeyViolations);
+// --- Cases added by Story 4.2 (AD-8, the list read has one home) -----------
+// `deferred-work.md` recorded this rule as missing since Story 2.2 and named
+// the first story to add a second hook under `src/client/todos/` as its owner:
+// until there were two call sites there was no way to tell a rule that walls a
+// directory from one that walls a single file. `useSetCompleted` is that
+// second hook.
+
+const strayUseQueryViolations: Violation[] = [
+  {
+    name: "AD-8: a component holds the list read itself",
+    filePath: "src/client/components/probe.ts",
+    code: `import { useQuery } from "@tanstack/react-query";\nimport { todoListQueryOptions } from "@/client/todos/todo-list-query";\nexport const probe = () => useQuery(todoListQueryOptions);\n`,
+    ruleId: "no-restricted-syntax",
+    names: "AD-8",
+  },
+  {
+    // The Suspense and plural spellings, which a rule written against the bare
+    // name would miss — and `useQueries` is how a second cache entry arrives
+    // without the word `useQuery` appearing at all.
+    name: "AD-8: a component reaches for useSuspenseQuery",
+    filePath: "src/client/components/probe.ts",
+    code: `import { useSuspenseQuery } from "@tanstack/react-query";\nimport { todoListQueryOptions } from "@/client/todos/todo-list-query";\nexport const probe = () => useSuspenseQuery(todoListQueryOptions);\n`,
+    ruleId: "no-restricted-syntax",
+    names: "AD-8",
+  },
+  {
+    name: "AD-8: an app/ page calls useQueries",
+    filePath: "app/probe/page.tsx",
+    code: `import { useQueries } from "@tanstack/react-query";\nexport default function Page() {\n  return useQueries({ queries: [] });\n}\n`,
+    ruleId: "no-restricted-syntax",
+    names: "AD-8",
+  },
+  {
+    // A qualified spelling: `callee.name` is undefined here, so without the
+    // member-expression selector the wall is bypassed by a namespace import.
+    name: "AD-8: the read is reached through a namespace import",
+    filePath: "src/client/components/probe.ts",
+    code: `import * as ReactQuery from "@tanstack/react-query";\nexport const probe = () => ReactQuery.useQuery({});\n`,
+    ruleId: "no-restricted-syntax",
+    names: "AD-8",
+  },
+  {
+    // The rename. Both selectors match the *called* identifier, so this walks
+    // past them — the import clause is what catches it, and it is the one
+    // place the hook cannot hide.
+    name: "AD-8: the read hook is imported under another name",
+    filePath: "src/client/components/probe.ts",
+    code: `import { useQuery as readList } from "@tanstack/react-query";\nexport const probe = () => readList({});\n`,
+    ruleId: "no-restricted-imports",
+    names: "AD-8",
+  },
+  {
+    // Every block restates the baseline, so the blocks no `src/client/**`
+    // fixture reaches need their own.
+    name: "AD-8: a route handler calls useQuery",
+    filePath: "app/api/todos/route.ts",
+    code: `import { useQuery } from "@tanstack/react-query";\nexport const probe = () => useQuery({});\n`,
+    ruleId: "no-restricted-syntax",
+    names: "AD-8",
+  },
+  {
+    name: "AD-8: a root-level module calls useQuery",
+    filePath: "probe.ts",
+    code: `import { useQuery } from "@tanstack/react-query";\nexport const probe = () => useQuery({});\n`,
+    ruleId: "no-restricted-syntax",
+    names: "AD-8",
+  },
+];
+
+violations.push(
+  ...queryKeyViolations,
+  ...positionalQueryKeyViolations,
+  ...strayUseQueryViolations,
+);
 
 const exemptions: { name: string; filePath: string; code: string }[] = [
   {
@@ -549,6 +622,28 @@ const exemptions: { name: string; filePath: string; code: string }[] = [
     name: "a query hook is the sanctioned fetch site",
     filePath: "src/client/todos/use-todos.ts",
     code: `export const probe = async () => (await fetch("/api/todos")).json();\n`,
+  },
+  {
+    // The other half of the Story 4.2 wall: the directory that owns the read
+    // may still perform it. Keyed to `src/client/todos/`, so moving the hooks
+    // out without moving the config block fails here.
+    name: "the todos module may hold the one useQuery",
+    filePath: "src/client/todos/probe.ts",
+    code: `import { useQuery } from "@tanstack/react-query";\nimport { todoListQueryOptions } from "./todo-list-query";\nexport const probe = () => useQuery(todoListQueryOptions);\n`,
+  },
+  {
+    // `useMutation` is not walled, and a component calling one is not what the
+    // rule is about — a mutation holds no cache entry of its own.
+    name: "useMutation is untouched outside the todos module",
+    filePath: "src/client/components/probe.ts",
+    code: `import { useMutation } from "@tanstack/react-query";\nexport const probe = () => useMutation({});\n`,
+  },
+  {
+    // And `useQueryClient` is not a read. Denying it would wall the way every
+    // optimistic mutation in Epics 3 to 5 reaches the cache.
+    name: "useQueryClient is not a second read",
+    filePath: "src/client/components/probe.ts",
+    code: `import { useQueryClient } from "@tanstack/react-query";\nexport const probe = () => useQueryClient();\n`,
   },
   {
     name: "a route handler may call fetch",
