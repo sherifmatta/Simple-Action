@@ -153,6 +153,12 @@ describe("the list region renders what the hook resolved to", () => {
     // Placeholders, not rows: no checkbox, no marker, no text.
     expect(html).not.toContain("checkbox-box");
     expect(html).not.toContain("data-completed");
+    // AC14: the empty state is not shown while the list is still loading, and
+    // there is no frame on the way to content in which it could be. The
+    // guarantee is structural — the panel is gated on `data` being defined,
+    // and during a load it is undefined — but AC14 is a named criterion, so
+    // the state it names is asserted rather than left to the argument.
+    expect(html).not.toContain("Nothing here yet.");
   });
 
   it("holds the region open and empty when the read failed (AC4, AC15)", () => {

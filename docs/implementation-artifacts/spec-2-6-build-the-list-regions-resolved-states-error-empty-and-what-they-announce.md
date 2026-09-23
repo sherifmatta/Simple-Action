@@ -5,6 +5,7 @@ created: '2026-09-23'
 status: 'done'
 route: 'oneshot'
 review_loop_iteration: 0
+followup_review_recommended: true
 context:
   - '{project-root}/docs/implementation-artifacts/epic-2-context.md'
   - '{project-root}/docs/implementation-artifacts/spec-2-5-seed-the-motion-module-and-show-skeleton-rows-while-the-list-loads.md'
