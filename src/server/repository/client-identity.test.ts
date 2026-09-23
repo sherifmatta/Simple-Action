@@ -293,12 +293,10 @@ describe("repository scope — identity functions only (AC4, matrix row 'Reposit
       )
       .join("\n");
 
-    // `listTodos` has left this list: Story 2.1 is the story that consumes it.
-    for (const todoFunction of [
-      "createTodo",
-      "setTodoCompleted",
-      "deleteTodo",
-    ]) {
+    // `listTodos` left this list with Story 2.1 and `createTodo` with Story
+    // 3.1 — each story removes the function it consumes. The two remaining
+    // arrive with Epics 4 and 5.
+    for (const todoFunction of ["setTodoCompleted", "deleteTodo"]) {
       expect(source).not.toMatch(
         new RegExp(`export\\s+(async\\s+)?function\\s+${todoFunction}\\b`),
       );
