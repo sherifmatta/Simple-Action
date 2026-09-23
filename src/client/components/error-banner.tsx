@@ -51,7 +51,11 @@ export function ErrorBannerRegion() {
     clearError,
     retryCurrentError,
   } = useErrorSlot();
-  const { error: readFailure, refetch } = useTodos();
+  // `readFailure`, not `error`. An optimistic write nulls `query.error`
+  // (`use-todos.ts` says why), so a banner keyed on it would tear itself and
+  // its `Retry` down the moment the user typed a Todo into a list that failed
+  // to load — EXPERIENCE.md requires the opposite there.
+  const { readFailure, refetch } = useTodos();
   const announce = useAnnounce();
 
   // What this component last put in the slot. A ref rather than state, and

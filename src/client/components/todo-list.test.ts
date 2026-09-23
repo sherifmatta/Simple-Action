@@ -61,6 +61,36 @@ const todo = (id: string, text: string, completed = false): Todo => ({
 
 const render = () => renderToStaticMarkup(createElement(TodoList));
 
+// The hook's states, named. Story 3.3 replaced `data === undefined` with
+// `listLanded` — "a Todo List from the server is what the cache holds" — and
+// with it went the ability to describe a state by `isPending` alone: an
+// optimistic row makes `data` defined and the query `success` while the list
+// is still on its way. Naming the states here is what keeps each case below
+// about the branch it is testing rather than about four fields.
+const loading = { status: "pending", isFetching: true, data: undefined, listLanded: false };
+const resolved = (data: Todo[]) => ({
+  status: "success",
+  isFetching: false,
+  data,
+  listLanded: true,
+});
+const refetching = (data: Todo[]) => ({ ...resolved(data), isFetching: true });
+const failed = {
+  status: "error",
+  isFetching: false,
+  data: undefined,
+  listLanded: false,
+  error: new Error("load failed"),
+};
+const retrying = { ...failed, isFetching: true };
+/** A Todo added while the list is still loading — Story 3.3 AC6. */
+const addedDuringLoad = (data: Todo[]) => ({
+  status: "success",
+  isFetching: true,
+  data,
+  listLanded: false,
+});
+
 beforeEach(() => mockUseTodos.mockReset());
 
 function elements(): string[] {
@@ -77,13 +107,12 @@ function elements(): string[] {
 
 describe("the list region renders what the hook resolved to", () => {
   it("renders one row per Todo, in the order the server sent them", () => {
-    mockUseTodos.mockReturnValue({
-      isPending: false,
-      data: [
+    mockUseTodos.mockReturnValue(
+      resolved([
         todo("0199a5c5-0000-7000-8000-000000000002", "send invoice"),
         todo("0199a5c5-0000-7000-8000-000000000001", "book dentist", true),
-      ],
-    });
+      ]),
+    );
     const html = render();
 
     expect(html.match(/<li/g)).toHaveLength(2);
@@ -100,7 +129,7 @@ describe("the list region renders what the hook resolved to", () => {
     // Was "renders an empty list as an empty <ul>, not as nothing", which
     // pinned the region as empty *and silent*. Story 2.6 is where a resolved
     // empty list stops looking identical to a failed one.
-    mockUseTodos.mockReturnValue({ isPending: false, data: [] });
+    mockUseTodos.mockReturnValue(resolved([]));
     const html = render();
     expect(html).toContain("<ul");
     expect(html).not.toContain("<li");
@@ -111,15 +140,9 @@ describe("the list region renders what the hook resolved to", () => {
   });
 
   it("returns to skeletons while Retry re-runs a read that failed (AC5)", () => {
-    // `isPending` is false here — the query is `status: "error"`,
-    // `fetchStatus: "fetching"` — which is exactly the state the old branch
-    // rendered as a blank rectangle.
-    mockUseTodos.mockReturnValue({
-      isPending: false,
-      isFetching: true,
-      data: undefined,
-      error: new Error("load failed"),
-    });
+    // The query is `status: "error"` with a fetch in flight, which is exactly
+    // the state the branch before Story 2.6 rendered as a blank rectangle.
+    mockUseTodos.mockReturnValue(retrying);
     const html = render();
     expect(html.match(/<li/g)).toHaveLength(3);
     expect(html).toContain("skeleton-row");
@@ -130,11 +153,9 @@ describe("the list region renders what the hook resolved to", () => {
     // The other half of widening the branch: a background refetch with data
     // in hand is not a loading state, which is what keeps every optimistic
     // mutation in Epics 3 through 5 from flashing placeholders (AC10).
-    mockUseTodos.mockReturnValue({
-      isPending: false,
-      isFetching: true,
-      data: [todo("0199a5c5-0000-7000-8000-000000000002", "send invoice")],
-    });
+    mockUseTodos.mockReturnValue(
+      refetching([todo("0199a5c5-0000-7000-8000-000000000002", "send invoice")]),
+    );
     const html = render();
     expect(html).not.toContain("skeleton-row");
     expect(html).toContain("send invoice");
@@ -145,7 +166,7 @@ describe("the list region renders what the hook resolved to", () => {
     // `render()` as the empty string. Story 2.5 is where the region stops
     // leaving the DOM: `isPending` is the initial load and nothing else, and
     // it is the one state that shows placeholders.
-    mockUseTodos.mockReturnValue({ isPending: true, data: undefined });
+    mockUseTodos.mockReturnValue(loading);
     const html = render();
     expect(html).toContain("<ul");
     expect(html.match(/<li/g)).toHaveLength(3);
@@ -162,17 +183,11 @@ describe("the list region renders what the hook resolved to", () => {
   });
 
   it("holds the region open and empty when the read failed (AC4, AC15)", () => {
-    // `isPending` is false once there is an error, and `data` stays
-    // undefined: the contents are *unknown*, not known-empty, so neither
-    // skeletons nor rows nor the empty state may show (epic-2-context: "A
-    // load failure is not an empty list"). The banner and `Retry` sit in the
-    // sticky block above, not in this region.
-    mockUseTodos.mockReturnValue({
-      isPending: false,
-      isFetching: false,
-      data: undefined,
-      error: new Error("load failed"),
-    });
+    // Nothing is fetching and `data` stays undefined: the contents are
+    // *unknown*, not known-empty, so neither skeletons nor rows nor the empty
+    // state may show (epic-2-context: "A load failure is not an empty list").
+    // The banner and `Retry` sit in the sticky block above, not here.
+    mockUseTodos.mockReturnValue(failed);
     const html = render();
     expect(html).toContain("<ul");
     expect(html).not.toContain("<li");
@@ -183,15 +198,14 @@ describe("the list region renders what the hook resolved to", () => {
   it("does not map over an absent list", () => {
     // The failure above is one `data.map` away from a crash that takes the
     // card down with it, and the region is the thing that must survive.
-    mockUseTodos.mockReturnValue({ isPending: false, data: undefined });
+    mockUseTodos.mockReturnValue(failed);
     expect(() => render()).not.toThrow();
   });
 
   it("shows no skeleton once the list has resolved", () => {
-    mockUseTodos.mockReturnValue({
-      isPending: false,
-      data: [todo("0199a5c5-0000-7000-8000-000000000002", "send invoice")],
-    });
+    mockUseTodos.mockReturnValue(
+      resolved([todo("0199a5c5-0000-7000-8000-000000000002", "send invoice")]),
+    );
     expect(render()).not.toContain("skeleton-row");
   });
 
@@ -217,10 +231,13 @@ describe("the list region reads the one query hook", () => {
   });
 
   it("renders a <ul> of skeletons or rows, and the empty state beside it", () => {
-    // Was `["ul", "TodoRow"]`, then `["ul", "SkeletonRow", "TodoRow"]`. Story
-    // 2.6 adds the last branch this region has; it still adds no wrapper,
-    // which is what keeps the `<ul>` a direct child of the card.
-    expect(elements()).toEqual(["ul", "SkeletonRow", "TodoRow", "EmptyState"]);
+    // Was `["ul", "TodoRow"]`, then `["ul", "SkeletonRow", "TodoRow"]`, then
+    // with Story 2.6's empty state. Story 3.3 reordered the first two rather
+    // than adding anything: rows render *then* skeletons, because an
+    // optimistic row added during a load sits above the placeholders and not
+    // instead of them (AC6). Still no wrapper, which is what keeps the `<ul>`
+    // a direct child of the card.
+    expect(elements()).toEqual(["ul", "TodoRow", "SkeletonRow", "EmptyState"]);
   });
 
   it("keys rows by the Todo's id, which is its final sort position", () => {
@@ -274,14 +291,12 @@ describe("the states this story does not build are absent, not stubbed", () => {
   });
 
   it("builds no loading state for a mutation", () => {
-    // AC10: an add, a toggle and a delete are optimistic and never show a
-    // skeleton. Story 2.6 had to widen the key — `isPending` is false while
-    // `Retry` re-runs a failed read — but the widening stays gated on `data`
-    // being absent, so a refetch over a list already in hand is still not a
-    // loading state. A bare `isFetching` would put skeletons under every
-    // background refetch and under every optimistic mutation.
-    expect(listSource).toMatch(/\bisPending\b/);
-    expect(listSource).toMatch(/isFetching && data === undefined/);
+    // Story 2.5 AC10: an add, a toggle and a delete are optimistic and never
+    // show a skeleton. The states above are what prove it — a refetch over a
+    // list already in hand renders no placeholder — so what is left here is
+    // the one claim a fixture cannot make: `isLoading` is not the key. It is
+    // `isPending && isFetching`, which an optimistic write turns false, and
+    // it reads like the right answer.
     expect(listSource).not.toMatch(/\bisLoading\b/);
   });
 
@@ -304,19 +319,11 @@ describe("the region is one element that never leaves the DOM (AC11)", () => {
     // unconditional and only its contents resolve, so Story 2.6's states have
     // something to mount into and the swap costs no layout shift.
     const states = [
-      { isPending: true, isFetching: true, data: undefined },
-      { isPending: false, isFetching: false, data: [] },
-      {
-        isPending: false,
-        isFetching: false,
-        data: [todo("0199a5c5-0000-7000-8000-000000000002", "x")],
-      },
-      {
-        isPending: false,
-        isFetching: false,
-        data: undefined,
-        error: new Error("load failed"),
-      },
+      loading,
+      resolved([]),
+      resolved([todo("0199a5c5-0000-7000-8000-000000000002", "x")]),
+      failed,
+      addedDuringLoad([todo("0199a5c5-0000-7000-8000-000000000002", "x")]),
     ];
     for (const state of states) {
       mockUseTodos.mockReturnValue(state);
@@ -329,24 +336,12 @@ describe("the region is one element that never leaves the DOM (AC11)", () => {
     // `aria-hidden` and carry no text, so without `aria-busy` a screen-reader
     // user cannot tell a list that is still loading from one that resolved to
     // nothing — both are an empty, unnamed `<ul>`.
-    mockUseTodos.mockReturnValue({
-      isPending: true,
-      isFetching: true,
-      data: undefined,
-    });
+    mockUseTodos.mockReturnValue(loading);
     expect(render()).toContain('aria-busy="true"');
 
     // Not busy once it has resolved, and not busy after a failure: a failed
     // read is finished, not working.
-    for (const settled of [
-      { isPending: false, isFetching: false, data: [] },
-      {
-        isPending: false,
-        isFetching: false,
-        data: undefined,
-        error: new Error("load failed"),
-      },
-    ]) {
+    for (const settled of [resolved([]), failed]) {
       mockUseTodos.mockReturnValue(settled);
       expect(render(), JSON.stringify(settled)).not.toContain("aria-busy");
     }
@@ -356,11 +351,7 @@ describe("the region is one element that never leaves the DOM (AC11)", () => {
     // `aria-busy` on an unnamed container reports that *something* is
     // working. The name is the vocabulary's own (`Todo List`), which
     // epic-2-context fixes as used verbatim in code as well as in copy.
-    mockUseTodos.mockReturnValue({
-      isPending: false,
-      isFetching: false,
-      data: [],
-    });
+    mockUseTodos.mockReturnValue(resolved([]));
     expect(render()).toContain('aria-label="Todo List"');
   });
 });
@@ -382,7 +373,7 @@ describe("stillness arrives as one marker from the motion module", () => {
     // AR-28, and what keeps every `className` in the product a static string
     // literal: the recipes in `app/globals.css` derive the suppression from
     // the marker (`skeleton-row.test.ts` asserts the rule).
-    mockUseTodos.mockReturnValue({ isPending: true, data: undefined });
+    mockUseTodos.mockReturnValue(loading);
     // No `window` here, so the module's server snapshot answers, and it
     // answers "still" — markup never ships a frame of motion it has not
     // confirmed is wanted.

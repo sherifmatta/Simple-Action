@@ -48,7 +48,7 @@ describe("the sticky top block is a container, not a component with contents", (
     // in the file, so a wrapper element added around an occupant — the usual
     // way a container quietly becomes a component with a layout of its own —
     // shows up here.
-    expect(elements()).toEqual(["div", "AddInput", "ErrorBannerRegion"]);
+    expect(elements()).toEqual(["div", "AddTodo", "ErrorBannerRegion"]);
   });
 
   it("writes no copy of its own", () => {
@@ -84,13 +84,13 @@ describe("the sticky top block is a container, not a component with contents", (
   it("places the banner region between the input and the tabs' slot", () => {
     // AC9's tab order — "immediately after the input's position and before
     // the filter tabs" — is element order in the rendered markup. Half of it
-    // is real now: Story 3.2 put `AddInput` above the banner, which is also
+    // is real now: Story 3.2 put the field above the banner, which is also
     // what makes the input first in the product's tab order (Story 3.2 AC9,
     // EXPERIENCE.md:194). The other neighbour is still a comment, so that
     // half stays asserted against the slot, which is what lets the claim be
     // made now rather than deferred to the story that adds it. The full
     // conversion to element order is Story 4.3 AC12.
-    const input = stickySource.indexOf("<AddInput");
+    const input = stickySource.indexOf("<AddTodo");
     const banner = stickySource.indexOf("<ErrorBannerRegion");
     const tabs = stickySource.indexOf("{/* 3. filter tabs");
 

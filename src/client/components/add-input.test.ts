@@ -10,7 +10,6 @@ import {
   ADD_INPUT_PLACEHOLDER,
   COUNTER_APPEARS_AT,
   ENTER_HINT_LABEL,
-  SUBMIT_NOT_YET_WIRED,
 } from "./add-input";
 
 // Covers epics.md Story 3.2 AC1, AC4, AC5, AC7, AC8 and AC9 — the half of the
@@ -147,8 +146,8 @@ describe("the field never waits on anything (AC1)", () => {
     // stickiness — `todo-card.test.ts` holds that rule for the whole tree.
     // Being first in the block is also AC9's tab order: the input comes
     // before `Retry` and before Epic 4's tabs because it is first in the DOM.
-    expect(stickySource).toContain("<AddInput />");
-    expect(stickySource.indexOf("<AddInput")).toBeLessThan(
+    expect(stickySource).toContain("<AddTodo />");
+    expect(stickySource.indexOf("<AddTodo")).toBeLessThan(
       stickySource.indexOf("<ErrorBannerRegion"),
     );
     expect(classes).not.toContain("sticky");
@@ -174,21 +173,23 @@ describe("the field never waits on anything (AC1)", () => {
     );
   });
 
-  it("is given no props by the block, because none can cross the boundary", () => {
-    // The plan had `StickyTopBlock` declare the placeholder and pass it as
-    // `onSubmit`. It cannot: the block is a Server Component and a function
-    // prop does not cross that boundary. The seam is the prop's default
-    // instead, and this is what would notice it being "fixed" back.
+  it("is reached through `AddTodo`, because no prop can cross the boundary", () => {
+    // The block is a Server Component and a function prop does not cross that
+    // boundary, so it cannot hand the field its `onSubmit`. Story 3.2 filled
+    // the seam with a no-op default; Story 3.3 deleted the default and put a
+    // client component on the other side. Both halves are asserted, because
+    // either one alone would pass in the state this story exists to make
+    // unreachable — a field on screen whose submit goes nowhere.
     expect(stickyCode).not.toContain("onSubmit");
-    // The seam is inert *and* is the prop's default. `toBeUndefined()` on the
-    // return value said nothing — every function without an explicit return
-    // satisfies it — where what matters is that nothing is wired behind it
-    // yet: an empty body, typed as the submit seam and doing nothing with it.
-    expect(SUBMIT_NOT_YET_WIRED.toString().replace(/\s+/g, "")).toBe("()=>{}");
-    expect(addInputSource).toContain("onSubmit = SUBMIT_NOT_YET_WIRED");
-    // And Story 3.3 is named where the replacement happens, so the seam is
-    // findable from the file rather than from this test.
-    expect(addInputSource).toContain("Story 3.3");
+    expect(stickyCode).toContain("<AddTodo />");
+    expect(stickyCode).not.toContain("<AddInput");
+    expect(addInputSource).not.toContain("SUBMIT_NOT_YET_WIRED");
+    // The prop is required: declared without `?` and given no default. Both
+    // spellings of "optional" are ruled out, and neither assertion depends on
+    // how the parameter list is wrapped.
+    expect(addInputSource).toContain("onSubmit: (text: string) => void");
+    expect(addInputSource).not.toContain("onSubmit?:");
+    expect(addInputSource).not.toContain("onSubmit =");
   });
 });
 

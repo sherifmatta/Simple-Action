@@ -14,13 +14,13 @@
 // is a thing a later story has to remember to delete, so there is nothing
 // there to delete.
 //
-// `AddInput` is given no props. The story's plan had a named placeholder
-// declared here and passed as `onSubmit`, and that cannot be built: this file
-// is a Server Component — `todo-list.test.ts` asserts it stays one — and
+// Slot 1 holds `AddTodo`, not `AddInput`, and the indirection is forced. This
+// file is a Server Component — `todo-list.test.ts` asserts it stays one — and
 // "passing a function as a prop from a Server Component to a Client Component
-// throws" (Next.js, Server and Client boundary guide). The placeholder is the
-// prop's default instead, declared in `add-input.tsx` beside the component it
-// belongs to, and Story 3.3 still has one named constant to replace.
+// throws" (Next.js, Server and Client boundary guide), so the block cannot
+// hand the field its `onSubmit`. Story 3.2 left that seam filled by a no-op
+// default; Story 3.3 put a client component on the other side of it instead,
+// which is the same arrangement one file over and needs nothing from here.
 //
 // The region is a component rather than markup written out here, and that is
 // forced as well as tidy: `sticky-top-block.test.ts` pins this file's `bg-*`
@@ -57,13 +57,13 @@
 // carries the block's top inset and the gap between its occupants; both are
 // untokenised literals, so both live in `app/globals.css` with the mockup
 // line they are transcribed from.
-import { AddInput } from "./add-input";
+import { AddTodo } from "./add-todo";
 import { ErrorBannerRegion } from "./error-banner";
 
 export function StickyTopBlock() {
   return (
     <div className="top-block-stack sticky top-0 z-10 -mx-gutter flex flex-col bg-card px-gutter">
-      <AddInput />
+      <AddTodo />
       <ErrorBannerRegion />
       {/* 3. filter tabs — Epic 4, Story 4.3 */}
     </div>

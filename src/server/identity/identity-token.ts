@@ -14,6 +14,8 @@
 // The raw token exists only in the cookie and in memory for the length of one
 // request. Only `hashIdentityToken`'s output is ever stored (AC5).
 
+import { uuidv7 } from "uuidv7";
+
 /** Lowercase hex, two characters per byte — the form both the token and the hash take. */
 function toHex(bytes: Uint8Array): string {
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
@@ -50,33 +52,17 @@ export async function hashIdentityToken(token: string): Promise<string> {
  *
  * `schema.ts` gives the primary key no DB-generated default, and the
  * ARCHITECTURE-SPINE "Ids" convention makes `client_identity` ids server-minted
- * UUIDv7. RFC 9562 layout: 48-bit big-endian Unix milliseconds, then version 7
- * in the high nibble of byte 6, then the `10` variant in the high bits of byte
- * 8, everything else random.
+ * UUIDv7.
  *
- * Monotonicity within a millisecond is deliberately not implemented: it matters
- * for `todo.id`, which AD-5 makes the sort key, and `client_identity.id` is
- * never sorted on. See this story's spec for why the pinned `uuidv7` package is
- * not used here yet.
+ * One line, because Story 3.3 added the pinned `uuidv7` package the
+ * architecture always specified (`ARCHITECTURE-SPINE.md:204`). What stood here
+ * was a hand-written RFC 9562 generator, written when adding a dependency was
+ * not this story's to do, and `deferred-work.md` recorded that it had to go
+ * once the package landed "or the two generators drift". AD-4 mints Todo ids in
+ * the browser from the same package, so the alternative was one repository with
+ * two implementations of one id scheme — and only one of them monotonic, which
+ * is the property AD-5 makes the whole sort order depend on.
  */
 export function mintIdentityId(): string {
-  const bytes = new Uint8Array(16);
-  crypto.getRandomValues(bytes);
-
-  // Unix milliseconds, big-endian, across bytes 0-5. `Date.now()` exceeds 32
-  // bits, so the top two bytes are divided out rather than shifted: `>>>`
-  // truncates its operand to 32 bits first.
-  const timestamp = Date.now();
-  bytes[0] = Math.floor(timestamp / 2 ** 40) & 0xff;
-  bytes[1] = Math.floor(timestamp / 2 ** 32) & 0xff;
-  bytes[2] = (timestamp >>> 24) & 0xff;
-  bytes[3] = (timestamp >>> 16) & 0xff;
-  bytes[4] = (timestamp >>> 8) & 0xff;
-  bytes[5] = timestamp & 0xff;
-
-  bytes[6] = (bytes[6] & 0x0f) | 0x70;
-  bytes[8] = (bytes[8] & 0x3f) | 0x80;
-
-  const hex = toHex(bytes);
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+  return uuidv7();
 }

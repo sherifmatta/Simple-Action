@@ -79,7 +79,7 @@ beforeEach(() => {
   slot.raiseError.mockReset();
   slot.retryCurrentError.mockReset();
   mockAnnounce.mockReset();
-  mockUseTodos.mockReturnValue({ error: null, refetch: vi.fn() });
+  mockUseTodos.mockReturnValue({ readFailure: null, refetch: vi.fn() });
 });
 
 describe("the region is part of the layout whether or not it holds a message (AC2)", () => {
@@ -221,7 +221,7 @@ describe("a failed read reaches the slot, with the right closure (AC5, AC6)", ()
   });
 
   it("raises nothing while the read is healthy", () => {
-    mockUseTodos.mockReturnValue({ error: null, refetch: vi.fn() });
+    mockUseTodos.mockReturnValue({ readFailure: null, refetch: vi.fn() });
     render();
     expect(slot.raiseError).not.toHaveBeenCalled();
     // The healthy branch clears rather than returning early, which is the

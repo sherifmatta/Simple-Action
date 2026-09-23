@@ -37,20 +37,29 @@
 // and show nothing. The banner that reports the failure is not here — see the
 // note at the `<ul>` below.
 //
-// `isPending` is true only when there is no data and no error, which is
-// precisely "the initial load is in flight" — but it is false the moment a
-// read fails, so after `Retry` the query is `status: "error"`,
-// `fetchStatus: "fetching"` and this region would show a blank rectangle
-// rather than the skeletons Story 2.6 AC5 requires. Hence the second
-// disjunct. It stays keyed to `data` being *absent* rather than to fetching
-// alone, which is what still keeps an add, a toggle or a delete from ever
-// showing a skeleton (Story 2.5 AC10).
+// The three states above are no longer exclusive, which is Story 3.3's whole
+// change here. A Todo added while the list is still loading is on screen
+// immediately and the skeletons keep pulsing beneath it (AC6), so the `<ul>`
+// renders its rows *and then* its skeletons rather than choosing between
+// them. The optimistic row does not pulse, because it is real.
 //
-// Story 3.3 is the case this still does not cover: skeletons pulsing beneath
-// an optimistic row added during load (EXPERIENCE.md:149), where writing that
-// row into the cache makes `data` defined. It needs a key that is not derived
-// from cache contents at all, and choosing one here would be guessing at that
-// story's shape.
+// `loading` is keyed on `listLanded` — "a Todo List from the server is what
+// the cache holds" — which `use-todos.ts` derives from `fetchStatus` and
+// explains at length. What it replaced was a test on `data` being absent, and
+// the replacement was forced: writing an optimistic row into the cache makes
+// `data` defined, so the old key said the load had finished the instant the
+// user pressed Enter. `deferred-work.md` recorded the need for a key not
+// derived from cache contents; this is it.
+//
+// Story 2.6 AC5 falls out of the same pair rather than needing a disjunct of
+// its own: `Retry` re-runs a read, so a read is in flight and no list has
+// landed, and the region owes that read its skeletons. A failure that is
+// *not* being retried shows nothing at all — nothing in flight, so nothing
+// pulsing — because a failure leaves the list unknown rather than
+// known-empty. And a Todo typed into a list that failed to load shows as a
+// row with the banner still above it, which is what EXPERIENCE.md asks for
+// and what keying this on the query would have got wrong: an optimistic
+// write makes the query look successful.
 //
 // The client boundary is here rather than on the card or the row. `TodoCard`
 // stays a Server Component — it holds no state and reads nothing — and
@@ -74,8 +83,8 @@ import { SKELETON_ROW_KEYS, SkeletonRow } from "./skeleton-row";
 import { TodoRow } from "./todo-row";
 
 export function TodoList() {
-  const { isPending, isFetching, data } = useTodos();
-  const loading = isPending || (isFetching && data === undefined);
+  const { isFetching, data, listLanded } = useTodos();
+  const loading = isFetching && !listLanded;
   // One attribute, set from the product's only reader of the preference; the
   // recipes in `app/globals.css` derive the stillness from it (AR-28). No
   // component branches on a duration and no `className` here is computed.
@@ -102,9 +111,10 @@ export function TodoList() {
         data-still={still ? true : undefined}
         className="flex flex-col gap-row-gap"
       >
+        {data?.map((todo) => <TodoRow key={todo.id} todo={todo} />)}
         {loading
           ? SKELETON_ROW_KEYS.map((key) => <SkeletonRow key={key} />)
-          : data?.map((todo) => <TodoRow key={todo.id} todo={todo} />)}
+          : null}
       </ul>
       {/*
         A sibling of the region rather than a child of it, and a fragment
@@ -113,12 +123,14 @@ export function TodoList() {
         something between the card and the region, which `todo-card.test.ts`
         and the mount test both assert is not there.
 
+        Gated on `listLanded` rather than on `data` being defined, for the
+        same reason the skeletons are: an optimistic row makes `data` defined
+        during the load, and a list that has not arrived is not an empty one.
+
         Only `all` is reachable in this epic. Epic 4 ships the Filter Views,
         which is what makes the other two variants selectable.
       */}
-      {data !== undefined && data.length === 0 ? (
-        <EmptyState variant="all" />
-      ) : null}
+      {listLanded && data?.length === 0 ? <EmptyState variant="all" /> : null}
     </>
   );
 }

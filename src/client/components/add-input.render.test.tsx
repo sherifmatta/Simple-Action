@@ -108,7 +108,13 @@ function stubCapabilities(answers: { pointer: boolean; reduced: boolean }): Medi
   return stub;
 }
 
-async function mount(onSubmit?: (text: string) => void): Promise<HTMLInputElement> {
+/**
+ * Story 3.3 made `onSubmit` required and deleted the no-op default that stood
+ * in for it, so the cases that are not about submitting supply their own.
+ */
+const NO_SUBMIT: (text: string) => void = () => {};
+
+async function mount(onSubmit: (text: string) => void = NO_SUBMIT): Promise<HTMLInputElement> {
   await act(async () => {
     root.render(<AddInput onSubmit={onSubmit} />);
   });
@@ -163,12 +169,12 @@ async function hydrate(): Promise<{
   unmount: () => Promise<void>;
 }> {
   const host = document.createElement("div");
-  host.innerHTML = renderToString(<AddInput />);
+  host.innerHTML = renderToString(<AddInput onSubmit={NO_SUBMIT} />);
   document.body.append(host);
 
   let hydrated: Root | undefined;
   await act(async () => {
-    hydrated = hydrateRoot(host, <AddInput />);
+    hydrated = hydrateRoot(host, <AddInput onSubmit={NO_SUBMIT} />);
   });
 
   const field = host.querySelector("input");

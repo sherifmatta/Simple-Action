@@ -11,11 +11,43 @@
 // (`eslint.config.mjs`, AD-1): every component reads Todos through `useTodos`
 // and none calls `fetch` itself.
 
-import { queryOptions } from "@tanstack/react-query";
+import { queryOptions, type QueryClient } from "@tanstack/react-query";
 
 import type { ErrorKind } from "@/shared/contract/errors";
 import type { Todo } from "@/shared/contract/todo";
+import { mergeTodoListById } from "./merge-todo-list";
+import { unconfirmedCreateIds } from "./pending-creates";
 import { TODOS_QUERY_KEY } from "./query-keys";
+
+/**
+ * The clients a Todo List has actually arrived at (Story 3.3 AC6).
+ *
+ * "Has the list landed?" cannot be answered from the query's own state, and
+ * that is not an oversight in TanStack: `setQueryData` dispatches a *manual*
+ * success, which sets `status`, `data`, `dataUpdatedAt`, `dataUpdateCount`
+ * and `error: null` exactly as a real response would (`query.js`,
+ * `successState`). So an optimistic row makes the query look loaded, and a
+ * failed read followed by an optimistic row makes it look successful. Every
+ * field that could have answered is a field the write forges.
+ *
+ * What cannot be forged is this: the `queryFn` runs only when the query
+ * fetches, and only its success path reaches the line below. A record kept
+ * here is therefore about what the *server* did, which is the question, and
+ * `deferred-work.md`'s "a key that is not derived from cache contents at all"
+ * is what it asks for.
+ *
+ * Keyed on the client rather than held in a component, so every consumer of
+ * `useTodos` gets the same answer regardless of when it mounted — a second
+ * reader appearing during a background refetch must not conclude the list has
+ * not arrived. A `WeakSet` because the entry should not outlive the client;
+ * nothing in the product resets a `QueryClient` without discarding it.
+ */
+const clientsWithServerList = new WeakSet<QueryClient>();
+
+/** Whether a Todo List from the server has reached this client's cache. */
+export function listHasLanded(client: QueryClient): boolean {
+  return clientsWithServerList.has(client);
+}
 
 /** The endpoint Story 2.1 built. Declared once so a caller cannot retype it. */
 export const TODOS_ENDPOINT = "/api/todos";
@@ -176,6 +208,15 @@ export async function fetchTodoList({
  * NFR-4 forbids. Attempting the request and reporting the failure is what
  * keeps the offline case a designed state with a way out.
  *
+ * The `queryFn` merges rather than returns (AD-16, Story 3.3). It is the one
+ * place in the product where a list response meets what the cache already
+ * holds, so it is where AD-16's rule belongs: `merge-todo-list.ts` decides
+ * what survives and `pending-creates.ts` says which rows a create is still
+ * protecting. `structuralSharing` cannot do this — it never sees the mutation
+ * cache — and v5 removed the query-level `onSuccess` that could have. Putting
+ * it here also means every read merges, so Story 2.6's `Retry` and a
+ * refetch-on-focus need no rule of their own.
+ *
  * `staleTime` and `refetchOnWindowFocus` are left at their defaults — `0` and
  * `true` — which Story 1.7 left for this epic to settle. Every consumer of the
  * list (the list region, the empty state, Epic 4's tab counts) mounts in the
@@ -190,7 +231,22 @@ export const todoListQueryOptions = queryOptions<
   typeof TODOS_QUERY_KEY
 >({
   queryKey: TODOS_QUERY_KEY,
-  queryFn: ({ signal }) => fetchTodoList({ signal }),
+  queryFn: async ({ signal, client }) => {
+    // The cache and the pending creates are read *after* the response, not
+    // beside it. Both change while this request is in flight — that is the
+    // entire race — so an argument list with the `await` in the middle of it
+    // would read the cache as it was when the read started, which for the
+    // add-during-load case is empty, and drop the Todo it was written to
+    // keep.
+    const incoming = await fetchTodoList({ signal });
+    clientsWithServerList.add(client);
+
+    return mergeTodoListById(
+      client.getQueryData<Todo[]>(TODOS_QUERY_KEY),
+      incoming,
+      unconfirmedCreateIds(client),
+    );
+  },
   retry: false,
   networkMode: "always",
 });

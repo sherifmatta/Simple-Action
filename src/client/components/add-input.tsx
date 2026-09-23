@@ -18,19 +18,19 @@
 // interactive from first paint, including while the skeletons are pulsing
 // underneath it.
 //
-// The submit seam is the `onSubmit` prop (AC2) and Story 3.3 replaces
-// `SUBMIT_NOT_YET_WIRED` below with the real mutation — one named constant,
-// not a restructuring.
+// The submit seam is the `onSubmit` prop (AC2), and what is behind it is not
+// this file's business. Story 3.2 shipped a no-op default because there was
+// no mutation to call; the story that built one deleted the default rather
+// than replacing it, so the field can no longer be rendered in the one state
+// it must never be in — accepting a Todo and discarding it.
 //
-// That constant lives here rather than in `sticky-top-block.tsx`, which is
-// the one place this file departs from the story's plan. The plan had the
-// block declare the placeholder and pass it down; that cannot be built.
-// `sticky-top-block.tsx` is a Server Component — `todo-list.test.ts` asserts
-// it stays one — and "passing a function as a prop from a Server Component to
-// a Client Component throws" (Next.js, Server and Client boundary guide). The
-// one thing that does cross is a Server Function, which AD-1 bans outright.
-// So the placeholder is the prop's default, declared in this client module,
-// and the block renders the component with no props at all.
+// The caller is `add-todo.tsx`, not `sticky-top-block.tsx`, and that is
+// forced rather than chosen. The block is a Server Component —
+// `todo-list.test.ts` asserts it stays one — and "passing a function as a
+// prop from a Server Component to a Client Component throws" (Next.js, Server
+// and Client boundary guide); the one thing that does cross is a Server
+// Function, which AD-1 bans outright. So a client component sits between the
+// block and this one and supplies the prop.
 //
 // Three things a component would normally carry are deliberately elsewhere:
 //
@@ -85,20 +85,16 @@ export const ENTER_HINT_LABEL = "Enter";
 export const COUNTER_APPEARS_AT = 450;
 
 /**
- * The submit seam, until Story 3.3 mints an id and posts it.
+ * The field, and nothing behind it.
  *
- * A named constant rather than an inline arrow so that the story replacing it
- * has one thing to find, and so that "the input clears and retains focus" is
- * observable in a test today, with a spy in this slot and no mutation in
- * existence.
+ * `onSubmit` is required, and what it does is deliberately unknown here.
+ * Story 3.2 shipped this component with a no-op default because there was no
+ * mutation to call; Story 3.3 deleted the default rather than replacing it,
+ * so that the one state this component must never be in — accepting a Todo
+ * and discarding it — cannot be reached by rendering it with no props.
+ * `add-todo.tsx` is the caller that knows there is a server.
  */
-export const SUBMIT_NOT_YET_WIRED: (text: string) => void = () => {};
-
-export function AddInput({
-  onSubmit = SUBMIT_NOT_YET_WIRED,
-}: {
-  onSubmit?: (text: string) => void;
-}) {
+export function AddInput({ onSubmit }: { onSubmit: (text: string) => void }) {
   const [text, setText] = useState("");
   const field = useRef<HTMLInputElement>(null);
   const autofocused = useRef(false);
