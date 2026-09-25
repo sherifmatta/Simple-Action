@@ -112,6 +112,19 @@ export type SetCompletedVariables = { todo: Todo; completed: boolean };
 export function setCompletedMutationOptions(
   client: QueryClient,
   announce: Announce,
+  /**
+   * Called when the server refuses, after the row has been put back.
+   *
+   * Story 4.3 needs it: a toggle that took a row out of the active Filter View
+   * starts a departure, and a refusal undoes the very thing the row is leaving
+   * over. Nothing else can see this — the rollback is a cache write and the
+   * Filter View does not read the cache — and polling for it cannot work,
+   * because `onMutate` is async, so there is always a commit where the row is
+   * marked departing and the optimistic write has not landed yet.
+   *
+   * Still no banner and no announcement: Story 4.4 owns both.
+   */
+  onRefused: (todo: Todo) => void = () => {},
 ): UseMutationOptions<Todo, Error, SetCompletedVariables> {
   return {
     mutationKey: SET_COMPLETED_MUTATION_KEY,
@@ -181,6 +194,9 @@ export function setCompletedMutationOptions(
       client.setQueryData<Todo[]>(TODOS_QUERY_KEY, (cached) =>
         upsertTodoById(cached, todo),
       );
+      // After the restore, so anybody acting on it sees the row as it is
+      // again rather than as the toggle had left it.
+      onRefused(todo);
     },
   };
 }
@@ -197,11 +213,15 @@ export function setCompletedMutationOptions(
  * every submit. `TodoList` holds it and passes the setter down, so `TodoRow`
  * stays presentational and needs no provider of its own.
  */
-export function useSetCompleted(): (todo: Todo, completed: boolean) => void {
+export function useSetCompleted(
+  onRefused?: (todo: Todo) => void,
+): (todo: Todo, completed: boolean) => void {
   const client = useQueryClient();
   const announce = useAnnounce();
 
-  const { mutate } = useMutation(setCompletedMutationOptions(client, announce));
+  const { mutate } = useMutation(
+    setCompletedMutationOptions(client, announce, onRefused),
+  );
 
   return useCallback(
     (todo: Todo, completed: boolean) => mutate({ todo, completed }),

@@ -42,13 +42,18 @@ function elements(): string[] {
 
 describe("the sticky top block is a container, not a component with contents", () => {
   it("renders the container and its two occupants", () => {
-    // Story 2.6 filled slot 2 and Story 3.2 filled slot 1. Only the tabs
-    // (Epic 4) are still a comment, so this list grows once more, at Story
-    // 4.3. An exact list rather than a `toContain`: it counts every JSX tag
-    // in the file, so a wrapper element added around an occupant — the usual
-    // way a container quietly becomes a component with a layout of its own —
-    // shows up here.
-    expect(elements()).toEqual(["div", "AddTodo", "ErrorBannerRegion"]);
+    // Story 2.6 filled slot 2, Story 3.2 filled slot 1 and Story 4.3 filled
+    // slot 3, which is the last of them — this list is now complete and does
+    // not grow again. An exact list rather than a `toContain`: it counts every
+    // JSX tag in the file, so a wrapper element added around an occupant — the
+    // usual way a container quietly becomes a component with a layout of its
+    // own — shows up here.
+    expect(elements()).toEqual([
+      "div",
+      "AddTodo",
+      "ErrorBannerRegion",
+      "FilterTabs",
+    ]);
   });
 
   it("writes no copy of its own", () => {
@@ -68,35 +73,33 @@ describe("the sticky top block is a container, not a component with contents", (
     expect(text).toEqual([]);
   });
 
-  it("holds the one unfilled slot in the order DESIGN.md fixes", () => {
-    // The comment form survives only for slots nobody has filled yet. Story
-    // 3.2 filled slot 1, so its comment is gone and the element below has
-    // taken over the claim; Story 4.3 AC12 is where the last one goes and the
-    // whole assertion converts to element order. The numbering is still
-    // pinned rather than the mere sequence — "3." is what proves the tabs go
-    // *after* the banner rather than merely somewhere.
+  it("leaves no slot standing as a comment (AC12)", () => {
+    // The comment form survived only for slots nobody had filled yet, and
+    // there are none left. Story 4.3 AC12 retired it: a numbered comment is a
+    // thing a later story has to remember to delete, and the claim it was
+    // standing in for — the order these three occupants appear in — is now
+    // made against the elements themselves in the test below.
     const slots = [...stickySource.matchAll(/\{\/\* (\d)\. ([a-z ]+) —/g)].map(
       ([, index, name]) => `${index}. ${name}`,
     );
-    expect(slots).toEqual(["3. filter tabs"]);
+    expect(slots).toEqual([]);
   });
 
-  it("places the banner region between the input and the tabs' slot", () => {
-    // AC9's tab order — "immediately after the input's position and before
-    // the filter tabs" — is element order in the rendered markup. Half of it
-    // is real now: Story 3.2 put the field above the banner, which is also
-    // what makes the input first in the product's tab order (Story 3.2 AC9,
-    // EXPERIENCE.md:194). The other neighbour is still a comment, so that
-    // half stays asserted against the slot, which is what lets the claim be
-    // made now rather than deferred to the story that adds it. The full
-    // conversion to element order is Story 4.3 AC12.
-    const input = stickySource.indexOf("<AddTodo");
-    const banner = stickySource.indexOf("<ErrorBannerRegion");
-    const tabs = stickySource.indexOf("{/* 3. filter tabs");
-
-    expect(input).toBeGreaterThan(-1);
-    expect(banner).toBeGreaterThan(input);
-    expect(tabs).toBeGreaterThan(banner);
+  it("orders the three occupants as DESIGN.md fixes them (AC12)", () => {
+    // DESIGN.md's vertical order for the block is add input → error banner
+    // region → filter tabs, and EXPERIENCE.md:194 makes the same sequence the
+    // product's tab order, because for these three it is element order that
+    // produces it. Asserted from the rendered elements rather than from source
+    // offsets or from a comment: `elements()` walks the JSX, so it cannot be
+    // satisfied by a string that happens to appear in the right place, and it
+    // fails if an occupant is moved, wrapped or replaced by a placeholder.
+    //
+    // The container is `elements()[0]`; the three occupants are what follow.
+    expect(elements().slice(1)).toEqual([
+      "AddTodo",
+      "ErrorBannerRegion",
+      "FilterTabs",
+    ]);
   });
 });
 

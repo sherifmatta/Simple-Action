@@ -99,11 +99,15 @@ function elements(): string[] {
 // --- AC5/AC6: the same geometry, class for class ----------------------------
 
 describe("a skeleton row is an Active row's geometry exactly (AC5, AC6)", () => {
-  // The two markers are not geometry: `group` is `todo-row.tsx`'s hook for
-  // its `group-data-` variants and `skeleton-row` is this component's hook
-  // for the recipe. Everything else on either `<li>` that is not gated on a
-  // Completion Status variant *is* the geometry, and the two must agree.
-  const MARKERS = new Set(["group", "skeleton-row"]);
+  // The markers are not geometry: `group` is `todo-row.tsx`'s hook for its
+  // `group-data-` variants, `skeleton-row` is this component's hook for the
+  // recipe, and `row-departing` is the row's hook for the collapse it leaves
+  // by — all three name a behaviour rather than describe a box. A skeleton
+  // has no departure to make: it is a placeholder for a row that has not
+  // arrived, and nothing can toggle it out of a Filter View. Everything else
+  // on either `<li>` that is not gated on a Completion Status variant *is*
+  // the geometry, and the two must agree.
+  const MARKERS = new Set(["group", "skeleton-row", "row-departing"]);
   const geometryOf = (classes: string[]) =>
     classes.filter((name) => !name.includes(":") && !MARKERS.has(name)).sort();
 

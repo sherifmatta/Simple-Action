@@ -502,3 +502,105 @@ describe("app/globals.css — `rounded-full` compiles to 999px via the real Tail
     }
   });
 });
+
+// --- Story 4.3: the filter tabs' two shadows, and the departure recipe ------
+
+describe("the filter tabs' shadows are DESIGN.md's, not a transcription", () => {
+  // Read out of `components.filter-tabs` rather than retyped here. These two
+  // are the only `--shadow-*` tokens with no count assertion behind them —
+  // DESIGN.md's frontmatter has no `shadows:` block to count against — so
+  // their *value* is what is pinned, against the document that decides it.
+  const tabs = (
+    frontmatterSection(designMd, "components") as Map<string, Map<string, string>>
+  ).get("filter-tabs") as Map<string, string>;
+
+  /**
+   * Compare on the values, not on their spelling.
+   *
+   * DESIGN.md writes `rgba(36,36,58,.10)` and CSS renders it `rgba(36, 36, 58,
+   * 0.1)` — a leading zero and a dropped trailing one. Both are the same
+   * number, and a test that failed on that would be pinning a transcription
+   * rather than a colour.
+   */
+  const normalise = (value: string) =>
+    value
+      .replace(/\s+/g, "")
+      .replace(/(^|[(,])\./g, "$10.")
+      .replace(/(\.\d*?)0+(?=\D|$)/g, "$1")
+      .replace(/\.(?=\D|$)/g, "");
+
+  it("recesses the track with the inset shadow DESIGN.md gives", () => {
+    const declared = /--shadow-tab-track:\s*([^;]+);/.exec(css)?.[1] ?? "";
+    expect(normalise(declared)).toBe(normalise(tabs.get("track-shadow") ?? ""));
+    // "The only place in the product where something is pushed *in*"
+    // (DESIGN.md:373) — so it is the only shadow token that may say `inset`.
+    expect(declared).toContain("inset");
+  });
+
+  it("raises the selected chip with the drop shadow DESIGN.md gives", () => {
+    const declared = /--shadow-tab-selected:\s*([^;]+);/.exec(css)?.[1] ?? "";
+    expect(normalise(declared)).toBe(normalise(tabs.get("selected-shadow") ?? ""));
+    expect(declared).not.toContain("inset");
+  });
+});
+
+describe("the departure collapses the row and the gap behind it", () => {
+  /** The `@utility` block's text, read brace-balanced out of the source. */
+  function departureRecipe(): string {
+    const opening = css.indexOf("@utility row-departing {");
+    expect(opening, "expected @utility row-departing to be declared").toBeGreaterThan(-1);
+    let depth = 0;
+    let end = css.indexOf("{", opening);
+    for (; end < css.length; end += 1) {
+      if (css[end] === "{") depth += 1;
+      else if (css[end] === "}") {
+        depth -= 1;
+        if (depth === 0) break;
+      }
+    }
+    expect(depth, "unbalanced braces in @utility row-departing").toBe(0);
+    return css.slice(opening, end + 1);
+  }
+
+  it("zeroes every part of the row's height, and the row gap with them", () => {
+    // Five properties, because leaving any one of them out leaves the row
+    // occupying space: its padding holds it at 28px, and the flex `<ul>`'s
+    // own `{spacing.row-gap}` survives the row that was inside it.
+    const departure = departureRecipe();
+    expect(departure).toContain("opacity: 0");
+    expect(departure).toContain("height: 0");
+    expect(departure).toContain("min-height: 0");
+    expect(departure).toContain("padding-block: 0");
+    // The gap closes from whichever side the row actually leaves one on: a
+    // flex container puts `{spacing.row-gap}` *between* its children, so the
+    // last row's closing gap is the one above it and pulling `margin-bottom`
+    // there would drag the list's own bottom edge up instead.
+    expect(departure).toContain(
+      ':not(:last-child) {\n    margin-bottom: calc(-1 * var(--spacing-row-gap));',
+    );
+    expect(departure).toContain(
+      ':last-child {\n    margin-top: calc(-1 * var(--spacing-row-gap));',
+    );
+    // `height: auto` cannot interpolate without it, and it has to be in effect
+    // before the height changes — so it sits on every row, not inside the rule
+    // that starts the collapse.
+    expect(departure).toMatch(
+      /@utility row-departing \{[^&]*interpolate-size: allow-keywords;/,
+    );
+  });
+
+  it("is named so it cannot be counted as a typography role", () => {
+    // The ten-role count above reads `@utility text-*` by name, so a recipe
+    // called `text-anything` would fail it even though it is not a typography
+    // role at all. Asserted as the real invariant — these two recipes are
+    // absent from what that extractor sees — rather than as a list of names
+    // nobody would write, which could not fail.
+    const roles = extractTypographyRoles(css);
+    expect(roles).not.toContain("departing");
+    expect(roles).not.toContain("tab-track");
+    for (const name of ["row-departing", "filter-tab-track"]) {
+      expect(css).toContain(`@utility ${name} {`);
+      expect(roles.some((role) => `text-${role}` === name)).toBe(false);
+    }
+  });
+});

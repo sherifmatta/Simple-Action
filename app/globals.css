@@ -112,6 +112,27 @@
      Never suppressed for aesthetics. */
   --shadow-focus: 0 0 0 1px var(--color-accent), 0 0 0 5px rgba(38, 128, 235, 0.3);
   --shadow-focus-on-complete: 0 0 0 1px var(--color-accent-deep), 0 0 0 5px rgba(27, 101, 194, 0.3);
+
+  /* -- the filter tabs' two shadows (DESIGN.md:373, 418; Story 4.3) --------
+     The one place in the product where something is pushed *in*: the track is
+     recessed and the selected segment is raised out of it. DESIGN.md gives
+     both as literals inside `components.filter-tabs` — `track-shadow` and
+     `selected-shadow` — with no token name of their own, and `app/globals.css`
+     is the one file AD-13 allows a literal in.
+
+     They are theme tokens rather than a recipe because they are shadows and
+     `--shadow-*` is the namespace Tailwind builds `shadow-*` utilities from,
+     which keeps them visible as classes on the element the way every other
+     tokenised value in this product is. The elevation block above is their
+     home for the same reason `--shadow-row-complete` is there rather than in
+     the row's recipe.
+
+     This is also the one token family `app/globals.test.ts` pins no count for,
+     because DESIGN.md's frontmatter has no `shadows:` block to count against —
+     so the assertion on these two is their *value*, read out of DESIGN.md's
+     `components.filter-tabs` and compared there. */
+  --shadow-tab-track: inset 0 1px 3px rgba(36, 36, 58, 0.1);
+  --shadow-tab-selected: 0 2px 6px -2px rgba(36, 36, 58, 0.22), 0 1px 1px rgba(36, 36, 58, 0.05);
 }
 
 /* ---------------------------------------------------------------------------
@@ -563,4 +584,120 @@
      the tree do it. Under reduced motion the numeral simply appears, which is
      the information without the movement. */
   [data-still="true"] > & { animation: none; }
+}
+
+/* ---------------------------------------------------------------------------
+   The filter tabs' track, and the departure a toggled row leaves by
+   (Story 4.3; DESIGN.md:418, 373; EXPERIENCE.md:161, 225).
+
+   Same rule as every block above: only the value with no token behind it lives
+   here. The track's fill, radius and padding, the selected chip's fill, label
+   colour and type role, and both shadows are all tokens and stay as utility
+   classes on the element, where the whole-tree scans can see them.
+   --------------------------------------------------------------------------- */
+
+@utility filter-tab-track {
+  /* `gap:2px` between the three segments (mockups/key-main.html:264). Two
+     pixels is not a spacing token and DESIGN.md gives the track a padding but
+     no gap, so rather than round it to `{spacing.1}` — which would double the
+     inset the track's own padding already draws — the mockup's literal is
+     transcribed here. The same treatment `top-block-stack` gives the block's
+     own 10px, and for the same reason. */
+  gap: 2px;
+}
+
+/* The departure (EXPERIENCE.md:161) — "it holds in its new Completion Status
+   for ~400ms so the change is visibly *caused*, then fades and collapses its
+   height over ~180ms while the rows below slide up to close the gap".
+
+   The hold is this transition's `transition-delay` rather than a timer, which
+   is both what `motion.test.ts` permits — `setTimeout` and `setInterval` are
+   banned across `app/` and `src/client/`, and so is every Tailwind
+   `transition-`/`duration-`/`animate-` utility — and a better description of
+   the behaviour: the row is removed because its departure *finished*, which
+   `onTransitionEnd` reports, not because a duration elapsed somewhere else.
+
+   A transition rather than a keyframe animation, for a reason that is about
+   being able to prove this works: React does not deliver `animationend` in the
+   jsdom this repository tests in, so a keyframed departure could only ever be
+   asserted as far as the marker being set, and the step that actually removes
+   the row — the one AC13 is about — would ship unexercised. `transitionend`
+   arrives, so the whole sequence is testable. Nothing else about the shape
+   changes: one declaration carries the hold, the collapse and the fade, and
+   the marker is still the only thing JavaScript sets.
+
+   The collapse zeroes the height, the row's own padding and its minimum
+   height, and pulls the flex `<ul>`'s `{spacing.row-gap}` closed behind it. All
+   five move together: leave the padding and the row stops at 28px, leave the
+   gap and the disappearance ends with a 9px jump.
+
+   `interpolate-size: allow-keywords` is what lets `height: auto` transition to
+   zero at all. Where the browser does not support it the height still reaches
+   zero — it flips rather than eases — and the fade, the gap close, the
+   `transitionend` on `opacity` and therefore the removal are all unaffected,
+   so the behaviour degrades to the information without the tween. */
+
+@utility row-departing {
+  /* Declared on every row rather than inside the rule that starts the
+     collapse. `interpolate-size` is what lets `height: auto` interpolate at
+     all, and it has to be in effect on the element *before* the height
+     changes — setting it in the same declaration block that flips
+     `height: auto → 0` means the pre-change computed style did not have it,
+     which is the state where the interpolation may be skipped. Inherited and
+     harmless on a row that is not going anywhere. */
+  interpolate-size: allow-keywords;
+
+  /* Gated on the marker rather than on the class, because the class is on
+     every row: `todo-row.tsx` carries one static `className` string literal and
+     varies only an attribute (AR-28), which is what keeps the whole-tree scans
+     able to see it. Clipping every row unconditionally would also be a
+     stylesheet-wide `overflow` that `todo-card.test.ts`'s narrowed allow-list
+     exists to refuse.
+
+     `180ms` is COLLAPSE_MS and `400ms` is DEPARTURE_HOLD_MS in
+     src/client/motion/motion.ts, spelled again because CSS cannot read a
+     TypeScript constant; `motion.test.ts` compiles this file and asserts the
+     two agree rather than trusting that they do. */
+  &[data-departing="true"] {
+    transition:
+      opacity 180ms ease-out 400ms,
+      height 180ms ease-out 400ms,
+      min-height 180ms ease-out 400ms,
+      padding-block 180ms ease-out 400ms,
+      margin-bottom 180ms ease-out 400ms,
+      margin-top 180ms ease-out 400ms;
+    overflow: hidden;
+    opacity: 0;
+    height: 0;
+    min-height: 0;
+    padding-block: 0;
+  }
+
+  /* The flex `<ul>` puts `{spacing.row-gap}` *between* its children, so the
+     gap a departing row leaves behind is the one after it — except for the
+     last row, which has no gap after it and whose closing gap is the one
+     above. Pulling `margin-bottom` on the last row would drag the list's own
+     bottom edge up by the full 9px, which is precisely the jump this is here
+     to prevent. */
+  &[data-departing="true"]:not(:last-child) {
+    margin-bottom: calc(-1 * var(--spacing-row-gap));
+  }
+
+  &[data-departing="true"]:last-child {
+    margin-top: calc(-1 * var(--spacing-row-gap));
+  }
+
+  /* Stillness, from the one marker the motion module sets on the list region.
+     `[data-still="true"] > .row-departing[data-departing="true"]` is (0,3,0)
+     against the rule above at (0,2,0), so it wins on specificity rather than on
+     source order — which it has to, because the production minifier reorders
+     them. The value is required and the relationship is the region's own child,
+     for the two reasons `skeleton-row` above gives.
+
+     Belt and braces rather than the mechanism: under reduced motion
+     `filter-view-context.tsx` never marks the row departing in the first place,
+     because with no transition no `transitionend` fires and a row parked in the
+     departing set would never leave. This is what catches a preference changed
+     mid-flight. */
+  [data-still="true"] > &[data-departing="true"] { transition: none; }
 }

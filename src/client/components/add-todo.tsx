@@ -26,6 +26,7 @@
 
 import { useMemo, useRef } from "react";
 
+import { useFilterView } from "@/client/todos/filter-view-context";
 import { useCreateTodo, type AddField } from "@/client/todos/use-create-todo";
 
 import { AddInput, type AddInputHandle } from "./add-input";
@@ -50,7 +51,12 @@ export function AddTodo() {
     [],
   );
 
-  const submit = useCreateTodo(control);
+  // A confirmed add shows All, so the new Todo is never created out of sight
+  // (Story 4.3 AC7). The wiring is here because this is the file that joins the
+  // field to the mutation; neither half has to learn about the other.
+  const { showAll } = useFilterView();
+
+  const submit = useCreateTodo(control, showAll);
 
   return <AddInput ref={field} onSubmit={submit} />;
 }

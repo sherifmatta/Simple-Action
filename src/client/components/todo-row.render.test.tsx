@@ -55,21 +55,27 @@ afterEach(async () => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
 });
 
-async function mount(todo: Todo) {
+async function mount(todo: Todo, departing = false) {
   const onToggle = vi.fn();
+  const onDeparted = vi.fn();
   // A `<ul>` around it, because an `<li>` outside a list is not what the
   // product renders and React would warn about the nesting.
   await act(async () => {
     root.render(
       <ul>
-        <TodoRow todo={todo} onToggle={onToggle} />
+        <TodoRow
+          todo={todo}
+          departing={departing}
+          onToggle={onToggle}
+          onDeparted={onDeparted}
+        />
       </ul>,
     );
   });
 
   const checkbox = container.querySelector("button");
   expect(checkbox, "the row rendered no control").not.toBeNull();
-  return { checkbox: checkbox as HTMLButtonElement, onToggle };
+  return { checkbox: checkbox as HTMLButtonElement, onToggle, onDeparted };
 }
 
 /**
@@ -272,5 +278,83 @@ describe("the tab order within a row (AC14)", () => {
     // after it.
     expect(checkbox.hasAttribute("tabindex")).toBe(false);
     expect(focusable).toHaveLength(1);
+  });
+});
+
+// --- Story 4.3: reporting that the departure has finished -------------------
+
+describe("the row reports its own departure (AC13)", () => {
+  /** The `transitionend` a collapsing row produces, for one property. */
+  const transitionEnd = (propertyName: string) =>
+    Object.assign(new Event("transitionend", { bubbles: true }), { propertyName });
+
+  it("says nothing while it is merely leaving", async () => {
+    // The marker is set and the transition has its 400ms hold to serve. The
+    // row is still on screen and still its own business until then.
+    const { onDeparted } = await mount(
+      { ...ACTIVE, completed: true },
+      true,
+    );
+    expect(onDeparted).not.toHaveBeenCalled();
+  });
+
+  it("reports once the fade has finished, with its own id", async () => {
+    const { onDeparted } = await mount({ ...ACTIVE, completed: true }, true);
+    const row = container.querySelector("li");
+
+    await act(async () => {
+      row?.dispatchEvent(transitionEnd("opacity"));
+    });
+
+    expect(onDeparted).toHaveBeenCalledExactlyOnceWith(ACTIVE.id);
+  });
+
+  it("reports once, not once per property", async () => {
+    // Five properties collapse together, so five `transitionend` events
+    // arrive. `opacity` is the one that is guaranteed to run — a height that
+    // cannot interpolate still flips to zero without easing — so it is the one
+    // that counts, and the others are ignored rather than debounced.
+    const { onDeparted } = await mount({ ...ACTIVE, completed: true }, true);
+    const row = container.querySelector("li");
+
+    await act(async () => {
+      for (const property of [
+        "height",
+        "min-height",
+        "padding-block",
+        "margin-bottom",
+        "opacity",
+      ]) {
+        row?.dispatchEvent(transitionEnd(property));
+      }
+    });
+
+    expect(onDeparted).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores a transition that finished somewhere inside it", async () => {
+    // `transitionend` bubbles. The checkbox has a focus ring that transitions
+    // in some browsers, and a row must not report a departure because one of
+    // its descendants finished something.
+    const { onDeparted } = await mount({ ...ACTIVE, completed: true }, true);
+    const checkbox = container.querySelector('[role="checkbox"]');
+
+    await act(async () => {
+      checkbox?.dispatchEvent(transitionEnd("opacity"));
+    });
+
+    expect(onDeparted).not.toHaveBeenCalled();
+  });
+
+  it("carries the marker only while it is departing", async () => {
+    // The attribute is absent rather than `false` when the row is staying, so
+    // the stylesheet can key on its presence — the `data-completed` idiom.
+    await mount({ ...ACTIVE, completed: true }, true);
+    expect(container.querySelector("li")?.getAttribute("data-departing")).toBe("true");
+
+    // `mount` renders into the same root, so this replaces the tree.
+    const staying = await mount(ACTIVE);
+    expect(container.querySelector("li")?.getAttribute("data-departing")).toBeNull();
+    expect(staying.onDeparted).not.toHaveBeenCalled();
   });
 });

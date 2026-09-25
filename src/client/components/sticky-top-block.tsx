@@ -9,10 +9,12 @@
 // than by re-implementing stickiness each time. `todo-card.test.ts` asserts
 // that one-declaration-site rule across the whole tree.
 //
-// Story 2.6 filled slot 2 and Story 3.2 filled slot 1. The last slot stays a
-// comment, which follows Story 1.7's rule for the card itself: a placeholder
-// is a thing a later story has to remember to delete, so there is nothing
-// there to delete.
+// Story 3.2 filled slot 1, Story 2.6 filled slot 2 and Story 4.3 filled slot
+// 3, so the block is complete and holds no placeholder at all — which was
+// always the point of Story 1.7's rule for the card itself: a placeholder is a
+// thing a later story has to remember to delete. `sticky-top-block.test.ts`
+// now asserts the order from the rendered elements and separately requires
+// that no slot comment survives, so the stand-in cannot come back.
 //
 // Slot 1 holds `AddTodo`, not `AddInput`, and the indirection is forced. This
 // file is a Server Component — `todo-list.test.ts` asserts it stays one — and
@@ -42,10 +44,12 @@
 //
 // `z-10` is not needed against today's siblings — a sticky element is
 // positioned and therefore paints above the non-positioned rows in its
-// stacking context regardless — but Story 4.3's departure animation and Story
-// 5.2's swipe both put transforms on rows, and a transformed row creates its
-// own stacking context that would otherwise paint in source order, which is
-// after this block.
+// stacking context regardless — but Story 5.2's swipe puts a transform on a
+// row, and a transformed row creates its own stacking context that would
+// otherwise paint in source order, which is after this block. Story 4.3's
+// departure was expected to need this too and in the end did not: it
+// collapses a row's height and fades it rather than moving it, so it creates
+// no stacking context. The declaration stays for the swipe.
 //
 // `-mx-gutter px-gutter` and `top-block-stack` are Story 3.2's, and both are
 // `deferred-work.md` entries that became visible the moment the block had a
@@ -59,13 +63,14 @@
 // line they are transcribed from.
 import { AddTodo } from "./add-todo";
 import { ErrorBannerRegion } from "./error-banner";
+import { FilterTabs } from "./filter-tabs";
 
 export function StickyTopBlock() {
   return (
     <div className="top-block-stack sticky top-0 z-10 -mx-gutter flex flex-col bg-card px-gutter">
       <AddTodo />
       <ErrorBannerRegion />
-      {/* 3. filter tabs — Epic 4, Story 4.3 */}
+      <FilterTabs />
     </div>
   );
 }

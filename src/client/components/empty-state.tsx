@@ -32,9 +32,17 @@
 import { useEffect } from "react";
 
 import { useAnnounce } from "@/client/feedback/announcer";
+import type { FilterView } from "@/client/todos/filter-view";
 
-/** Which Filter View resolved to nothing. Only `all` is reachable until Epic 4. */
-export type EmptyStateVariant = "all" | "active" | "completed";
+/**
+ * Which Filter View resolved to nothing.
+ *
+ * The Filter View's own type rather than a second spelling of it. They were
+ * written independently and were identical, which is the state a rename turns
+ * into a bug: an alias makes the compiler the thing that keeps them in step.
+ * Story 4.3 made all three reachable.
+ */
+export type EmptyStateVariant = FilterView;
 
 /**
  * The exact strings, transcribed from EXPERIENCE.md:72-75.

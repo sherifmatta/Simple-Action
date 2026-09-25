@@ -89,10 +89,16 @@ import type { Todo } from "@/shared/contract/todo";
 
 export function TodoRow({
   todo,
+  departing,
   onToggle,
+  onDeparted,
 }: {
   todo: Todo;
+  /** On its way out of the active Filter View, and animating as it goes. */
+  departing: boolean;
   onToggle: (todo: Todo, completed: boolean) => void;
+  /** The departure transition finished; this row's id is done leaving. */
+  onDeparted: (id: string) => void;
 }) {
   // The accessible name is the Todo's own text, borrowed from the element that
   // already renders it rather than duplicated into an `aria-label` that could
@@ -110,7 +116,24 @@ export function TodoRow({
   return (
     <li
       data-completed={todo.completed ? true : undefined}
-      className="group flex min-h-touch-target-min items-center gap-4 rounded-md bg-row-active p-row-padding shadow-row data-completed:bg-row-complete data-completed:shadow-row-complete"
+      // One more attribute, and no more: the class string stays a single
+      // static literal and `row-departing` gates everything it does on this
+      // marker, so nothing here is chosen in JavaScript (AR-28). The row
+      // itself knows only that it is leaving — which view it is leaving, and
+      // what that will be announced as, belong to the Filter View.
+      data-departing={departing ? true : undefined}
+      // `transitionend` bubbles and fires once per property, so a descendant
+      // transitioning at the wrong moment would otherwise report a departure
+      // this row had not made, and the row's own five properties would report
+      // it five times. Two guards, both cheap: the event's own target, and the
+      // one property whose transition is guaranteed to run — a height that
+      // cannot interpolate still flips, and `opacity` always eases.
+      onTransitionEnd={(event) => {
+        if (event.target === event.currentTarget && event.propertyName === "opacity") {
+          onDeparted(todo.id);
+        }
+      }}
+      className="group row-departing flex min-h-touch-target-min items-center gap-4 rounded-md bg-row-active p-row-padding shadow-row data-completed:bg-row-complete data-completed:shadow-row-complete"
     >
       <button
         type="button"

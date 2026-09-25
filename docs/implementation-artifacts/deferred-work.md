@@ -362,3 +362,135 @@ The file is append-only, so a closure is recorded here rather than by deleting t
 - source_spec: `spec-4-2-the-checkbox-and-the-status-change-it-applies-before-the-server-answers.md`
   summary: `setCompletedMutationOptions` is exported so the mutation can be driven with no DOM, which is one more export than the hook strictly needs.
   evidence: `use-set-completed.test.ts` runs the optimistic write, the per-entity rollback under two concurrent toggles and the cancelled read through a real `MutationObserver` under `environment: "node"` — the same argument `todo-list-query.ts` makes for `todoListQueryOptions`, reached from the mutation side, and the reason those three bugs are provable at all without a mounted card. The cost is that a caller could bypass `useSetCompleted` and build its own observer. Nothing lints that today; the `useQuery` wall this story added is the shape such a rule would take, and the question becomes worth answering when Epic 5's delete adds the third hook with the same seam.
+
+## Closed by: `spec-4-3-build-the-filter-tabs-and-make-a-departing-todo-leave-visibly.md`
+
+The file is append-only, so a closure is recorded here rather than by deleting
+the entries above.
+
+- closes: "The sticky block's three-slot ordering is pinned by a regex over JSX
+  comments and by nothing else." (`spec-2-6-...md`)
+  evidence: Slot 3 now holds `<FilterTabs />`, so there is no unfilled slot left
+  for a comment to stand in for. `sticky-top-block.test.ts` asserts the order
+  from `elements()` — the JSX tags themselves — and a second assertion requires
+  the comment-regex to match nothing at all, so a reintroduced placeholder fails
+  rather than quietly taking over the claim. The third guard, the exact element
+  list, grew to four entries and is what catches a wrapper added around an
+  occupant. AC12.
+
+- closes: "The empty state's Active and Completed variants are built and tested
+  but unreachable, so nothing proves the list region would ever select them."
+  (`spec-2-6-...md`)
+  evidence: `todo-list.tsx` passes the live Filter View as the variant, and
+  emptiness is now the *filtered* list's rather than the whole list's — a list
+  of four Completed Todos is empty in the Active view and says so.
+  `todo-list.render.test.tsx` selects each view through the mounted card and
+  asserts the matching panel and its announcement, including the case the entry
+  named as the one nothing covered: switching between two empty Filter Views,
+  where the panel never unmounts and only the variant changes. AC10.
+
+- closes: "Three of the motion module's four constants have no consumer and no
+  test beyond their own value." (`spec-2-5-...md`)
+  evidence: `DEPARTURE_HOLD_MS` and `COLLAPSE_MS` have their first consumer.
+  `@utility row-departing` carries the hold as a `transition-delay` and the
+  collapse as a `transition-duration`, and `motion.test.ts` compiles the
+  stylesheet and asserts both numbers against the module's constants rather
+  than trusting the re-spelling. `FIRST_RUN_NUDGE_MS` is still unconsumed and
+  still waits for Story 5.D1.
+
+## Deferred from: `spec-4-3-build-the-filter-tabs-and-make-a-departing-todo-leave-visibly.md`
+
+- source_spec: `spec-4-3-build-the-filter-tabs-and-make-a-departing-todo-leave-visibly.md`
+  summary: Under reduced motion a departure's announcement is replaced by the
+  toggle's own confirmation before a screen reader is likely to have read it.
+  evidence: Both sentences belong to one interaction. The departure announces
+  synchronously — EXPERIENCE.md:225 requires it when the motion is cut — and
+  the toggle's `book dentist, Completed` follows from `onSuccess` when the
+  request settles, into the same single polite region, replacing it. With the
+  transition running the two are ~580ms apart and the departure lands last, so
+  this is specific to reduced motion. Fixing it means giving the announcer a
+  queue, which changes every announcement in the product and belongs to the
+  announcer rather than to this story; `announcement.ts` already models a
+  single slot deliberately. `todo-list.render.test.tsx` asserts the observable
+  end state and `filter-view-context.test.tsx` asserts the departure is
+  announced at the point it happens, so neither test pretends otherwise.
+  Natural owner is Story 6.2's assistive-technology audit.
+
+- source_spec: `spec-4-3-build-the-filter-tabs-and-make-a-departing-todo-leave-visibly.md`
+  summary: The filter tabs are a `tablist` with no `tabpanel` and no roving
+  tabindex, which is two deliberate departures from the ARIA authoring
+  practices for tabs.
+  evidence: DESIGN.md:494 makes `aria-selected` load-bearing — it is why the
+  chip's 1.16:1 fill against the track is accepted — and `aria-selected` is
+  valid on almost nothing else. EXPERIENCE.md:194 then puts all three segments
+  in the tab order, which rules out the roving tabindex APG's pattern calls
+  for. The list region is not a panel these controls own; it carries its own
+  `aria-label="Todo List"`. Both choices are defensible and neither has been
+  tried against a real screen reader in this repository, because nothing here
+  runs one. Natural owner is Story 6.7's keyboard and assistive-technology
+  audit, which is where a real-AT pass would either confirm the pairing or ask
+  for `aria-pressed` toggle buttons instead.
+
+- source_spec: `spec-4-3-build-the-filter-tabs-and-make-a-departing-todo-leave-visibly.md`
+  summary: `height: auto` is transitioned to zero through `interpolate-size`,
+  which not every browser supports, and nothing here detects the difference.
+  evidence: The collapse animates height, min-height, padding-block and the
+  row gap together. Without `interpolate-size: allow-keywords` the height
+  reaches zero by flipping rather than easing, so the row still leaves and the
+  fade, the gap close and the `transitionend` that removes it are unaffected —
+  it degrades to the information without the tween. That is stated in the
+  recipe's comment and is the reason the removal hangs off `opacity`'s
+  `transitionend` rather than the height's. jsdom computes no styles, so no
+  test observes either path. Natural owner is Epic 6's cross-browser pass.
+
+- source_spec: `spec-4-3-build-the-filter-tabs-and-make-a-departing-todo-leave-visibly.md`
+  summary: `useTodos()` now has the third consumer the tracked-properties entry
+  was waiting for.
+  evidence: `deferred-work.md` recorded that `useTodos()` spreads the query
+  result, which opts its consumers out of TanStack's tracked-properties
+  re-render optimisation, and said it was "worth revisiting if Epic 4's tab
+  counts add a third consumer". `FilterTabs` is that consumer: it reads `data`
+  and `listLanded` on every render of the sticky block. The fix is a nested
+  return or an explicit `notifyOnChangeProps`, neither of which this story
+  needed to make the counts correct. Recorded rather than taken, because it is
+  a performance change with no test that would show it and the entry it answers
+  is still open above.
+
+- source_spec: `spec-4-3-build-the-filter-tabs-and-make-a-departing-todo-leave-visibly.md`
+  summary: The tab counts and the rows on screen disagree for the ~580ms a
+  departure lasts, by design, and no test enters that window.
+  evidence: `FilterTabs` counts the cached list, which the optimistic toggle has
+  already written; `todo-list.tsx` deliberately holds the departing row on
+  screen until its transition ends. So in the Active view a departing row
+  renders under a count that has already stopped counting it. This is the right
+  way round — the count follows the truth and the row is the one lagging, on
+  purpose — but it is a real discrepancy a user can see, and the AC5 case in
+  `todo-list.render.test.tsx` runs in the All view, where no departure can
+  happen, so nothing pins it either way. `filter-view.test.ts`'s rationale used
+  to claim the two "must never disagree" and now says what it actually means.
+  Natural owner is Story 6.1's end-to-end pass, which is where a decision about
+  holding the count back for the hold could be made against the real thing.
+
+- source_spec: `spec-4-3-build-the-filter-tabs-and-make-a-departing-todo-leave-visibly.md`
+  summary: A departing row's id stays in the departing set if the row leaves the
+  cache before its transition ends.
+  evidence: `endDeparture` is driven by the row's own `transitionend`, so a row
+  removed from the cache by a refetch mid-departure never reports and its entry
+  is never released. Nothing renders for it, so nothing is visibly wrong; the
+  set simply holds one dead id for the life of the mount, and `isDeparting`
+  answers `true` for an id that cannot come back with the same Completion
+  Status. Epic 5's delete is the first thing that removes rows for real, and it
+  will need the same release path, so the two are worth answering together.
+  Natural owner is Epic 5.
+
+- source_spec: `spec-4-3-build-the-filter-tabs-and-make-a-departing-todo-leave-visibly.md`
+  summary: Re-affirmed, not closed — the sticky block's live height now has a
+  fourth occupant and `scroll-padding-top` is still hard-coded.
+  evidence: The open entry above records that `scroll-padding-top` sized to the
+  sticky block's measured height "becomes reachable the moment Epic 4's rows
+  carry focusable controls". This story adds the filter tabs — roughly 44px plus
+  the block's 10px gap — to that block while the row checkboxes Story 4.2 added
+  are already focusable, so a keyboard user tabbing down a long list now lands
+  further under a taller sticky block than when the entry was written. Nothing
+  here changes the fix or its owner (Story 6.2, WCAG 2.4.11); this records that
+  the condition it was waiting for has arrived and the margin got worse.

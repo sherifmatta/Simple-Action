@@ -27,10 +27,18 @@ import type { Todo } from "@/shared/contract/todo";
 // `window` to ask, `useReducedMotion()` reports stillness, so every render
 // below carries the still marker.
 
-const { mockUseTodos, mockAnnounce, mockSetCompleted } = vi.hoisted(() => ({
+const {
+  mockUseTodos,
+  mockAnnounce,
+  mockSetCompleted,
+  mockNoteToggle,
+  mockEndDeparture,
+} = vi.hoisted(() => ({
   mockUseTodos: vi.fn(),
   mockAnnounce: vi.fn(),
   mockSetCompleted: vi.fn(),
+  mockNoteToggle: vi.fn(),
+  mockEndDeparture: vi.fn(),
 }));
 vi.mock("@/client/todos/use-todos", () => ({ useTodos: mockUseTodos }));
 // Story 4.2 gave this component a second hook. `useSetCompleted` reaches for a
@@ -47,6 +55,23 @@ vi.mock("@/client/todos/use-set-completed", () => ({
 // string is announced, politely, is `empty-state.test.ts`'s.
 vi.mock("@/client/feedback/announcer", () => ({
   useAnnounce: () => mockAnnounce,
+}));
+// Story 4.3 gave it a third. `useFilterView()` throws outside its provider by
+// design, and what it decides — which rows match, which one is leaving and what
+// that announces — is `filter-view.test.ts`'s and
+// `filter-view-context.test.tsx`'s. This file renders with `renderToStaticMarkup`
+// and is about which branch renders, so the view is pinned to All and nothing
+// is departing: the states the other two views produce are asserted through a
+// real DOM in `todo-list.render.test.tsx`.
+vi.mock("@/client/todos/filter-view-context", () => ({
+  useFilterView: () => ({
+    view: "all" as const,
+    select: vi.fn(),
+    showAll: vi.fn(),
+    isDeparting: () => false,
+    noteToggle: mockNoteToggle,
+    endDeparture: mockEndDeparture,
+  }),
 }));
 
 const { TodoList } = await import("./todo-list");
@@ -254,8 +279,19 @@ describe("the list region reads the one query hook", () => {
     // mutation lives here and arrives as a prop. A `useSetCompleted()` inside
     // `TodoRow` would be one mutation observer per row and would make every
     // markup test of the row mount two providers to exercise neither.
-    expect(listSource.match(/useSetCompleted\(\)/g)).toHaveLength(1);
-    expect(listSource).toMatch(/onToggle=\{setCompleted\}/);
+    expect(listSource.match(/useSetCompleted\(/g)).toHaveLength(1);
+    // Story 4.3 gave it an argument: the mutation reports a refusal so the
+    // departure it started can be called off. Nothing else learns of a
+    // rollback — it is a cache write — and polling for it cannot work, because
+    // `onMutate` is async and there is always a commit where the row is marked
+    // departing and the optimistic write has not landed.
+    expect(listSource).toMatch(/cancelDepartures\(\[todo\.id\]\)/);
+    // Story 4.3 put one function between the hook and the row: the Filter View
+    // has to hear about a toggle before the cache is written, so the row still
+    // gets one callback and the list is still where the two are joined.
+    expect(listSource).toMatch(/onToggle=\{toggle\}/);
+    expect(listSource).toMatch(/noteToggle\(todo, completed\);/);
+    expect(listSource).toMatch(/setCompleted\(todo, completed\);/);
     // And the list itself never reads Completion Status — `todo-row.tsx` is
     // the one file that does (`todo-row.test.ts` asserts the whole surface).
     expect(listSource).not.toMatch(/\.completed\b/);

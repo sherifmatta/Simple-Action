@@ -75,7 +75,12 @@
 // design value; here it is the value's own job. The `<ul>` needs no list
 // reset — Tailwind's preflight already strips the marker, margin and padding.
 
+import { useCallback, useEffect } from "react";
+
 import { useReducedMotion } from "@/client/motion/motion";
+import type { Todo } from "@/shared/contract/todo";
+import { matchesFilterView } from "@/client/todos/filter-view";
+import { useFilterView } from "@/client/todos/filter-view-context";
 import { useSetCompleted } from "@/client/todos/use-set-completed";
 import { useTodos } from "@/client/todos/use-todos";
 
@@ -92,11 +97,77 @@ export function TodoList() {
   // inside `TodoRow` would make every test of the row's markup mount two
   // providers to exercise neither. `TodoRow` stays presentational and knows
   // only that something happens when its checkbox is pressed.
-  const setCompleted = useSetCompleted();
+  //
+  // The Filter View, its departures, and the one call that joins them. The
+  // list reads Completion Status through `matchesFilterView` rather than
+  // directly — `todo-list.test.ts` keeps this file free of it, and the
+  // predicate, the three counts and the departure rule are one rule that
+  // belongs in one module.
+  const {
+    view,
+    isDeparting,
+    noteToggle,
+    releaseDepartures,
+    cancelDepartures,
+    endDeparture,
+  } = useFilterView();
+
+  // A refused toggle undoes the change a departure is leaving over, and this
+  // is the only place that learns of it: the rollback is a cache write, and
+  // polling the cache for it cannot work because `onMutate` is async — there
+  // is always a commit where the row is marked departing and the optimistic
+  // write has not landed. Without this the row finishes collapsing, announces
+  // a removal that never happened, and pops back at full height.
+  const setCompleted = useSetCompleted(
+    useCallback((todo: Todo) => cancelDepartures([todo.id]), [cancelDepartures]),
+  );
   // One attribute, set from the product's only reader of the preference; the
   // recipes in `app/globals.css` derive the stillness from it (AR-28). No
   // component branches on a duration and no `className` here is computed.
   const still = useReducedMotion();
+
+  // A departing row no longer matches the view — that is what makes it depart
+  // — so it is kept by name until its transition reports that it has finished.
+  // Without this the row would be filtered out in the same commit that marked
+  // it leaving, and there would be nothing on screen to leave.
+  const visible = data?.filter(
+    (todo) => matchesFilterView(todo, view) || isDeparting(todo.id),
+  );
+
+  // A departure is a row that stopped matching the view, so a row that matches
+  // again is not departing — whoever made it match. A toggle back is the
+  // obvious case and the Filter View handles that itself; the one it cannot
+  // see is a *refused* toggle, where Story 4.2's rollback restores the status
+  // in the cache and deliberately says nothing to anybody. Without this the
+  // row would finish collapsing, announce a removal that never happened, and
+  // then pop back at full height.
+  //
+  // A departing row that has left the cache entirely is released for the same
+  // reason: it will never render again, so no `transitionend` is coming for it.
+  // Joined into a string so the effect below has a statically checkable
+  // dependency: the array's identity changes on every render and its contents
+  // almost never do.
+  const departing = (data ?? [])
+    .filter((todo) => isDeparting(todo.id))
+    .map((todo) => todo.id)
+    .join(" ");
+
+  useEffect(() => {
+    // A preference that flipped to `reduce` mid-departure takes the transition
+    // away from rows already leaving, so nothing will ever report them
+    // finished. They get the end state now, announcement included — which is
+    // what AC16 asks for when the preference was set to begin with.
+    if (still && departing !== "") releaseDepartures(departing.split(" "));
+  }, [still, releaseDepartures, departing]);
+
+  // The Filter View is told before the cache is written, so the marker and the
+  // optimistic status land in one commit: the row holds in its *new* status,
+  // which is the whole point of the hold. Both calls take the status the user
+  // asked for rather than a toggle instruction (AD-6).
+  const toggle = (todo: Todo, completed: boolean) => {
+    noteToggle(todo, completed);
+    setCompleted(todo, completed);
+  };
 
   return (
     <>
@@ -119,8 +190,14 @@ export function TodoList() {
         data-still={still ? true : undefined}
         className="flex flex-col gap-row-gap"
       >
-        {data?.map((todo) => (
-          <TodoRow key={todo.id} todo={todo} onToggle={setCompleted} />
+        {visible?.map((todo) => (
+          <TodoRow
+            key={todo.id}
+            todo={todo}
+            departing={isDeparting(todo.id)}
+            onToggle={toggle}
+            onDeparted={endDeparture}
+          />
         ))}
         {loading
           ? SKELETON_ROW_KEYS.map((key) => <SkeletonRow key={key} />)
@@ -137,10 +214,12 @@ export function TodoList() {
         same reason the skeletons are: an optimistic row makes `data` defined
         during the load, and a list that has not arrived is not an empty one.
 
-        Only `all` is reachable in this epic. Epic 4 ships the Filter Views,
-        which is what makes the other two variants selectable.
+        The variant is the live Filter View, which is what makes the Active
+        and Completed panels reachable for the first time (AC10). Emptiness is
+        the *filtered* list's, not the whole list's: a list with four Completed
+        Todos and no Active one is empty in the Active view and says so.
       */}
-      {listLanded && data?.length === 0 ? <EmptyState variant="all" /> : null}
+      {listLanded && visible?.length === 0 ? <EmptyState variant={view} /> : null}
     </>
   );
 }

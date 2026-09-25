@@ -102,7 +102,18 @@ export type AddField = {
  * `Retry`, and a create attempted while the browser reports itself offline
  * must fail visibly rather than pause into a state with nothing to press.
  */
-export function useCreateTodo(field: AddField): (text: string) => void {
+export function useCreateTodo(
+  field: AddField,
+  /**
+   * Called on every confirmed add (Story 4.3 AC7).
+   *
+   * Passed in rather than reached for, which is the `AddField` seam's own
+   * convention and keeps this hook's dependencies what they were: a create
+   * does not need to know that Filter Views exist, only that something wants
+   * to hear about a success.
+   */
+  onAdded: () => void,
+): (text: string) => void {
   const client = useQueryClient();
   const announce = useAnnounce();
   const { raiseError, clearError } = useErrorSlot();
@@ -152,6 +163,12 @@ export function useCreateTodo(field: AddField): (text: string) => void {
         upsertTodoById(cached, confirmed),
       );
       announce(addedAnnouncement(confirmed.text), "polite");
+
+      // AC7: "given a successful add, the Filter View is forced to All, so a
+      // newly created Todo is never created out of sight". Unconditional, and
+      // deliberately not folded into the `clearAndFocus` branch below — that
+      // branch is a retry's, and a first-time add must move the view too.
+      onAdded();
 
       // AC5. A first-time submit cleared the field on Enter; a retry did not,
       // because AC2 holds the text until the add succeeds. This is that

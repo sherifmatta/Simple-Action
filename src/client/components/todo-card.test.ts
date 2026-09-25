@@ -152,8 +152,29 @@ describe("the page body is the only scrolling element (AC3)", () => {
     ]);
   });
 
-  it("declares no overflow in the stylesheet either", () => {
-    expect(globalsCss).not.toMatch(/\boverflow(-[xy])?\s*:/);
+  it("declares overflow in the stylesheet only where a row collapses away", () => {
+    // Narrowed from a flat ban by Story 4.3, and narrowed rather than dropped.
+    //
+    // The ban above exists because a clipping *ancestor* of the sticky block
+    // cuts it off — that is the propagation argument the allow-list of one
+    // makes for `<body>`. A departing row is not an ancestor of the sticky
+    // block; it is a descendant of the list region, below it, and an ancestor
+    // of nothing but its own text. Clipping it clips the thing being clipped
+    // on purpose: `row-departing` collapses the row's height to zero and the
+    // content has to be cut off as it goes, or it spills over the rows sliding
+    // up underneath.
+    //
+    // So the rule becomes an allow-list here too, and every `overflow` in the
+    // stylesheet must still be accounted for by name. The assertion is the
+    // declaring rule's selector rather than the mere count, because `overflow`
+    // added to any *other* recipe would keep a count of one honest while
+    // reintroducing exactly the clipping ancestor this whole describe block is
+    // about.
+    const declarations = [
+      ...globalsCss.matchAll(/([^{}]*)\{[^{}]*\boverflow(-[xy])?\s*:/g),
+    ].map(([, before]) => before.trim().split("\n").pop()?.trim());
+
+    expect(declarations).toEqual(['&[data-departing="true"]']);
   });
 });
 
@@ -245,16 +266,33 @@ describe("the card's children are in DESIGN.md's fixed order (AC5)", () => {
       return [];
     });
     // The first three regions of the order — add input, error banner region,
-    // filter tabs — are the sticky block's occupants, so at the card's own
-    // level the order is two children. Nothing renders above the block.
+    // filter tabs — are the sticky block's occupants, so below the provider
+    // the order is two children. Nothing renders above the block.
     //
-    // Story 2.4 replaced the empty `div` Story 2.3 left with the component
-    // that owns the list region. The assertion is still positional and still
-    // two entries: what changed is that the region now has a name, because it
-    // has contents and a client boundary. Skeletons (2.6), the empty state
-    // (2.8) and their suppression on failure (2.7) are branches inside it
-    // rather than new children here.
-    expect(children).toEqual(["StickyTopBlock", "TodoList"]);
+    // Story 4.3 put `FilterViewProvider` between the card and both of them,
+    // because both read the Filter View and this is their nearest common
+    // ancestor. It renders no DOM element, so the card's own box still has
+    // exactly two things in it and the sticky block is still a direct child of
+    // the padded surface it sticks inside — which is what the rest of this file
+    // asserts about. The positional claim is therefore made one level down,
+    // where the two regions actually are.
+    expect(children).toEqual(["FilterViewProvider"]);
+
+    const occupants = firstElement().children.flatMap((child) =>
+      ts.isJsxElement(child) &&
+      child.openingElement.tagName.getText(sourceFile) === "FilterViewProvider"
+        ? child.children.flatMap((inner) => {
+            if (ts.isJsxElement(inner)) {
+              return [inner.openingElement.tagName.getText(sourceFile)];
+            }
+            if (ts.isJsxSelfClosingElement(inner)) {
+              return [inner.tagName.getText(sourceFile)];
+            }
+            return [];
+          })
+        : [],
+    );
+    expect(occupants).toEqual(["StickyTopBlock", "TodoList"]);
   });
 
   it("gets the sticky block from the one module that declares it", () => {

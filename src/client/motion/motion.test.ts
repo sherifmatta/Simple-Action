@@ -341,3 +341,80 @@ describe("useReducedMotion is hydration-safe and defaults to still", () => {
     );
   });
 });
+
+// --- Story 4.3: the departure's two durations are the module's two ----------
+
+describe("the stylesheet's departure and the module's constants are one pair", () => {
+  /** The emitted `.row-departing` block, brace-balanced, from flattened CSS. */
+  function departureRecipe(flat: string): string {
+    const opening = flat.indexOf(".row-departing {");
+    expect(opening, "the departure recipe was not emitted").toBeGreaterThan(-1);
+    let depth = 0;
+    let end = flat.indexOf("{", opening);
+    for (; end < flat.length; end += 1) {
+      if (flat[end] === "{") depth += 1;
+      else if (flat[end] === "}") {
+        depth -= 1;
+        if (depth === 0) break;
+      }
+    }
+    return flat.slice(opening, end + 1);
+  }
+
+  it("holds for DEPARTURE_HOLD_MS and collapses over COLLAPSE_MS", async () => {
+    // The two constants' first consumers. They have been declared since Story
+    // 2.5 with nothing keyed to them, which is exactly the state in which a
+    // wrong value goes unnoticed — `deferred-work.md` said so when it recorded
+    // them, and this is the assertion that answers it.
+    //
+    // Keyed on the exact selector rather than on `ruleFor(css, "row-departing")`:
+    // two emitted rules begin with `.row-departing`, and the production
+    // minifier reorders them, so `ruleFor` would return whichever came first.
+    const css = (await compiled).replace(/\s+/g, " ");
+    const declaration = `transition: opacity ${COLLAPSE_MS}ms ease-out ${DEPARTURE_HOLD_MS}ms`;
+    expect(css).toContain(declaration);
+
+    // Every property in the collapse moves on the same schedule. A height that
+    // eased over a different span than the fade would read as two events.
+    for (const property of [
+      "height",
+      "min-height",
+      "padding-block",
+      "margin-bottom",
+    ]) {
+      expect(css).toContain(
+        `${property} ${COLLAPSE_MS}ms ease-out ${DEPARTURE_HOLD_MS}ms`,
+      );
+    }
+  });
+
+  it("clips the row it collapses, and nothing else", async () => {
+    // The collapse has to cut the text off as the height goes, or it spills
+    // over the rows sliding up underneath. `todo-card.test.ts` holds the
+    // narrowed allow-list that permits exactly this one declaration.
+    // Scoped to the departure's own rule. `overflow: hidden` appears in the
+    // compiled sheet anyway — `sr-only` carries it — so a search of the whole
+    // stylesheet would pass with the clipping deleted from this recipe.
+    //
+    // Tailwind emits this recipe nested rather than flattened, because it
+    // carries a declaration of its own before the `&`-rules, so the block is
+    // read out by name and the collapse's own rule found inside it.
+    const css = (await compiled).replace(/\s+/g, " ");
+    const rule =
+      /&\[data-departing="true"\] \{([^}]*)\}/.exec(departureRecipe(css))?.[1];
+    expect(rule, "the departure rule was not emitted").toBeDefined();
+    expect(rule).toContain("overflow: hidden");
+  });
+
+  it("stands still when the region asks for stillness", async () => {
+    // From the one marker the motion module produces, set on the list region
+    // by `todo-list.tsx`. Belt and braces: under reduced motion the row is
+    // never marked departing in the first place, because with no transition
+    // no `transitionend` fires and a row parked in the departing set would
+    // never leave.
+    const css = (await compiled).replace(/\s+/g, " ");
+    expect(departureRecipe(css)).toContain(
+      '[data-still="true"] > &[data-departing="true"] { transition: none; }',
+    );
+  });
+});

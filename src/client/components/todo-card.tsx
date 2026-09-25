@@ -24,27 +24,44 @@
 // name appears in the browser tab title only, which `app/layout.tsx`'s
 // `metadata` owns.
 
+import { FilterViewProvider } from "@/client/todos/filter-view-context";
+
 import { StickyTopBlock } from "./sticky-top-block";
 import { TodoList } from "./todo-list";
 
 export function TodoCard() {
   return (
     <div className="mx-auto max-w-card-max-width rounded-lg bg-card px-gutter py-6 shadow-card">
-      <StickyTopBlock />
       {/*
-        The list region, which Story 2.4 turned from the empty element Story
-        2.3 left into the component that owns it. Story 2.5's skeleton rows
-        and Story 2.6's empty state are branches inside it rather than
-        siblings here, because both are the same region resolving.
+        The Filter View's one owner, wrapping both occupants because both read
+        it: the tabs are inside the block above and the rows are inside the
+        region below, and this is their nearest common ancestor. It is not in
+        `providers.tsx` because the shell holds infrastructure — the query
+        cache, the error slot, the announcer — and a Filter View is not
+        infrastructure; it is this card's way of looking at its own list.
 
-        Story 2.6's error banner is the one thing that is *not*: DESIGN.md
-        fixes the vertical order as add input → error banner region → filter
-        tabs → list, so the banner belongs to `StickyTopBlock` above and
-        reaches this card only through it. An earlier revision of this comment
-        claimed otherwise. The card stays a Server Component — the client
-        boundary is `TodoList`.
+        A context provider renders no DOM element, so the card's DOM is
+        unchanged by it and the sticky block is still a direct child of the
+        padded box it sticks inside. The card stays a Server Component: the
+        provider is a Client Component it renders, not a boundary it crosses.
       */}
-      <TodoList />
+      <FilterViewProvider>
+        <StickyTopBlock />
+        {/*
+          The list region, which Story 2.4 turned from the empty element Story
+          2.3 left into the component that owns it. Story 2.5's skeleton rows
+          and Story 2.6's empty state are branches inside it rather than
+          siblings here, because both are the same region resolving.
+
+          Story 2.6's error banner is the one thing that is *not*: DESIGN.md
+          fixes the vertical order as add input → error banner region → filter
+          tabs → list, so the banner belongs to `StickyTopBlock` above and
+          reaches this card only through it. An earlier revision of this comment
+          claimed otherwise. The card stays a Server Component — the client
+          boundary is `TodoList`.
+        */}
+        <TodoList />
+      </FilterViewProvider>
     </div>
   );
 }

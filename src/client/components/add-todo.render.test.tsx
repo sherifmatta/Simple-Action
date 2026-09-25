@@ -797,3 +797,51 @@ describe("a Todo the server refused", () => {
     expect(createdBody(1).id).not.toBe(createdBody(0).id);
   });
 });
+
+// --- Story 4.3 AC7: a confirmed add shows the Todo it created ---------------
+
+describe("a Todo added while another Filter View is selected (Story 4.3)", () => {
+  const tabs = () => [...container.querySelectorAll<HTMLButtonElement>('[role="tab"]')];
+  const tab = (label: string) =>
+    tabs().find((candidate) => candidate.textContent?.startsWith(label)) as HTMLButtonElement;
+  const selected = () =>
+    tabs().find((candidate) => candidate.getAttribute("aria-selected") === "true")
+      ?.textContent;
+
+  it("shows All when the add confirms, so it is never created out of sight (AC7)", async () => {
+    const { read, create, createdBody } = stubFetch();
+    await mountCard();
+    await read.resolve([{ ...EXISTING, completed: true }]);
+
+    // Looking at Completed, where a new Todo — Active by definition — would
+    // land somewhere the user cannot see.
+    await act(async () => tab("Completed").click());
+    expect(selected()).toBe("Completed 1");
+
+    await submit("send invoice");
+    await create.resolve({
+      id: createdBody().id,
+      text: "send invoice",
+      completed: false,
+      createdAt: "2026-09-23T10:00:00.000Z",
+    });
+
+    expect(selected()).toBe("All 2");
+    expect(rows()).toContain("send invoice");
+  });
+
+  it("leaves the view alone when the add fails", async () => {
+    // AC7 is "given a *successful* add". A failure puts the text back in the
+    // field for another attempt, and moving the view underneath that would
+    // change what the user is looking at for a Todo that does not exist.
+    const { read, create } = stubFetch();
+    await mountCard();
+    await read.resolve([{ ...EXISTING, completed: true }]);
+
+    await act(async () => tab("Completed").click());
+    await submit("send invoice");
+    await create.resolve({ error: { kind: "create", message: "x" } }, 500);
+
+    expect(selected()).toBe("Completed 1");
+  });
+});

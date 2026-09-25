@@ -31,6 +31,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AnnouncerProvider } from "@/client/feedback/announcer";
 import { AppProviders } from "@/client/providers";
+import { FilterViewProvider } from "@/client/todos/filter-view-context";
 import { TODOS_QUERY_KEY } from "@/client/todos/query-keys";
 import type { Todo } from "@/shared/contract/todo";
 import { TodoCard } from "./todo-card";
@@ -83,14 +84,18 @@ async function mount(client: QueryClient) {
   // `QueryClientProvider` alone stopped being enough at Story 4.2: the list
   // now holds `useSetCompleted()`, which announces a confirmed toggle through
   // `useAnnounce()` — and that throws outside its provider by design rather
-  // than degrading to a no-op. The error slot is still not needed here, which
-  // is the shape of this story: a refused toggle reverts and says nothing
-  // (Story 4.4 owns the banner).
+  // than degrading to a no-op. Story 4.3 added a third for the same reason:
+  // the list reads the Filter View to decide which rows it shows, and
+  // `useFilterView()` throws outside its provider too. The error slot is still
+  // not needed here, which is the shape of this story: a refused toggle
+  // reverts and says nothing (Story 4.4 owns the banner).
   await act(async () => {
     root.render(
       <QueryClientProvider client={client}>
         <AnnouncerProvider>
-          <TodoList />
+          <FilterViewProvider>
+            <TodoList />
+          </FilterViewProvider>
         </AnnouncerProvider>
       </QueryClientProvider>,
     );
@@ -685,7 +690,11 @@ describe("the resolved states, in a real DOM (Story 2.6)", () => {
     // absence of its words: the assertive region still holds the string it
     // announced, and that is correct. A live region keeps its text until the
     // next announcement replaces it.
-    expect(container.querySelector("button")).toBeNull();
+    //
+    // Scoped to the banner region by Story 4.3: the card holds three tab
+    // buttons now, so an unscoped `button` query asks "is there any control on
+    // screen" when the claim is "the banner has no control".
+    expect(container.querySelector(".banner-region button")).toBeNull();
     expect(liveRegion("assertive")).toBe("Couldn't load your Todos.");
     expect(container.querySelectorAll(".skeleton-row")).toHaveLength(3);
     expect(container.querySelector("ul")?.getAttribute("aria-busy")).toBe("true");
@@ -747,7 +756,9 @@ describe("the resolved states, in a real DOM (Story 2.6)", () => {
     // The banner is gone: no control, and the region is back to holding
     // nothing. The assertive region keeps the words it announced, which is
     // why this is asserted on the banner rather than on the container's text.
-    expect(container.querySelector("button")).toBeNull();
+    // Scoped to the region for the same reason as above — the filter tabs put
+    // three buttons in this card.
+    expect(container.querySelector(".banner-region button")).toBeNull();
     expect(container.querySelector(".banner-region")?.children).toHaveLength(0);
   });
 
@@ -897,9 +908,8 @@ describe("the add input, in the block with its neighbours (Story 3.2)", () => {
 
   it("is first in the tab order, ahead of Retry (AC9)", async () => {
     // EXPERIENCE.md:194 — "input → Retry (when the banner is occupied) → All
-    // → Active → Completed". The first two of those exist now, and the order
-    // is not arranged anywhere: it falls out of the input being slot 1 of the
-    // sticky block and the banner being slot 2.
+    // → Active → Completed". All five exist now that Story 4.3 has filled the
+    // block's third slot.
     stubMotionPreference(false);
     vi.stubGlobal(
       "fetch",
@@ -911,9 +921,18 @@ describe("the add input, in the block with its neighbours (Story 3.2)", () => {
     await mountCard();
 
     const focusable = [...container.querySelectorAll("input, button, [tabindex]")];
-    expect(focusable.length).toBeGreaterThanOrEqual(2);
+    expect(focusable.length).toBeGreaterThanOrEqual(5);
     expect(focusable[0]?.tagName).toBe("INPUT");
     expect(focusable[1]?.textContent).toBe("Retry");
+    // Story 4.3 filled the last slot, so the whole committed order is now
+    // observable rather than half of it (AC11). Still not arranged anywhere:
+    // it falls out of the input being slot 1, the banner slot 2 and the tabs
+    // slot 3 of the sticky block.
+    expect(focusable.slice(2, 5).map((element) => element.textContent)).toEqual([
+      "All 0",
+      "Active 0",
+      "Completed 0",
+    ]);
     // And the pill `Enter` hint is not among them (AC7): it is a hint, not a
     // control, and `aria-hidden` besides.
     expect(focusable.map((element) => element.textContent)).not.toContain("Enter");
@@ -941,5 +960,286 @@ describe("the add input, in the block with its neighbours (Story 3.2)", () => {
     // The list underneath it is still skeletal, which is what makes the
     // assertion above worth making.
     expect(container.querySelectorAll(".skeleton-row")).toHaveLength(3);
+  });
+});
+
+// --- Story 4.3: the Filter Views, and a row that leaves one ------------------
+
+describe("the Filter Views, through the mounted card (Story 4.3)", () => {
+  const LIST: Todo[] = [
+    {
+      id: "0199a5c5-0000-7000-8000-000000000003",
+      text: "pay rent",
+      completed: true,
+      createdAt: "2026-09-23T09:02:00.000Z",
+    },
+    {
+      id: "0199a5c5-0000-7000-8000-000000000002",
+      text: "send invoice",
+      completed: false,
+      createdAt: "2026-09-23T09:01:00.000Z",
+    },
+    {
+      id: "0199a5c5-0000-7000-8000-000000000001",
+      text: "book dentist",
+      completed: false,
+      createdAt: "2026-09-23T09:00:00.000Z",
+    },
+  ];
+
+  const tabs = () => [...container.querySelectorAll<HTMLButtonElement>('[role="tab"]')];
+  const tab = (label: string) =>
+    tabs().find((candidate) => candidate.textContent?.startsWith(label)) as HTMLButtonElement;
+  const rowText = () =>
+    [...container.querySelectorAll("li")].map((row) => row.querySelector("span")?.textContent);
+  const checkboxIn = (text: string) =>
+    [...container.querySelectorAll("li")]
+      .find((row) => row.textContent?.includes(text))
+      ?.querySelector<HTMLElement>('[role="checkbox"]');
+
+  /** The card, over a list the server answers with, with motion enabled. */
+  async function mountList(list: Todo[] = LIST, reduced = false) {
+    stubMotionPreference(reduced);
+    // A server that remembers. The PATCH echoes back the row it was actually
+    // asked about with the status it was asked to set, *and* keeps it, so a
+    // later read agrees with the change rather than undoing it. Both halves
+    // matter: a stub answering with some other row fails the mutation's shape
+    // guard and rolls the optimistic change back, and a stub whose GET still
+    // returns the original list overwrites the confirmed one — either looks
+    // exactly like a departure that did not happen.
+    let stored = [...list];
+    const fetchStub = vi.fn<typeof fetch>((input, init) => {
+      if (init?.method !== "PATCH") {
+        return Promise.resolve(Response.json(stored, { status: 200 }));
+      }
+      const id = String(input).split("/").pop();
+      const { completed } = JSON.parse(String(init.body)) as { completed: boolean };
+      stored = stored.map((each) => (each.id === id ? { ...each, completed } : each));
+      const updated = stored.find((each) => each.id === id);
+      return Promise.resolve(Response.json(updated, { status: 200 }));
+    });
+    vi.stubGlobal("fetch", fetchStub);
+    await mountCard();
+    return fetchStub;
+  }
+
+  it("shows every Todo in All, and only the matching ones in the others (AC2)", async () => {
+    await mountList();
+    expect(rowText()).toEqual(["pay rent", "send invoice", "book dentist"]);
+
+    await act(async () => tab("Active").click());
+    expect(rowText()).toEqual(["send invoice", "book dentist"]);
+
+    await act(async () => tab("Completed").click());
+    expect(rowText()).toEqual(["pay rent"]);
+
+    // And back, with the order and the positions the list always had: a row
+    // leaves its place only by leaving the view or being deleted.
+    await act(async () => tab("All").click());
+    expect(rowText()).toEqual(["pay rent", "send invoice", "book dentist"]);
+  });
+
+  it("shows the matching empty state when a view resolves to nothing (AC10)", async () => {
+    // The Active and Completed panels, reachable for the first time. Until
+    // this story `todo-list.tsx` passed the literal `"all"` and the other two
+    // variants were built, tested and unreachable.
+    await mountList([LIST[0]]);
+
+    await act(async () => tab("Active").click());
+    // Asserted on the panel, not on the container's text: the polite region
+    // holds this exact string too, so a text search would stay green with the
+    // panel deleted.
+    expect(container.querySelector(".empty-panel")?.textContent).toContain(
+      "Nothing active.",
+    );
+    expect(liveRegion("polite")).toBe("Nothing active.");
+
+    await act(async () => tab("Completed").click());
+    // Asserted on the panel rather than on the container's text: the polite
+    // region still holds the words it announced, and that is correct — a live
+    // region keeps its text until the next announcement replaces it.
+    expect(container.querySelector(".empty-panel")).toBeNull();
+    expect(rowText()).toEqual(["pay rent"]);
+
+    await act(async () => tab("All").click());
+    expect(rowText()).toEqual(["pay rent"]);
+  });
+
+  it("announces the other empty variant when the view changes under it", async () => {
+    // `empty-state.tsx` keys its effect on the variant precisely so switching
+    // between two empty Filter Views announces the new one rather than staying
+    // silent because the panel never unmounted.
+    await mountList([]);
+    expect(liveRegion("polite")).toBe(
+      "Nothing here yet. Type above to add your first Todo.",
+    );
+
+    await act(async () => tab("Completed").click());
+    expect(liveRegion("polite")).toBe("Nothing completed yet.");
+  });
+
+  it("keeps the counts in step with the rows on screen (AC5)", async () => {
+    const fetchStub = await mountList();
+    expect(tabs().map((each) => each.textContent)).toEqual([
+      "All 3",
+      "Active 2",
+      "Completed 1",
+    ]);
+
+    // An optimistic toggle, made through the interface rather than written
+    // into the cache: the counts must move with it.
+    await act(async () => checkboxIn("book dentist")?.click());
+    await settle();
+
+    expect(tabs().map((each) => each.textContent)).toEqual([
+      "All 3",
+      "Active 1",
+      "Completed 2",
+    ]);
+    expect(fetchStub.mock.calls.some(([, init]) => init?.method === "PATCH")).toBe(true);
+  });
+
+  it("holds a departing row on screen until its transition finishes (AC13, AC15)", async () => {
+    await mountList();
+    await act(async () => tab("Active").click());
+    expect(rowText()).toEqual(["send invoice", "book dentist"]);
+
+    await act(async () => checkboxIn("book dentist")?.click());
+    await settle();
+
+    // Still there, marked, and in its *new* status — the hold is what makes
+    // the change read as caused. Nothing announced yet: AC15 ties the
+    // announcement to the departure, not to the toggle that began it.
+    const departing = [...container.querySelectorAll("li")].find((row) =>
+      row.textContent?.includes("book dentist"),
+    );
+    expect(departing).toBeDefined();
+    expect(departing?.getAttribute("data-departing")).toBe("true");
+    expect(departing?.getAttribute("data-completed")).toBe("true");
+    expect(liveRegion("polite")).not.toContain("removed from");
+
+    // The collapse finishes. No timer is involved anywhere: the row leaves
+    // because its own transition reported that it had ended.
+    await act(async () => {
+      departing?.dispatchEvent(
+        Object.assign(new Event("transitionend", { bubbles: true }), {
+          propertyName: "opacity",
+        }),
+      );
+    });
+
+    expect(rowText()).toEqual(["send invoice"]);
+    expect(liveRegion("polite")).toBe("book dentist, removed from Active");
+  });
+
+  it("puts the segments between Retry's slot and the first row (AC11)", async () => {
+    // EXPERIENCE.md:194's full order is "input → Retry → All → Active →
+    // Completed → then, per row, checkbox → delete control". The case in the
+    // add-input block above runs against a failed load, so it sees the banner
+    // and no rows; this is the other arrangement, where the rows exist and the
+    // banner does not.
+    await mountList();
+
+    const focusable = [...container.querySelectorAll("input, button, [tabindex]")];
+    const labels = focusable.map((element) => element.textContent);
+    expect(labels[0]).toBe("");
+    expect(focusable[0]?.tagName).toBe("INPUT");
+    expect(labels.slice(1, 4)).toEqual(["All 3", "Active 2", "Completed 1"]);
+    // The first row's checkbox comes next, and it is the row's own control
+    // rather than anything the block added.
+    expect(focusable[4]?.getAttribute("role")).toBe("checkbox");
+  });
+
+  it("runs no departure in the All view (AC17)", async () => {
+    await mountList();
+    await act(async () => checkboxIn("book dentist")?.click());
+    await settle();
+
+    const row = [...container.querySelectorAll("li")].find((each) =>
+      each.textContent?.includes("book dentist"),
+    );
+    expect(row?.getAttribute("data-departing")).toBeNull();
+    // The row still matches, so it keeps its place rather than moving.
+    expect(rowText()).toEqual(["pay rent", "send invoice", "book dentist"]);
+  });
+
+  it("cuts straight to the end state under reduced motion, and still says so (AC16)", async () => {
+    await mountList(LIST, true);
+    await act(async () => tab("Active").click());
+
+    await act(async () => checkboxIn("book dentist")?.click());
+    await settle();
+
+    // Gone in the same commit — no hold, no marker, and no animation to wait
+    // for, which is exactly why it cannot be left in a departing set: with
+    // `transition: none` no `transitionend` would ever fire.
+    expect(rowText()).toEqual(["send invoice"]);
+    expect(container.querySelector("[data-departing]")).toBeNull();
+
+    // The departure announcement is asserted in `filter-view-context.test.tsx`
+    // rather than here, and deliberately so. Under reduced motion both
+    // sentences are produced within one interaction — the departure
+    // immediately, the toggle's own confirmation when the request settles —
+    // and the second replaces the first in the single polite region, so the
+    // text left behind at the end of this case is `book dentist, Completed`.
+    //
+    // That collision is real and is recorded in `deferred-work.md`; it is not
+    // this story's to resolve, because the region's queueing behaviour belongs
+    // to the announcer and changing it would change every announcement in the
+    // product. What matters for AC16 is that the departure is announced at
+    // all, which the context test asserts at the point it happens.
+    expect(liveRegion("polite")).toBe("book dentist, Completed");
+  });
+
+  it("calls off the departure when the server refuses the toggle", async () => {
+    // The refusal undoes the very change the row is leaving over. Story 4.2's
+    // rollback restores the status and deliberately says nothing to anybody,
+    // so without the seam the mutation now offers, this row finishes
+    // collapsing, announces a removal that never happened, and pops back at
+    // full height. Story 4.4 owns the banner and the `Retry`; it does not own
+    // a departure this story started.
+    stubMotionPreference(false);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>((_input, init) =>
+        init?.method === "PATCH"
+          ? Promise.resolve(
+              Response.json({ error: { kind: "update", message: "x" } }, { status: 500 }),
+            )
+          : Promise.resolve(Response.json(LIST, { status: 200 })),
+      ),
+    );
+    await mountCard();
+
+    await act(async () => tab("Active").click());
+    await act(async () => checkboxIn("book dentist")?.click());
+    await settle();
+
+    const row = [...container.querySelectorAll("li")].find((each) =>
+      each.textContent?.includes("book dentist"),
+    );
+    expect(row, "the refused row left the list").toBeDefined();
+    expect(row?.getAttribute("data-departing")).toBeNull();
+    expect(row?.getAttribute("data-completed")).toBeNull();
+    expect(liveRegion("polite")).not.toContain("removed from");
+
+    // And the row is back in the view it never left, counted with it.
+    expect(rowText()).toEqual(["send invoice", "book dentist"]);
+  });
+
+  it("keeps the row when it is toggled back before it has gone", async () => {
+    await mountList();
+    await act(async () => tab("Active").click());
+    await act(async () => checkboxIn("book dentist")?.click());
+    await settle();
+    await act(async () => checkboxIn("book dentist")?.click());
+    await settle();
+
+    const row = [...container.querySelectorAll("li")].find((each) =>
+      each.textContent?.includes("book dentist"),
+    );
+    expect(row?.getAttribute("data-departing")).toBeNull();
+    expect(rowText()).toEqual(["send invoice", "book dentist"]);
+    expect(liveRegion("polite")).not.toContain("removed from");
   });
 });

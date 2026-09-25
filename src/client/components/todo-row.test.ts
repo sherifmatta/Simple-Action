@@ -437,11 +437,22 @@ describe("a long Todo wraps and the row grows (AC5)", () => {
 describe("the checkbox is the only control, and the row body is not one (AC6, AC8-AC10, AC14)", () => {
   it("carries exactly one handler, on the checkbox, and no tab stop of its own", () => {
     // Was "carries no handler, no tab stop and no role" — the row body still
-    // carries none of those (EXPERIENCE.md:105: there is no editing, so a row
-    // click has nothing to open). What changed is that the glyph became the
-    // control, so the file now holds exactly one handler and exactly one role.
+    // carries no *pointer* handler and no role (EXPERIENCE.md:105: there is no
+    // editing, so a row click has nothing to open). What changed is that the
+    // glyph became the control, so the file holds exactly one click handler and
+    // exactly one role.
+    //
+    // `onTransitionEnd` is the row's second handler and is not a control: it
+    // listens for the departure collapse finishing so the row can report that
+    // it is done leaving (Story 4.3 AC13). Nothing about it makes the body
+    // interactive — it answers the stylesheet, not the user — and the removal
+    // has to hang off it because a timer would be a duration this product
+    // forbids outside the motion module.
     const names = attributeNames();
-    expect(names.filter((name) => /^on[A-Z]/.test(name))).toEqual(["onClick"]);
+    expect(names.filter((name) => /^on[A-Z]/.test(name))).toEqual([
+      "onTransitionEnd",
+      "onClick",
+    ]);
     expect(names.filter((name) => name === "role")).toEqual(["role"]);
     // `tabIndex` is absent on purpose (AC14): a `<button>` is focusable
     // already, and any explicit value here would be arranging a tab order that
@@ -507,7 +518,14 @@ describe("the rendered row carries the marker and nothing else varies", () => {
   };
 
   const render = (todo: Todo) =>
-    renderToStaticMarkup(createElement(TodoRow, { todo, onToggle: () => {} }));
+    renderToStaticMarkup(
+      createElement(TodoRow, {
+        todo,
+        departing: false,
+        onToggle: () => {},
+        onDeparted: () => {},
+      }),
+    );
 
   it("marks a Completed Todo and leaves an Active one unmarked", () => {
     expect(render({ ...fixture, completed: true })).toContain(
