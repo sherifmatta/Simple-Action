@@ -184,6 +184,7 @@ export function rowCheckboxId(todoId: string): string {
 export function TodoRow({
   todo,
   departing,
+  deleting,
   onToggle,
   onDeparted,
   onRequestDelete,
@@ -191,6 +192,17 @@ export function TodoRow({
   todo: Todo;
   /** On its way out of the active Filter View, and animating as it goes. */
   departing: boolean;
+  /**
+   * Confirmed for deletion, and collapsing on its way out for good (Story 5.3).
+   *
+   * A second marker rather than a second value of the first, because the two
+   * collapses differ by exactly one thing and it is a duration: a departure
+   * holds for `DEPARTURE_HOLD_MS` so the new Completion Status is visibly
+   * caused, and a delete has no new state to show, so it starts at once
+   * (EXPERIENCE.md:161). The two `@utility` recipes carry that difference; this
+   * component only says which one applies.
+   */
+  deleting: boolean;
   onToggle: (todo: Todo, completed: boolean) => void;
   /** The departure transition finished; this row's id is done leaving. */
   onDeparted: (id: string) => void;
@@ -231,6 +243,13 @@ export function TodoRow({
       // itself knows only that it is leaving — which view it is leaving, and
       // what that will be announced as, belong to the Filter View.
       data-departing={departing ? true : undefined}
+      // The same idiom again, for the collapse that has no hold. `todo-list.tsx`
+      // never sets both — a row confirmed for deletion is leaving for good, so
+      // the delete's recipe is the one that should run — which keeps the two
+      // `transition` declarations from ever meeting in the cascade at equal
+      // specificity, where the winner would be whichever the minifier happened
+      // to emit last.
+      data-deleting={deleting ? true : undefined}
       // The latch, and the only thing the gesture produces. Absent rather than
       // `false` when the panel is closed, so the stylesheet keys on presence
       // the way it does for the two markers above.
@@ -240,7 +259,12 @@ export function TodoRow({
       // row collapsing out of the Filter View with a destructive panel hanging
       // open is the one frame this must not have. Derived rather than cleared
       // in an effect, so the two cannot disagree for a commit.
-      data-revealed={revealed && !departing ? true : undefined}
+      //
+      // A row collapsing out on a confirmed delete un-latches for the same
+      // reason and more strongly: the question has been answered, and a lane
+      // still hanging open behind a row that is leaving is a destructive
+      // surface advertising an action there is nothing left to take.
+      data-revealed={revealed && !departing && !deleting ? true : undefined}
       onTouchStart={(event) => {
         // Only the first finger down starts a gesture. `onTouchStart` fires
         // again for a second finger, and `touches[0]` is by then the *current*
@@ -293,12 +317,17 @@ export function TodoRow({
       // it five times. Two guards, both cheap: the event's own target, and the
       // one property whose transition is guaranteed to run — a height that
       // cannot interpolate still flips, and `opacity` always eases.
+      //
+      // One handler for both collapses, because `opacity` is among the six
+      // properties either recipe transitions. Which kind of ending it was is
+      // the list's question, not the row's: a departure lets the row go, and a
+      // delete's departure also removes the Todo (Story 5.3 AC1).
       onTransitionEnd={(event) => {
         if (event.target === event.currentTarget && event.propertyName === "opacity") {
           onDeparted(todo.id);
         }
       }}
-      className="group delete-lane row-departing rounded-md"
+      className="group delete-lane row-departing row-deleting rounded-md"
     >
       {/*
         The row's own surface — everything the eye reads as the row, and the

@@ -31,13 +31,17 @@ const {
   mockUseTodos,
   mockAnnounce,
   mockSetCompleted,
+  mockDeleteTodo,
   mockNoteToggle,
+  mockNoteDelete,
   mockEndDeparture,
 } = vi.hoisted(() => ({
   mockUseTodos: vi.fn(),
   mockAnnounce: vi.fn(),
   mockSetCompleted: vi.fn(),
+  mockDeleteTodo: vi.fn(),
   mockNoteToggle: vi.fn(),
+  mockNoteDelete: vi.fn(),
   mockEndDeparture: vi.fn(),
 }));
 vi.mock("@/client/todos/use-todos", () => ({ useTodos: mockUseTodos }));
@@ -48,6 +52,14 @@ vi.mock("@/client/todos/use-todos", () => ({ useTodos: mockUseTodos }));
 // instance and hands it to every row, which the assertions below cover.
 vi.mock("@/client/todos/use-set-completed", () => ({
   useSetCompleted: () => mockSetCompleted,
+}));
+// Story 5.3 gave it a fourth hook, for the same reason and with the same
+// providers behind it: `useDeleteTodo` reaches for a `QueryClient`, the
+// announcer and the error slot, and what it does with them is
+// `use-delete-todo.test.ts`'s subject. What belongs here is that the list holds
+// *one* instance and that the dialog's `onConfirm` is what calls it.
+vi.mock("@/client/todos/use-delete-todo", () => ({
+  useDeleteTodo: () => mockDeleteTodo,
 }));
 // The empty state announces its own text, and `useAnnounce()` throws outside
 // its provider by design (announcer.tsx:40) rather than returning a no-op.
@@ -70,6 +82,8 @@ vi.mock("@/client/todos/filter-view-context", () => ({
     showAll: vi.fn(),
     isDeparting: () => false,
     noteToggle: mockNoteToggle,
+    noteDelete: mockNoteDelete,
+    isDeleting: () => false,
     endDeparture: mockEndDeparture,
   }),
 }));
@@ -326,6 +340,45 @@ describe("the list region reads the one query hook", () => {
     // And the list itself never reads Completion Status — `todo-row.tsx` is
     // the one file that does (`todo-row.test.ts` asserts the whole surface).
     expect(listSource).not.toMatch(/\.completed\b/);
+  });
+
+  it("holds one delete hook for the whole list and confirms through it (Story 5.3 AC1)", () => {
+    // The same rule as the toggle above, one level along: the row is
+    // presentational, the dialog is one element for every row, so the mutation
+    // behind it is one instance held here. A `useDeleteTodo()` inside `TodoRow`
+    // would be one mutation observer per row.
+    expect(listSource.match(/useDeleteTodo\(/g)).toHaveLength(1);
+
+    // The confirm handler, in the order that makes it correct. Focus is placed
+    // against the list as it stands *before* the removal — "the row that took
+    // its place" is resolved against what the user was looking at — and only
+    // then does the row start leaving.
+    const confirm =
+      /onConfirm=\{\(confirmed\) => \{([\s\S]*?)\n {8}\}\}/.exec(listSource)?.[1] ??
+      "";
+    expect(confirm, "the dialog's onConfirm handler was not found").not.toBe("");
+    expect(confirm.indexOf("placeFocusAfterDelete")).toBeLessThan(
+      confirm.indexOf("remove("),
+    );
+
+    // Two routes out of the confirm and no third: under reduced motion the
+    // Todo leaves the cache in this same tick (AC3), and otherwise the row is
+    // marked and the removal happens when its collapse reports finished (AC1,
+    // AC2). Nothing here waits on a `transitionend` that will never fire.
+    expect(confirm).toMatch(/if \(still\) remove\(confirmed\);/);
+    expect(confirm).toMatch(/else noteDelete\(confirmed\.id\);/);
+
+    // `Retry` must not ask again (AC11), which is a property of where the retry
+    // closure lives: in the error slot, not here. So nothing in this file
+    // re-opens the dialog on a failure — the only writer of the pending id is
+    // the control that asks in the first place, and the two places that clear
+    // it.
+    expect(listSource.match(/setPendingDeleteId\(/g)).toHaveLength(4);
+    expect(listSource).not.toMatch(/onRefused[\s\S]{0,80}setPendingDeleteId/);
+
+    // The row is re-derived at the end of the collapse rather than carried
+    // across it, which is what lets this story add no state at all.
+    expect(listSource).toMatch(/data\?\.find\(\(todo\) => todo\.id === id\)/);
   });
 
   it("keys rows by the Todo's id, which is its final sort position", () => {

@@ -702,6 +702,74 @@
   [data-still="true"] > &[data-departing="true"] { transition: none; }
 }
 
+/* The confirmed delete (EXPERIENCE.md:161) — "The same collapse runs on a
+   confirmed delete, without the 400ms hold".
+
+   A second recipe rather than a parameterised one, and the reason is the
+   assertions above it. `row-departing` writes `180ms ease-out 400ms` inline on
+   all six properties and `motion.test.ts` reads those exact literals back out
+   of the compiled sheet to prove they are `COLLAPSE_MS` and
+   `DEPARTURE_HOLD_MS`; factoring the delay out into a custom property would
+   change the compiled text those assertions read, for a saving of six lines.
+   `row-sliding` below already set the precedent — a sibling recipe reusing
+   `COLLAPSE_MS` with no delay of its own, "the departure's collapse reused
+   rather than a duration of its own".
+
+   Everything else is the departure's, deliberately: the same six properties,
+   the same end-state values, the same clipping, the same negative-margin gap
+   close from whichever side the row leaves a gap on, and the same stillness
+   override. The difference between a row leaving a Filter View and a row
+   leaving the product is one delay, because a delete "has no new state to
+   show" (epics.md Story 5.3 AC2) — there is nothing to hold on.
+
+   `interpolate-size: allow-keywords` is not repeated here. `row-departing`
+   declares it on every row unconditionally, and every row carries both classes,
+   so it is already in effect on this element before the height changes — which
+   is the state it has to be in for `height: auto` to interpolate at all.
+
+   `180ms` is COLLAPSE_MS in src/client/motion/motion.ts, spelled again because
+   CSS cannot read a TypeScript constant; `motion.test.ts` compiles this file
+   and asserts both that the two agree and that no delay has crept back in. */
+
+@utility row-deleting {
+  &[data-deleting="true"] {
+    transition:
+      opacity 180ms ease-out,
+      height 180ms ease-out,
+      min-height 180ms ease-out,
+      padding-block 180ms ease-out,
+      margin-bottom 180ms ease-out,
+      margin-top 180ms ease-out;
+    overflow: hidden;
+    opacity: 0;
+    height: 0;
+    min-height: 0;
+    padding-block: 0;
+  }
+
+  /* The flex `<ul>` puts `{spacing.row-gap}` *between* its children, so the gap
+     a leaving row closes is the one after it — except for the last row, whose
+     only gap is the one above. `row-departing` says the same thing at length. */
+  &[data-deleting="true"]:not(:last-child) {
+    margin-bottom: calc(-1 * var(--spacing-row-gap));
+  }
+
+  &[data-deleting="true"]:last-child {
+    margin-top: calc(-1 * var(--spacing-row-gap));
+  }
+
+  /* Stillness, from the one marker the motion module sets on the list region,
+     at (0,3,0) against the rule above at (0,2,0) — so it wins on specificity
+     rather than on source order, which it has to, because the production
+     minifier reorders them.
+
+     Belt and braces rather than the mechanism: under reduced motion
+     `filter-view-context.tsx` never marks the row deleting in the first place,
+     and `todo-list.tsx` removes the Todo in the same tick the user confirms.
+     This is what catches a preference changed mid-collapse. */
+  [data-still="true"] > &[data-deleting="true"] { transition: none; }
+}
+
 /* ---------------------------------------------------------------------------
    The delete control's two presentations, and the confirmation dialog
    (Story 5.2; DESIGN.md `components.delete-action`, `components.dialog-delete`;

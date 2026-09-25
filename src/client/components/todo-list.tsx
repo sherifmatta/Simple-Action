@@ -82,6 +82,7 @@ import type { Todo } from "@/shared/contract/todo";
 import { matchesFilterView } from "@/client/todos/filter-view";
 import { useFilterView } from "@/client/todos/filter-view-context";
 import { focusTargetAfterDelete } from "@/client/todos/focus-after-delete";
+import { useDeleteTodo } from "@/client/todos/use-delete-todo";
 import { useSetCompleted } from "@/client/todos/use-set-completed";
 import { useTodos } from "@/client/todos/use-todos";
 
@@ -110,6 +111,8 @@ export function TodoList() {
     view,
     isDeparting,
     noteToggle,
+    noteDelete,
+    isDeleting,
     releaseDepartures,
     cancelDepartures,
     endDeparture,
@@ -135,6 +138,18 @@ export function TodoList() {
       [cancelDepartures],
     ),
   });
+
+  // The second mutation this component holds, and the one Story 5.2 stopped
+  // short of. One instance for the whole list, exactly as the toggle is — the
+  // dialog is one element for every row, so the hook behind it is too.
+  //
+  // It takes no seams. A refused toggle has to call a departure off, because
+  // the rollback is a cache write the Filter View cannot see; a refused delete
+  // has nothing to call off, because by the time a refusal can arrive the
+  // collapse has already ended and the row has already left the cache. That is
+  // the whole of why the order below is collapse, then remove, then send.
+  const remove = useDeleteTodo();
+
   // One attribute, set from the product's only reader of the preference; the
   // recipes in `app/globals.css` derive the stillness from it (AR-28). No
   // component branches on a duration and no `className` here is computed.
@@ -200,10 +215,21 @@ export function TodoList() {
   //
   // Which control it is belongs to `focusTargetAfterDelete`, which is pure and
   // is tested against every arrangement the list can be in; what is here is
-  // only turning that answer into an element. The rule it implements spans the
-  // 5.2/5.3 seam — Story 5.2 removes no row, so the "row that took its place"
-  // is still on screen — and placing focus now is what leaves 5.3 with nothing
-  // to wire up when it does remove one.
+  // only turning that answer into an element.
+  //
+  // It is called against the list as it stands *before* the removal, which is
+  // what the pure function documents itself as taking: "the row that took its
+  // place" is the row after the deleted one, resolved against the arrangement
+  // the user was looking at when they confirmed.
+  //
+  // The confirm handler therefore places focus first and starts the removal
+  // second. Be honest about what that buys today: nothing observable. Neither
+  // route out of the confirm has removed the row by the time this would run —
+  // `noteDelete` is a `setState`, and `mutate`'s `onMutate` is async — so
+  // `visible` reads the same either way and swapping the two lines changes no
+  // behaviour. The order states the intent, and `todo-list.test.ts` pins it as
+  // source text, so that it stays true if either of those ever becomes
+  // synchronous.
   //
   // The two ids are built by the components that own the elements rather than
   // spelled here, so a renamed control breaks at the import instead of silently
@@ -233,6 +259,31 @@ export function TodoList() {
     (row ?? document.getElementById(ADD_INPUT_ID))?.focus();
   }
 
+  // A row has finished collapsing. Which collapse it was decides what that
+  // means (Story 5.3 AC1).
+  //
+  // A toggle's departure ends by letting the row go, and the Filter View
+  // announces it. A *delete's* departure ends by also removing the Todo: this
+  // is the moment the cache write happens and the request goes out, at the end
+  // of the collapse rather than at the click. That order is forced rather
+  // than chosen — `visible` is derived from the cache and nothing else, so a
+  // row removed in `onMutate` unmounts on the click and can animate nothing,
+  // and the alternative of parking the departing `Todo` outside the cache so it
+  // can keep rendering is exactly what AD-8 forbids. AC1 asks that the removal
+  // precede the *server's answer*, not the next frame, and it does.
+  //
+  // The row is looked up again rather than carried from the confirm handler:
+  // that handler had the whole `Todo`, this one has an id and a `data` that
+  // still holds the row, because nothing has removed it yet. Re-deriving it is
+  // what lets this story add no state to this component at all.
+  function endCollapse(id: string): void {
+    const deleted = isDeleting(id)
+      ? data?.find((todo) => todo.id === id)
+      : undefined;
+    endDeparture(id);
+    if (deleted !== undefined) remove(deleted);
+  }
+
   // The rows currently leaving, as ids. Joined into a string so the effect
   // below has a statically checkable dependency: the array's identity changes
   // on every render and its contents almost never do.
@@ -250,8 +301,19 @@ export function TodoList() {
     // away from rows already leaving, so nothing will ever report them
     // finished. They get the end state now, announcement included — which is
     // what AC16 asks for when the preference was set to begin with.
-    if (still && departing !== "") releaseDepartures(departing.split(" "));
-  }, [still, releaseDepartures, departing]);
+    if (!still || departing === "") return;
+    const ids = departing.split(" ");
+
+    // And a *delete* released this way still has to be delivered. Its collapse
+    // is the only thing that would ever have removed the Todo, so a row let go
+    // without this sits on screen confirmed, undeleted, with no request ever
+    // sent — the one failure in this story that is silent in both directions.
+    for (const todo of data ?? []) {
+      if (ids.includes(todo.id) && isDeleting(todo.id)) remove(todo);
+    }
+
+    releaseDepartures(ids);
+  }, [still, releaseDepartures, departing, data, isDeleting, remove]);
 
   return (
     <>
@@ -278,9 +340,15 @@ export function TodoList() {
           <TodoRow
             key={todo.id}
             todo={todo}
-            departing={isDeparting(todo.id)}
+            // Never both. A row confirmed for deletion is leaving for good, so
+            // the collapse without the hold is the one that should run —
+            // `row-departing` and `row-deleting` would otherwise both match at
+            // equal specificity and the winner would be whichever the minifier
+            // emitted last.
+            departing={isDeparting(todo.id) && !isDeleting(todo.id)}
+            deleting={isDeleting(todo.id)}
             onToggle={toggle}
-            onDeparted={endDeparture}
+            onDeparted={endCollapse}
             onRequestDelete={(pending) => setPendingDeleteId(pending.id)}
           />
         ))}
@@ -316,8 +384,26 @@ export function TodoList() {
         restore remembers the control that opened it, and an element remounted
         per Todo would have nothing to restore to.
 
-        `onConfirm` is the seam this story stops at. It closes the dialog and
-        places focus; Story 5.3 is what makes it also remove the Todo.
+        `onConfirm` closes the dialog, places focus, and starts the removal, in
+        that order. The order documents the intent rather than carrying any
+        behaviour of its own — nothing below has removed the row by the time
+        focus is placed, whichever branch runs, and `placeFocusAfterDelete`
+        says why at length.
+
+        What *is* load-bearing is the second half: the removal starts as a
+        **collapse** rather than a cache write, because a row taken out of the
+        cache here would unmount in this same commit with nothing left to
+        animate (EXPERIENCE.md:161 — "the same collapse runs on a confirmed
+        delete, without the [DEPARTURE_HOLD_MS] hold", the literal elided
+        because `motion.test.ts` bans a millisecond literal in every source but
+        the motion module's).
+
+        Under reduced motion there is no collapse to start, so it cuts to the
+        end state: the Todo leaves the cache and the request goes out in this
+        tick. `noteDelete` would record nothing in that case anyway — nothing
+        may wait on a `transitionend` that will never fire — so the branch is
+        here rather than hidden inside it, where a reader would have to follow
+        a `false` back to find out why nothing happened.
       */}
       <DeleteDialog
         todo={pendingDelete}
@@ -325,6 +411,8 @@ export function TodoList() {
         onConfirm={(confirmed) => {
           setPendingDeleteId(null);
           placeFocusAfterDelete(confirmed.id);
+          if (still) remove(confirmed);
+          else noteDelete(confirmed.id);
         }}
       />
     </>

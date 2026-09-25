@@ -55,7 +55,7 @@ afterEach(async () => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
 });
 
-async function mount(todo: Todo, departing = false) {
+async function mount(todo: Todo, departing = false, deleting = false) {
   const onToggle = vi.fn();
   const onDeparted = vi.fn();
   const onRequestDelete = vi.fn();
@@ -67,6 +67,7 @@ async function mount(todo: Todo, departing = false) {
         <TodoRow
           todo={todo}
           departing={departing}
+          deleting={deleting}
           onToggle={onToggle}
           onDeparted={onDeparted}
           onRequestDelete={onRequestDelete}
@@ -596,6 +597,7 @@ describe("the reveal is a step in a gesture, not a row state (AC1)", () => {
           <TodoRow
             todo={ACTIVE}
             departing
+            deleting={false}
             onToggle={() => {}}
             onDeparted={() => {}}
             onRequestDelete={() => {}}

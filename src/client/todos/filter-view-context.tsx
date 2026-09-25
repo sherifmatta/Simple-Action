@@ -38,6 +38,14 @@
 // thing as never entering. The announcement still fires, so the information the
 // motion carried is not lost.
 //
+// Story 5.3 adds the second kind of departure and no second mechanism. A
+// confirmed delete runs the same fade-and-collapse without the departure's
+// hold (EXPERIENCE.md:161), so it joins the same set, sets the same kind of
+// marker and is released by the same `transitionend` — it simply carries no
+// announcement of its own, because what a delete announces is `${text},
+// deleted` and that belongs to the moment the *server* agrees, not to the
+// moment the row finishes collapsing.
+//
 // Several rows may be departing at once, and the set is keyed by id. A single
 // slot would be the smaller thing to write and would drop an announcement the
 // moment someone toggled twice inside one departure — Tab, Space, Tab, Space does it
@@ -65,15 +73,25 @@ import {
 } from "./filter-view";
 
 /**
- * The row on its way out, with the sentence it will say when it gets there.
+ * The row on its way out, and why.
  *
- * The announcement is built when the departure starts and spoken when it ends,
+ * A `toggle` departure carries the sentence it will say when it gets there. The
+ * announcement is built when the departure starts and spoken when it ends,
  * because by then the row is gone from the list and its text is gone with it.
  * Holding the string rather than the `Todo` also keeps this out of the AD-8
  * scan's way — nothing here is server state, and a shape that named `Todo`
  * would look exactly like the thing that rule forbids.
+ *
+ * A `delete` departure (Story 5.3) carries no sentence at all, and the
+ * discriminant is what makes that a stated fact rather than an empty string
+ * somebody has to remember not to speak. A confirmed delete *is* announced —
+ * politely, as `${text}, deleted` — but from `use-delete-todo.ts`'s `onSuccess`,
+ * where the server has actually agreed. Saying it here would announce a removal
+ * at the moment the collapse ended, which is before the request has even left.
  */
-type Departure = { id: string; announcement: string };
+type Departure =
+  | { id: string; kind: "toggle"; announcement: string }
+  | { id: string; kind: "delete" };
 
 export type FilterViewControl = {
   /** The view the list is showing. `all` on every fresh mount. */
@@ -86,6 +104,24 @@ export type FilterViewControl = {
   isDeparting: (id: string) => boolean;
   /** Tell the Filter View that a row was toggled, before the cache is written. */
   noteToggle: (todo: Todo, completed: boolean) => void;
+  /**
+   * Start a confirmed delete's collapse (Story 5.3 AC1-AC3).
+   *
+   * The row is not removed here and this module never touches the cache — the
+   * row keeps rendering, marked, so it has something to leave with, and
+   * `todo-list.tsx` removes it when its transition reports that it has
+   * finished. That order is forced: the cache is the only thing the rendered
+   * list is derived from, so a row removed on the click would unmount in the
+   * same commit and could animate nothing.
+   *
+   * Returns nothing and records nothing under reduced motion, exactly as
+   * `noteToggle` does and for the same reason — with `transition: none` no
+   * `transitionend` ever fires, so a row parked in the set would never leave.
+   * `isDeleting` then stays `false` and the caller cuts to the end state.
+   */
+  noteDelete: (id: string) => void;
+  /** Whether this row is collapsing on its way to being deleted. */
+  isDeleting: (id: string) => boolean;
   /**
    * Let these rows go now, announcing each: the end state, without the motion.
    *
@@ -143,10 +179,20 @@ export function FilterViewProvider({ children }: { children: ReactNode }) {
 
   const select = useCallback((next: FilterView) => {
     setView(next);
-    // A departure is a row leaving a particular view. Change the view and the
-    // premise is gone: each row either belongs to the new view or it does not,
-    // and either way none of them should be mid-animation about the old one.
-    setDepartures([]);
+    // A toggle's departure is a row leaving a particular view. Change the view
+    // and the premise is gone: each row either belongs to the new view or it
+    // does not, and either way none of them should be mid-animation about the
+    // old one.
+    //
+    // A delete's departure is not that. It is a row leaving the product, and
+    // its collapse ends in a cache write that nothing else will make — so
+    // cancelling one here would leave a confirmed Todo on screen, undeleted,
+    // with no request ever sent. Changing the view while a row is collapsing
+    // out is one tab press away, so this is a reachable state rather than a
+    // theoretical one.
+    setDepartures((current) =>
+      current.filter((departure) => departure.kind === "delete"),
+    );
   }, []);
 
   const showAll = useCallback(() => select("all"), [select]);
@@ -157,9 +203,22 @@ export function FilterViewProvider({ children }: { children: ReactNode }) {
         // Toggled back before it finished leaving: the row matches again, so
         // its departure is cancelled and it stays where it is. Scoped to this
         // row's own id, so a toggle elsewhere cannot cancel someone else's.
+        //
+        // A *delete's* departure is exempt, exactly as it is in `select` above
+        // and for the same reason: it is not a row leaving a view, it is a row
+        // leaving the product, and its collapse ends in a cache write nothing
+        // else will make. Toggling a row inside its own delete collapse would
+        // otherwise leave it on screen at full height, confirmed, undeleted,
+        // with no request ever sent.
         setDepartures((current) =>
-          current.some((departure) => departure.id === todo.id)
-            ? current.filter((departure) => departure.id !== todo.id)
+          current.some(
+            (departure) =>
+              departure.id === todo.id && departure.kind === "toggle",
+          )
+            ? current.filter(
+                (departure) =>
+                  departure.id !== todo.id || departure.kind === "delete",
+              )
             : current,
         );
         return;
@@ -180,17 +239,47 @@ export function FilterViewProvider({ children }: { children: ReactNode }) {
       // for one row.
       setDepartures((current) => [
         ...current.filter((departure) => departure.id !== todo.id),
-        { id: todo.id, announcement },
+        { id: todo.id, kind: "toggle", announcement },
       ]);
     },
     [announce, still, view],
   );
 
+  const noteDelete = useCallback(
+    (id: string) => {
+      // The end state, in this commit: nothing is marked, so `isDeleting` is
+      // `false` and the caller removes the row and sends the request at once
+      // (AC3). Nothing waits on a `transitionend` that will never fire.
+      if (still) return;
+
+      // Replace rather than append, for `noteToggle`'s reason: a row already
+      // leaving — because a toggle took it out of the view — is now leaving for
+      // good, and the delete's collapse is the one that should run. It is also
+      // what stops one id appearing twice in the set.
+      setDepartures((current) => [
+        ...current.filter((departure) => departure.id !== id),
+        { id, kind: "delete" },
+      ]);
+    },
+    [still],
+  );
+
   const cancelDepartures = useCallback((ids: readonly string[]) => {
     if (ids.length === 0) return;
+    // Deletes are exempt here too, and this is the third and last writer that
+    // has to say so. The one caller is a *refused toggle* (`todo-list.tsx`),
+    // which undoes the status a departure was leaving over — it says nothing
+    // about a delete confirmed for the same row, and cancelling one would
+    // strand that row on screen with no request ever sent.
     setDepartures((current) =>
-      current.some((departure) => ids.includes(departure.id))
-        ? current.filter((departure) => !ids.includes(departure.id))
+      current.some(
+        (departure) =>
+          ids.includes(departure.id) && departure.kind === "toggle",
+      )
+        ? current.filter(
+            (departure) =>
+              !ids.includes(departure.id) || departure.kind === "delete",
+          )
         : current,
     );
   }, []);
@@ -200,7 +289,9 @@ export function FilterViewProvider({ children }: { children: ReactNode }) {
       if (ids.length === 0) return;
       setDepartures((current) => {
         for (const departure of current) {
-          if (ids.includes(departure.id)) {
+          // A delete has nothing to say here — its announcement belongs to the
+          // mutation's success, where the server has actually agreed.
+          if (ids.includes(departure.id) && departure.kind === "toggle") {
             announce(departure.announcement, "polite");
           }
         }
@@ -218,7 +309,10 @@ export function FilterViewProvider({ children }: { children: ReactNode }) {
       // that `announce` is called exactly once.
       const leaving = departures.find((departure) => departure.id === id);
       if (leaving === undefined) return;
-      announce(leaving.announcement, "polite");
+      // A delete says nothing here: the row has only finished collapsing, and
+      // the request that will actually remove it has not been answered yet.
+      // `use-delete-todo.ts`'s `onSuccess` is what announces it (Story 5.3 AC5).
+      if (leaving.kind === "toggle") announce(leaving.announcement, "polite");
       // The updater form, and it has to be: two rows finishing in the same
       // tick would otherwise each filter the array they captured, and the
       // second write would put the first row back.
@@ -237,6 +331,11 @@ export function FilterViewProvider({ children }: { children: ReactNode }) {
       isDeparting: (id: string) =>
         departures.some((departure) => departure.id === id),
       noteToggle,
+      noteDelete,
+      isDeleting: (id: string) =>
+        departures.some(
+          (departure) => departure.id === id && departure.kind === "delete",
+        ),
       releaseDepartures,
       cancelDepartures,
       endDeparture,
@@ -247,6 +346,7 @@ export function FilterViewProvider({ children }: { children: ReactNode }) {
       showAll,
       departures,
       noteToggle,
+      noteDelete,
       releaseDepartures,
       cancelDepartures,
       endDeparture,

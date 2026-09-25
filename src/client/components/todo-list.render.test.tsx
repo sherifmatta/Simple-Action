@@ -177,6 +177,34 @@ function liveRegion(urgency: "polite" | "assertive"): string {
 // cache from leaking between them.
 const freshClient = () => new QueryClient();
 
+/** The rendered row whose text contains `text`, if it is still on screen. */
+const rowFor = (text: string) =>
+  [...container.querySelectorAll("li")].find((row) =>
+    row.textContent?.includes(text),
+  );
+
+/**
+ * Report that a row's collapse has finished.
+ *
+ * jsdom runs no transitions and fires no `transitionend`, so the one event both
+ * the departure and the delete hang off has to be dispatched. `propertyName:
+ * "opacity"` and the row's own element are the two things `todo-row.tsx` guards
+ * on — a descendant, or any other property, is ignored on purpose — so this is
+ * that contract written down once, where a change to the guard has one place to
+ * be mirrored rather than two.
+ */
+async function endCollapse(row: Element | undefined) {
+  expect(row, "no row was left to finish collapsing").toBeDefined();
+  await act(async () => {
+    row!.dispatchEvent(
+      Object.assign(new Event("transitionend", { bubbles: true }), {
+        propertyName: "opacity",
+      }),
+    );
+  });
+  await settle();
+}
+
 /**
  * The one `matchMedia` jsdom does not provide.
  *
@@ -1459,7 +1487,7 @@ describe("the Filter Views, through the mounted card (Story 4.3)", () => {
   });
 });
 
-describe("the delete path, through the mounted card (Story 5.2)", () => {
+describe("the delete path, through the mounted card (Stories 5.2, 5.3)", () => {
   // `delete-dialog.render.test.tsx` proves the dialog's own logic and
   // `todo-row.render.test.tsx` proves the control calls its handler. Neither
   // can see that the two are joined, and neither can see the three things that
@@ -1563,7 +1591,6 @@ describe("the delete path, through the mounted card (Story 5.2)", () => {
     [...container.querySelectorAll("li")]
       .find((row) => row.textContent?.includes(text))
       ?.querySelector<HTMLElement>('[role="checkbox"]');
-
   it("opens one dialog for whichever row asked, and removes nothing (AC8)", async () => {
     await mountList();
 
@@ -1574,8 +1601,8 @@ describe("the delete path, through the mounted card (Story 5.2)", () => {
     expect([...dialog().querySelectorAll("button")].map((b) => b.textContent)).toEqual(
       ["Cancel", "Delete"],
     );
-    // "Nothing is removed until the user chooses `Delete`" — and Story 5.2
-    // removes nothing even then; `onConfirm` is the seam Story 5.3 consumes.
+    // "Nothing is removed until the user chooses `Delete`": opening the
+    // question changes no Todo, and the four rows are all still here.
     expect(rowText()).toEqual([
       "pay rent",
       "send invoice",
@@ -1641,11 +1668,13 @@ describe("the delete path, through the mounted card (Story 5.2)", () => {
   });
 
   it("places focus on a row that is actually rendered, under any view (AC13)", async () => {
-    // The criterion is written at the post-removal surface and Story 5.2
-    // removes nothing, so what is provable now is the half that spans the seam:
-    // *which* control is chosen. In the Active view the on-screen order differs
-    // from the cache order — `pay rent` is Completed and filtered out — so a
-    // rule reading the cache would land focus on a row that is not rendered.
+    // Story 5.2 removed nothing, so this could only prove the half that spans
+    // the seam: *which* control is chosen. Story 5.3 removes the row for real,
+    // and the criterion is unchanged — because focus is still resolved against
+    // the list as the user last saw it, before the removal. In the Active view
+    // the on-screen order differs from the cache order (`pay rent` is Completed
+    // and filtered out), so a rule reading the cache would land focus on a row
+    // that is not rendered.
     await mountList();
     await act(async () => tab("Active").click());
     expect(rowText()).toEqual(["send invoice", "book dentist"]);
@@ -1659,6 +1688,19 @@ describe("the delete path, through the mounted card (Story 5.2)", () => {
     // rendered here — so this assertion fails for a rule that reads `data`.
     expect(document.activeElement).toBe(checkboxFor("book dentist"));
     expect(document.activeElement).not.toBe(document.body);
+
+    // And the confirmed row is now collapsing rather than already gone: it is
+    // still rendered, marked, so there is something on screen to leave
+    // (EXPERIENCE.md:161). The cache write happens when that collapse reports
+    // finished — `todo-list.render` drives it below — and focus does not move
+    // when it does.
+    const leaving = rowFor("send invoice");
+    expect(leaving?.getAttribute("data-deleting")).toBe("true");
+    expect(leaving?.getAttribute("data-departing")).toBeNull();
+
+    await endCollapse(leaving);
+    expect(rowText()).toEqual(["book dentist"]);
+    expect(document.activeElement).toBe(checkboxFor("book dentist"));
   });
 
   it("falls back to the preceding row when the deleted one was last (AC13)", async () => {
@@ -1671,6 +1713,12 @@ describe("the delete path, through the mounted card (Story 5.2)", () => {
 
     // Backwards, and the shortest distance it can: there is no row after the
     // last one to move up into its place.
+    expect(document.activeElement).toBe(checkboxFor("send invoice"));
+
+    // Still true once the row has actually gone, which is the half Story 5.2
+    // could not reach.
+    await endCollapse(rowFor("book dentist"));
+    expect(rowText()).toEqual(["send invoice"]);
     expect(document.activeElement).toBe(checkboxFor("send invoice"));
   });
 
@@ -1698,6 +1746,15 @@ describe("the delete path, through the mounted card (Story 5.2)", () => {
     expect(document.activeElement).toBe(
       container.querySelector(`#${ADD_INPUT_ID}`),
     );
+
+    // Both rows are now leaving, for two different reasons and on two
+    // different collapses — `book dentist` out of the Active view with its
+    // hold, `send invoice` out of the product without one. The markers say
+    // which is which, and no row carries both.
+    expect(rowFor("book dentist")?.getAttribute("data-departing")).toBe("true");
+    expect(rowFor("book dentist")?.getAttribute("data-deleting")).toBeNull();
+    expect(rowFor("send invoice")?.getAttribute("data-deleting")).toBe("true");
+    expect(rowFor("send invoice")?.getAttribute("data-departing")).toBeNull();
   });
 
   it("falls back to the add input when there is no row to take the place", async () => {
@@ -1713,5 +1770,511 @@ describe("the delete path, through the mounted card (Story 5.2)", () => {
       container.querySelector(`#${ADD_INPUT_ID}`),
     );
     expect(document.activeElement).not.toBe(document.body);
+
+    // And the list really does empty, which is what makes the fallback the
+    // right answer rather than a lucky one.
+    await endCollapse(rowFor("send invoice"));
+    expect(rowText()).toEqual([]);
+    expect(container.textContent).toContain("Nothing here yet.");
+  });
+});
+
+describe("the removal itself, through the mounted card (Story 5.3)", () => {
+  // `use-delete-todo.test.ts` proves the cache dance against a real
+  // `MutationObserver` with no DOM, and `delete-dialog.render.test.tsx` proves
+  // the dialog's own logic. What only a mount can show is the sequence the two
+  // are joined by: the dialog closes, the row *collapses* rather than
+  // vanishing, the cache write and the request happen when that collapse
+  // reports finished, and a refusal arriving afterwards puts the row back where
+  // it was with a banner the user can press.
+  //
+  // jsdom 30 implements no part of `HTMLDialogElement`, so the shim is
+  // installed per case — see `src/test-support/dialog.ts`.
+  let uninstall: () => void;
+
+  beforeEach(() => {
+    uninstall = installDialogShim(window.HTMLDialogElement);
+  });
+
+  afterEach(() => uninstall());
+
+  /** Four rows, newest first, two of each Completion Status. */
+  const LIST: Todo[] = [
+    {
+      id: "0199a5c5-0000-7000-8000-000000000014",
+      text: "pay rent",
+      completed: true,
+      createdAt: "2026-09-25T09:03:00.000Z",
+    },
+    {
+      id: "0199a5c5-0000-7000-8000-000000000013",
+      text: "send invoice",
+      completed: false,
+      createdAt: "2026-09-25T09:02:00.000Z",
+    },
+    {
+      id: "0199a5c5-0000-7000-8000-000000000012",
+      text: "call plumber",
+      completed: true,
+      createdAt: "2026-09-25T09:01:00.000Z",
+    },
+    {
+      id: "0199a5c5-0000-7000-8000-000000000011",
+      text: "book dentist",
+      completed: false,
+      createdAt: "2026-09-25T09:00:00.000Z",
+    },
+  ];
+
+  /**
+   * A server that answers the list read and holds each `DELETE` open.
+   *
+   * One resolver per row rather than one shared slot, which is the lesson the
+   * `PATCH` transport above already learned: a single `pending` that every
+   * request overwrote would leave the earlier mutation unsettled forever.
+   *
+   * Holding them open is the whole point here. Every claim in this block is
+   * about a moment *between* the confirm and the answer — the row gone from the
+   * cache with the request still in flight — and a stub that resolved
+   * immediately would collapse all of them into one.
+   */
+  function stubDeletes(list: Todo[]) {
+    let stored = [...list];
+    const sent: { url: string; method: string }[] = [];
+    const pending = new Map<string, (response: Response) => void>();
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>((input, init) => {
+        const url = String(input);
+        if (init?.method === "DELETE") {
+          sent.push({ url, method: "DELETE" });
+          const id = url.split("/").pop() ?? "";
+          return new Promise<Response>((resolve) => pending.set(id, resolve));
+        }
+        return Promise.resolve(Response.json(stored));
+      }),
+    );
+
+    const answer = async (todo: Todo, response: Response) => {
+      const resolve = pending.get(todo.id);
+      expect(resolve, `no DELETE is in flight for ${todo.id}`).toBeDefined();
+      pending.delete(todo.id);
+      resolve!(response);
+      await settle();
+      await settle();
+    };
+
+    return {
+      sent,
+      /** Answer as Story 5.1's endpoint does: `204`, and no body at all. */
+      confirm: async (todo: Todo) => {
+        stored = stored.filter((row) => row.id !== todo.id);
+        await answer(todo, new Response(null, { status: 204 }));
+      },
+      /** Refuse it, the way the route handler refuses everything (AD-10). */
+      refuse: (todo: Todo) =>
+        answer(
+          todo,
+          Response.json(
+            { error: { kind: "delete", message: "diagnostic" } },
+            { status: 500 },
+          ),
+        ),
+      /**
+       * Drop a row from what the server holds, without a request from here.
+       *
+       * Another tab, or another device. The next read then arrives without it,
+       * which is the only route this suite has to a cache the product itself
+       * did not empty.
+       */
+      forget: (todo: Todo) => {
+        stored = stored.filter((row) => row.id !== todo.id);
+      },
+      /** What a reload would read (AC6). */
+      persisted: () => stored,
+    };
+  }
+
+  async function mountDeleting(
+    { still = false, list = LIST }: { still?: boolean; list?: Todo[] } = {},
+  ) {
+    stubMotionPreference(still);
+    const transport = stubDeletes(list);
+    await mountCard();
+    return transport;
+  }
+
+  const dialog = () => container.querySelector("dialog") as HTMLDialogElement;
+  const rowText = () =>
+    [...container.querySelectorAll("li")].map(
+      (row) => row.querySelector("span")?.textContent,
+    );
+  const deleteControlFor = (text: string) =>
+    container.querySelector<HTMLButtonElement>(
+      `[aria-label="Delete ${text}"]`,
+    ) as HTMLButtonElement;
+  const dialogButton = (label: string) =>
+    [...dialog().querySelectorAll("button")].find(
+      (button) => button.textContent === label,
+    ) as HTMLButtonElement;
+  const tabLabels = () =>
+    [...container.querySelectorAll<HTMLButtonElement>('[role="tab"]')].map(
+      (each) => each.textContent,
+    );
+  const retryButton = () =>
+    [...container.querySelectorAll("button")].find(
+      (button) => button.textContent === "Retry",
+    );
+
+  /** Confirm the delete of `text`, and let its collapse finish. */
+  async function confirmDelete(text: string) {
+    await act(async () => deleteControlFor(text).click());
+    await act(async () => dialogButton("Delete").click());
+    await settle();
+    await endCollapse(rowFor(text));
+  }
+
+  it("collapses the row first, then removes it and sends the request (AC1, AC2)", async () => {
+    const transport = await mountDeleting();
+
+    await act(async () => deleteControlFor("send invoice").click());
+    await act(async () => dialogButton("Delete").click());
+    await settle();
+
+    // The dialog is closed and the row is still on screen, marked — which is
+    // what "the same collapse runs on a confirmed delete" requires it to be. A
+    // row removed from the cache on the click would have unmounted here, with
+    // nothing left to animate.
+    expect(dialog().open).toBe(false);
+    expect(rowText()).toContain("send invoice");
+    expect(rowFor("send invoice")?.getAttribute("data-deleting")).toBe("true");
+    // Nothing has been asked of the server yet.
+    expect(transport.sent).toEqual([]);
+
+    await endCollapse(rowFor("send invoice"));
+
+    // Gone from the list, and the request is on its way — AC1's "removed before
+    // the request resolves", which it is: the answer is still being held open.
+    expect(rowText()).toEqual(["pay rent", "call plumber", "book dentist"]);
+    expect(transport.sent).toEqual([
+      { url: `/api/todos/${LIST[1].id}`, method: "DELETE" },
+    ]);
+  });
+
+  it("updates all three filter-tab counts in the same commit (AC7)", async () => {
+    // Counts are `countsByFilterView(data)`, derived per render from the one
+    // cache entry, so this is satisfied by construction — which is exactly why
+    // it is asserted rather than built. A count held in state would pass every
+    // other case in this file.
+    await mountDeleting();
+    expect(tabLabels()).toEqual(["All 4", "Active 2", "Completed 2"]);
+
+    await confirmDelete("send invoice");
+
+    expect(tabLabels()).toEqual(["All 3", "Active 1", "Completed 2"]);
+    expect(rowText()).toHaveLength(3);
+  });
+
+  it("cuts to the end state under reduced motion (AC3)", async () => {
+    // No departure is recorded, because with `transition: none` no
+    // `transitionend` will ever fire and a row parked in the set would never
+    // leave. So the row goes and the request is sent in the same tick, with
+    // nothing waiting on an event that is not coming.
+    const transport = await mountDeleting({ still: true });
+
+    await act(async () => deleteControlFor("send invoice").click());
+    await act(async () => dialogButton("Delete").click());
+    await settle();
+
+    expect(rowText()).toEqual(["pay rent", "call plumber", "book dentist"]);
+    expect(container.querySelectorAll("[data-deleting]")).toHaveLength(0);
+    expect(transport.sent).toHaveLength(1);
+
+    // And the announcement still fires once the server agrees — the motion is
+    // what is dropped, never the information (EXPERIENCE.md:225).
+    await transport.confirm(LIST[1]);
+    expect(liveRegion("polite")).toBe("send invoice, deleted");
+  });
+
+  it("announces the removal politely, only once the server agrees (AC5)", async () => {
+    const transport = await mountDeleting();
+
+    await confirmDelete("send invoice");
+
+    // Nothing yet: the row has left the screen but the server has not answered,
+    // and announcing here would announce a removal that may yet be refused.
+    expect(liveRegion("polite")).toBe("");
+
+    await transport.confirm(LIST[1]);
+
+    expect(liveRegion("polite")).toBe("send invoice, deleted");
+    expect(liveRegion("assertive")).toBe("");
+    expect(transport.persisted().map((row) => row.text)).toEqual([
+      "pay rent",
+      "call plumber",
+      "book dentist",
+    ]);
+  });
+
+  it("keeps it gone across a reload (AC6)", async () => {
+    // The reload, as near as this suite gets: a fresh mount over a server that
+    // no longer holds the row. `mountCard()` builds its own `QueryClient`, so
+    // remounting is a fresh cache by construction.
+    const transport = await mountDeleting();
+    await confirmDelete("send invoice");
+    await transport.confirm(LIST[1]);
+
+    await act(async () => root.unmount());
+    container.remove();
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+
+    await mountCard();
+
+    expect(rowText()).toEqual(["pay rent", "call plumber", "book dentist"]);
+  });
+
+  it("puts the row back in its position and says so when refused (AC8, AC9, AC10)", async () => {
+    const transport = await mountDeleting();
+
+    await confirmDelete("send invoice");
+    expect(rowText()).toEqual(["pay rent", "call plumber", "book dentist"]);
+
+    await transport.refuse(LIST[1]);
+
+    // Back between the two rows it sat between, which is `id DESC` and never
+    // the end of the list (AC8).
+    expect(rowText()).toEqual([
+      "pay rent",
+      "send invoice",
+      "call plumber",
+      "book dentist",
+    ]);
+    // And it is a row again rather than a row still leaving.
+    expect(rowFor("send invoice")?.getAttribute("data-deleting")).toBeNull();
+
+    // The shared save string, with `Retry`, announced assertively by the banner
+    // rather than by the mutation (AC10, AC13).
+    expect(container.textContent).toContain("Couldn't save that change.");
+    expect(retryButton()).toBeDefined();
+    expect(liveRegion("assertive")).toBe("Couldn't save that change.");
+    // The server's own message never reaches the interface (AD-10).
+    expect(container.textContent).not.toContain("diagnostic");
+  });
+
+  it("leaves a toggle made while the delete was in flight alone (AC9)", async () => {
+    // A whole-list snapshot taken in `onMutate` and restored in `onError` would
+    // pass the case above and fail this one: the snapshot predates the toggle,
+    // so restoring it would undo a change the delete never made (AD-16).
+    let stored = [...LIST];
+    const pending = new Map<string, (response: Response) => void>();
+    stubMotionPreference(false);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>((input, init) => {
+        const url = String(input);
+        const id = url.split("/").pop() ?? "";
+        if (init?.method === "DELETE") {
+          return new Promise<Response>((resolve) => pending.set(id, resolve));
+        }
+        if (init?.method === "PATCH") {
+          const { completed } = JSON.parse(String(init.body)) as {
+            completed: boolean;
+          };
+          stored = stored.map((row) =>
+            row.id === id ? { ...row, completed } : row,
+          );
+          return Promise.resolve(
+            Response.json(stored.find((row) => row.id === id)),
+          );
+        }
+        return Promise.resolve(Response.json(stored));
+      }),
+    );
+    await mountCard();
+
+    await confirmDelete("send invoice");
+
+    // `pay rent` is Completed; mark it Active while the delete is still open.
+    const payRent = rowFor("pay rent");
+    await act(async () =>
+      payRent?.querySelector<HTMLElement>('[role="checkbox"]')?.click(),
+    );
+    await settle();
+    expect(rowFor("pay rent")?.getAttribute("data-completed")).toBeNull();
+
+    // Now refuse the delete.
+    const resolve = pending.get(LIST[1].id);
+    expect(resolve, "no DELETE is in flight").toBeDefined();
+    await act(async () => {
+      resolve!(
+        Response.json(
+          { error: { kind: "delete", message: "x" } },
+          { status: 500 },
+        ),
+      );
+      await new Promise((done) => setTimeout(done, 0));
+    });
+    await settle();
+
+    // The deleted row is back where it was, and the toggle kept its new value.
+    expect(rowText()).toEqual([
+      "pay rent",
+      "send invoice",
+      "call plumber",
+      "book dentist",
+    ]);
+    expect(rowFor("pay rent")?.getAttribute("data-completed")).toBeNull();
+  });
+
+  it("re-attempts the same removal on Retry, without asking again (AC11)", async () => {
+    const transport = await mountDeleting();
+
+    await confirmDelete("send invoice");
+    await transport.refuse(LIST[1]);
+    expect(retryButton()).toBeDefined();
+
+    await act(async () => retryButton()?.click());
+    await settle();
+
+    // The same row, sent a second time to the same URL — and gone from the
+    // list again, with no confirmation in between and no collapse to wait on.
+    expect(transport.sent).toEqual([
+      { url: `/api/todos/${LIST[1].id}`, method: "DELETE" },
+      { url: `/api/todos/${LIST[1].id}`, method: "DELETE" },
+    ]);
+    expect(rowText()).toEqual(["pay rent", "call plumber", "book dentist"]);
+    // "The dialog does **not** re-open" — the user already confirmed, and
+    // asking twice would make `Retry` a second confirmation.
+    expect(dialog().open).toBe(false);
+    expect(container.querySelectorAll("dialog")).toHaveLength(1);
+
+    // And the banner goes when the retried removal succeeds.
+    await transport.confirm(LIST[1]);
+    expect(retryButton()).toBeUndefined();
+    expect(liveRegion("polite")).toBe("send invoice, deleted");
+  });
+
+  it("retries nothing and lets the banner go when the row has vanished (AC12)", async () => {
+    // A `Retry` whose Todo the cache no longer holds. The rollback put the row
+    // back when the delete was refused, so something *else* has to take it away
+    // for this branch to be reached at all — another tab, or, as here, a list
+    // arriving without it. Driven through a focus refetch because `mountCard()`
+    // builds its own client, which is the point of it: there is no handle to
+    // write the cache behind the product's back.
+    const transport = await mountDeleting();
+
+    await confirmDelete("send invoice");
+    await transport.refuse(LIST[1]);
+    expect(rowText()).toContain("send invoice");
+    const sentBefore = transport.sent.length;
+
+    // `focusManager` is a module-level singleton shared by every test in this
+    // worker, so it is restored in a `finally` — the discipline the read's own
+    // refetch cases established.
+    transport.forget(LIST[1]);
+    try {
+      await act(async () => {
+        focusManager.setFocused(false);
+        focusManager.setFocused(true);
+      });
+      await settle();
+      await settle();
+    } finally {
+      focusManager.setFocused(undefined);
+    }
+
+    // Gone from the cache, and the banner is still standing: a *read*
+    // succeeding says nothing about a failed delete, because the slot is
+    // cleared by kind (EXPERIENCE.md:109).
+    expect(rowText()).toEqual(["pay rent", "call plumber", "book dentist"]);
+    expect(container.textContent).toContain("Couldn't save that change.");
+
+    const retry = retryButton();
+    expect(retry, "the banner's Retry is still there to press").toBeDefined();
+    await act(async () => retry?.click());
+    await settle();
+
+    // Nothing re-sent — there is no longer a Todo for the banner's operation to
+    // be about — and the banner is gone regardless, because `retryCurrentError`
+    // empties the slot before it invokes the closure and does not care what the
+    // closure does (AD-9).
+    expect(transport.sent).toHaveLength(sentBefore);
+    expect(rowText()).toEqual(["pay rent", "call plumber", "book dentist"]);
+    expect(container.querySelector(".banner-region")?.children).toHaveLength(0);
+    expect(retryButton()).toBeUndefined();
+  });
+
+  it("lets two rows collapse at once, in whatever order they finish", async () => {
+    // `endDeparture` uses the updater form of `setDepartures` precisely because
+    // "two rows finishing in the same tick would otherwise each filter the
+    // array they captured, and the second write would put the first row back".
+    // Two deletes is the reachable version of that: confirm, confirm, and the
+    // collapses end in the order the browser happens to report them.
+    const transport = await mountDeleting();
+
+    await act(async () => deleteControlFor("send invoice").click());
+    await act(async () => dialogButton("Delete").click());
+    await settle();
+    await act(async () => deleteControlFor("call plumber").click());
+    await act(async () => dialogButton("Delete").click());
+    await settle();
+
+    // Both on screen, both marked, and nothing asked of the server yet.
+    expect(rowFor("send invoice")?.getAttribute("data-deleting")).toBe("true");
+    expect(rowFor("call plumber")?.getAttribute("data-deleting")).toBe("true");
+    expect(transport.sent).toEqual([]);
+
+    // The second one reports first, which is the order that breaks a
+    // non-updater write.
+    await endCollapse(rowFor("call plumber"));
+    expect(rowText()).toEqual(["pay rent", "send invoice", "book dentist"]);
+    expect(rowFor("send invoice")?.getAttribute("data-deleting")).toBe("true");
+
+    await endCollapse(rowFor("send invoice"));
+
+    expect(rowText()).toEqual(["pay rent", "book dentist"]);
+    expect(transport.sent).toEqual([
+      { url: `/api/todos/${LIST[2].id}`, method: "DELETE" },
+      { url: `/api/todos/${LIST[1].id}`, method: "DELETE" },
+    ]);
+
+    // And both are confirmed independently, each announcing its own Todo.
+    await transport.confirm(LIST[2]);
+    expect(liveRegion("polite")).toBe("call plumber, deleted");
+    await transport.confirm(LIST[1]);
+    expect(liveRegion("polite")).toBe("send invoice, deleted");
+  });
+
+  it("still delivers the removal when reduced motion arrives mid-collapse", async () => {
+    // The one state the two halves of AC3 leave between them. A preference set
+    // *before* the confirm records no departure at all and removes the Todo in
+    // the same tick; a preference flipped *during* the collapse takes the
+    // transition away from a row already marked, so no `transitionend` is ever
+    // coming for it. Without the delete being delivered on that release the row
+    // sits there confirmed, undeleted, with nothing ever sent — the one failure
+    // in this story that is silent in both directions.
+    const media = stubMotionPreference(false);
+    const transport = stubDeletes(LIST);
+    await mountCard();
+
+    await act(async () => deleteControlFor("send invoice").click());
+    await act(async () => dialogButton("Delete").click());
+    await settle();
+    expect(rowFor("send invoice")?.getAttribute("data-deleting")).toBe("true");
+    expect(transport.sent).toEqual([]);
+
+    const onChange = media.listeners.get("change");
+    expect(onChange, "the module registered no `change` listener").toBeDefined();
+    media.setMatches(true);
+    await act(async () => onChange!());
+    await settle();
+
+    expect(rowText()).toEqual(["pay rent", "call plumber", "book dentist"]);
+    expect(transport.sent).toEqual([
+      { url: `/api/todos/${LIST[1].id}`, method: "DELETE" },
+    ]);
   });
 });

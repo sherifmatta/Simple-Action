@@ -556,6 +556,7 @@ describe("the rendered row carries the marker and nothing else varies", () => {
       createElement(TodoRow, {
         todo,
         departing: false,
+        deleting: false,
         onToggle: () => {},
         onDeparted: () => {},
         onRequestDelete: () => {},

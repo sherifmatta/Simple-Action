@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 09-21-2026 12:00
-last_updated: 09-25-2026 16:10
+last_updated: 09-25-2026 17:05
 project: Simple Action
 project_key: NOKEY
 tracking_system: file-system
@@ -70,10 +70,10 @@ development_status:
   4-4-revert-a-toggle-the-server-refused: done
   epic-4-retrospective: optional
 
-  epic-5: in-progress
+  epic-5: done
   5-1-remove-a-todo-at-the-server: done
   5-2-reach-delete-three-ways-confirm-once: done
-  5-3-remove-before-the-server-answers-restore-if-refused: backlog
+  5-3-remove-before-the-server-answers-restore-if-refused: done
   epic-5-retrospective: optional
 
   epic-6: backlog

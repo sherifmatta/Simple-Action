@@ -183,12 +183,24 @@ describe("the page body is the only scrolling element (AC3)", () => {
     // It is gated on `data-revealed` rather than declared flat, which is the
     // second half of why it is safe: a row that has not been swiped clips
     // nothing at all and keeps its full soft shadow.
+    //
+    // Story 5.3 adds the third entry, and it is the Story 4.3 argument again
+    // rather than a new one. `row-deleting` is the departure's collapse without
+    // the 400ms hold — the same element, the same six properties, the same
+    // zeroed height — so the same clipping is needed for the same reason: the
+    // row's content has to be cut off as its height goes, or it spills over the
+    // rows sliding up underneath. It is the row's own `<li>`, a descendant of
+    // the list region and an ancestor of nothing but one row's surface and one
+    // button; it is no ancestor of the sticky block and cannot become one
+    // without moving files. And it is gated on `data-deleting`, so a row that
+    // nobody has confirmed clips nothing at all.
     const declarations = [
       ...globalsCss.matchAll(/([^{}]*)\{[^{}]*\boverflow(-[xy])?\s*:/g),
     ].map(([, before]) => before.trim().split("\n").pop()?.trim());
 
     expect(declarations).toEqual([
       '&[data-departing="true"]',
+      '&[data-deleting="true"]',
       '&[data-revealed="true"]',
     ]);
   });

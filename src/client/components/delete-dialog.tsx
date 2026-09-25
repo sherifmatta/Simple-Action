@@ -44,8 +44,13 @@
 // `null` a commit later is a no-op rather than a second close.
 //
 // This component is deliberately not the place where anything is deleted.
-// `onConfirm` is the seam; Story 5.3 is its consumer, and until then choosing
-// `Delete` closes the dialog and changes no Todo.
+// `onConfirm` is the seam and `todo-list.tsx` is its consumer: what happens
+// beyond this element — the row's collapse, the cache write, the request and
+// the banner a refusal raises — belongs to the list and to `use-delete-todo.ts`,
+// and none of it is visible from here. That is also why a refusal's `Retry`
+// never re-opens this dialog: the retry closure lives in the error slot, the
+// user has already confirmed, and asking a second time would make `Retry` a
+// second confirmation (epics.md Story 5.3 AC11).
 
 import { useEffect, useRef } from "react";
 

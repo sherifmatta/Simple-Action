@@ -6,10 +6,10 @@
 //
 // A pure function, and that is the point rather than a convenience. The rule it
 // states spans the 5.2/5.3 seam: it is about where focus lands *after a row has
-// been removed*, and Story 5.2 removes nothing at all. Written as a function of
-// a list and an id it is testable now, against every arrangement the list can
-// be in, and Story 5.3 is left with nothing to do but delete the row — the
-// wiring is already in place and already exercised.
+// been removed*, and Story 5.2 removed nothing at all. Written as a function of
+// a list and an id it was testable against every arrangement the list can be
+// in before anything could remove a row, which is why Story 5.3 had nothing to
+// add here — the wiring was already in place and already exercised.
 //
 // It takes the list as it was *before* the removal, which is the list the
 // caller is holding at the moment the dialog closes. "The row that took its

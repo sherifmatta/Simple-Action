@@ -230,13 +230,20 @@ describe("no duration is declared outside this module (AC3, AC4)", () => {
         (match) => `${file}:${match[1]}`,
       ),
     );
-    // The three exemptions are named rather than pattern-excluded: all are
+    // The four exemptions are named rather than pattern-excluded: all are
     // network deadlines, not motion durations — how long a read (Story 2.2), a
-    // create (Story 3.4) and a Completion Status update (Story 4.2) may take
-    // before they are abandoned. Nothing animates on any of them. Naming them
-    // is the point: the third had to be added here deliberately, which is
-    // where the question "is this really a deadline?" gets asked — and it is,
-    // for the same connection and with the same 15s answer.
+    // create (Story 3.4), a Completion Status update (Story 4.2) and a removal
+    // (Story 5.3) may take before they are abandoned. Nothing animates on any
+    // of them. Naming them is the point: each had to be added here
+    // deliberately, which is where the question "is this really a deadline?"
+    // gets asked — and each time it is, for the same connection and with the
+    // same 15s answer.
+    //
+    // Story 5.3 is also the story that most obviously could have added a
+    // *motion* constant here and did not: the delete's collapse is
+    // `COLLAPSE_MS` with the hold simply not applied, so the product's
+    // `*_MS` set is unchanged on the motion side. That absence is the
+    // assertion below as much as the presences are.
     expect([...declarations].sort()).toEqual(
       [
         `${motionFile}:SKELETON_PULSE_MS`,
@@ -247,6 +254,7 @@ describe("no duration is declared outside this module (AC3, AC4)", () => {
         `${path.join("src", "client", "todos", "todo-list-query.ts")}:READ_DEADLINE_MS`,
         `${path.join("src", "client", "todos", "create-todo.ts")}:CREATE_DEADLINE_MS`,
         `${path.join("src", "client", "todos", "set-completed.ts")}:SET_COMPLETED_DEADLINE_MS`,
+        `${path.join("src", "client", "todos", "delete-todo.ts")}:DELETE_DEADLINE_MS`,
       ].sort(),
     );
   });
@@ -416,5 +424,104 @@ describe("the stylesheet's departure and the module's constants are one pair", (
     expect(departureRecipe(css)).toContain(
       '[data-still="true"] > &[data-departing="true"] { transition: none; }',
     );
+  });
+});
+
+// --- Story 5.3: the same collapse, with the hold simply not applied ---------
+
+describe("the confirmed delete collapses over COLLAPSE_MS and holds for nothing", () => {
+  /** Every declaration block whose selector mentions the delete marker. */
+  function deletingRules(flat: string): string[] {
+    return [
+      ...flat.matchAll(/([^{}]*\[data-deleting="true"\][^{}]*)\{([^{}]*)\}/g),
+    ].map(([, selector, body]) => `${selector.trim()} {${body}}`);
+  }
+
+  /** The one block that starts the collapse — the only one with a transition. */
+  function collapseRule(flat: string): string {
+    const rules = deletingRules(flat).filter(
+      (rule) => rule.includes("transition:") && !rule.includes("[data-still"),
+    );
+    expect(rules, "the delete's collapse rule was not emitted").toHaveLength(1);
+    return rules[0]!;
+  }
+
+  it("moves every one of the six properties at the module's collapse duration", async () => {
+    // EXPERIENCE.md:161 — "the same collapse runs on a confirmed delete". Same
+    // six properties, because leaving any one of them out leaves the row
+    // occupying space: its padding holds it at 28px, and the flex `<ul>`'s own
+    // `{spacing.row-gap}` survives the row that was inside it.
+    //
+    // Read back out of the compiled sheet rather than out of the source, for
+    // `row-departing`'s reason: an unrecognised property or a mistyped variant
+    // is dropped by Tailwind silently, not reported.
+    const css = (await compiled).replace(/\s+/g, " ");
+    const rule = collapseRule(css);
+
+    for (const property of [
+      "opacity",
+      "height",
+      "min-height",
+      "padding-block",
+      "margin-bottom",
+      "margin-top",
+    ]) {
+      expect(rule).toContain(`${property} ${COLLAPSE_MS}ms ease-out`);
+    }
+    expect(rule).toContain("overflow: hidden");
+  });
+
+  it("applies no delay to any of them — the 400ms hold is the departure's alone", async () => {
+    // AC2: "with **no hold** — a deleted Todo has no new state to show". The
+    // departure's own rule writes `180ms ease-out 400ms` on all six, so the
+    // failure this guards against is a copy-paste that brought the third value
+    // with it — which would look right in the source and add four tenths of a
+    // second of nothing to every confirmed delete.
+    //
+    // Written as "no third value at all" rather than "not 400ms", so a hold
+    // reintroduced under any number fails here.
+    const css = (await compiled).replace(/\s+/g, " ");
+    const rule = collapseRule(css);
+
+    expect(rule).not.toContain(`ease-out ${DEPARTURE_HOLD_MS}ms`);
+    expect(rule).not.toMatch(/ease-out\s+\d+(?:\.\d+)?m?s/);
+    // And the departure's hold is still there, so the assertion above is a
+    // difference between two recipes rather than a value nobody writes.
+    expect(css).toContain(
+      `transition: opacity ${COLLAPSE_MS}ms ease-out ${DEPARTURE_HOLD_MS}ms`,
+    );
+  });
+
+  it("stands still when the region asks for stillness", async () => {
+    // Matched on the rule rather than on a literal selector string, because
+    // whether Tailwind emits this recipe nested or flattened depends on it
+    // having a declaration of its own before the `&`-rules — which it has not,
+    // and which is not a fact worth pinning.
+    const css = (await compiled).replace(/\s+/g, " ");
+    const suppressed = deletingRules(css).filter((rule) =>
+      rule.includes('[data-still="true"]'),
+    );
+    expect(suppressed, "the delete's stillness rule was not emitted").toHaveLength(1);
+    expect(suppressed[0]).toContain("transition: none");
+  });
+
+  it("closes the gap behind it from whichever side the row leaves one", async () => {
+    const css = (await compiled).replace(/\s+/g, " ");
+    const rules = deletingRules(css).join(" ");
+    expect(rules).toContain(
+      ':not(:last-child) { margin-bottom: calc(-1 * var(--spacing-row-gap));',
+    );
+    expect(rules).toContain(
+      ':last-child { margin-top: calc(-1 * var(--spacing-row-gap));',
+    );
+  });
+
+  it("adds no constant of its own to the module", () => {
+    // The whole reason this is a second recipe rather than a second duration:
+    // "the same named constant, not a second one" (epic-5-context). The
+    // declaration census above is the tree-wide guard; this is the claim it is
+    // guarding, stated where a reader of this story will look for it.
+    expect(COLLAPSE_MS).toBe(180);
+    expect(DEPARTURE_HOLD_MS).toBe(400);
   });
 });
