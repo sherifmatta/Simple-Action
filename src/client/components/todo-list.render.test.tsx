@@ -30,6 +30,7 @@ import { focusManager, QueryClient, QueryClientProvider } from "@tanstack/react-
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AnnouncerProvider } from "@/client/feedback/announcer";
+import { ErrorSlotProvider } from "@/client/feedback/error-slot";
 import { AppProviders } from "@/client/providers";
 import { FilterViewProvider } from "@/client/todos/filter-view-context";
 import { TODOS_QUERY_KEY } from "@/client/todos/query-keys";
@@ -86,17 +87,24 @@ async function mount(client: QueryClient) {
   // `useAnnounce()` — and that throws outside its provider by design rather
   // than degrading to a no-op. Story 4.3 added a third for the same reason:
   // the list reads the Filter View to decide which rows it shows, and
-  // `useFilterView()` throws outside its provider too. The error slot is still
-  // not needed here, which is the shape of this story: a refused toggle
-  // reverts and says nothing (Story 4.4 owns the banner).
+  // `useFilterView()` throws outside its provider too. Story 4.4 added the
+  // fourth and last: a refused toggle now raises into the one error slot, and
+  // `useErrorSlot()` throws outside its provider on the same principle.
+  //
+  // Which is four of the shell's providers assembled by hand. `mountCard()`
+  // below mounts the real `AppProviders` and is what every case added from
+  // Story 4.3 on uses; this stack is kept only because the cases above it
+  // predate the card mount and prove the list in isolation.
   await act(async () => {
     root.render(
       <QueryClientProvider client={client}>
-        <AnnouncerProvider>
-          <FilterViewProvider>
-            <TodoList />
-          </FilterViewProvider>
-        </AnnouncerProvider>
+        <ErrorSlotProvider>
+          <AnnouncerProvider>
+            <FilterViewProvider>
+              <TodoList />
+            </FilterViewProvider>
+          </AnnouncerProvider>
+        </ErrorSlotProvider>
       </QueryClientProvider>,
     );
   });
@@ -1241,5 +1249,210 @@ describe("the Filter Views, through the mounted card (Story 4.3)", () => {
     expect(row?.getAttribute("data-departing")).toBeNull();
     expect(rowText()).toEqual(["send invoice", "book dentist"]);
     expect(liveRegion("polite")).not.toContain("removed from");
+  });
+
+  // --- Story 4.4 ------------------------------------------------------------
+  //
+  // `use-set-completed.test.ts` proves the entry, its kind and what its closure
+  // re-sends, against a real `MutationObserver` with no DOM. What only a mount
+  // can show is the other half: that the entry reaches the banner the user
+  // reads, that the row comes back where it was, and that a `Retry` pressed in
+  // that banner re-enters the *whole* request — departure included.
+
+  /**
+   * A server that refuses the first `refusals` `PATCH`es, then relents.
+   *
+   * The GET keeps answering the stored list throughout, which is what the
+   * product sees: nothing about a refused toggle changes what the server holds.
+   *
+   * The id comes off the path with no `URL` parsing, because the request is
+   * relative (`/api/todos/<id>`) and `new URL` would throw on it. A miss is
+   * asserted rather than left to `Response.json(undefined)`, which would throw
+   * from inside the stub and report the wrong thing.
+   */
+  function refusingServer(refusals: number) {
+    let refused = 0;
+    let stored = [...LIST];
+    const fetchStub = vi.fn<typeof fetch>((input, init) => {
+      if (init?.method !== "PATCH") {
+        return Promise.resolve(Response.json(stored, { status: 200 }));
+      }
+      if (refused < refusals) {
+        refused += 1;
+        return Promise.resolve(
+          Response.json({ error: { kind: "update", message: "x" } }, { status: 500 }),
+        );
+      }
+      const id = String(input).split("?")[0].split("/").pop();
+      const { completed } = JSON.parse(String(init.body)) as { completed: boolean };
+      stored = stored.map((each) => (each.id === id ? { ...each, completed } : each));
+      const updated = stored.find((each) => each.id === id);
+      expect(updated, `PATCH for an id the stub does not hold: ${id}`).toBeDefined();
+      return Promise.resolve(Response.json(updated, { status: 200 }));
+    });
+    vi.stubGlobal("fetch", fetchStub);
+    return fetchStub;
+  }
+
+  const retryButton = () =>
+    [...container.querySelectorAll("button")].find(
+      (button) => button.textContent === "Retry",
+    );
+
+  it("says the change did not save, and says it assertively (AC2, AC7)", async () => {
+    stubMotionPreference(false);
+    refusingServer(1);
+    await mountCard();
+
+    await act(async () => checkboxIn("book dentist")?.click());
+    await settle();
+
+    expect(container.textContent).toContain("Couldn't save that change.");
+    expect(retryButton()).toBeDefined();
+    expect(liveRegion("assertive")).toBe("Couldn't save that change.");
+    // The server's own message never reaches the interface (AD-10).
+    expect(container.textContent).not.toContain("x");
+  });
+
+  it("puts a departed row back where it was, with the message (AC1, AC3)", async () => {
+    stubMotionPreference(false);
+    refusingServer(1);
+    await mountCard();
+
+    // In the Active view, completing `send invoice` takes it out — so the
+    // refusal has to undo a departure, not only a status.
+    await act(async () => tab("Active").click());
+    expect(rowText()).toEqual(["send invoice", "book dentist"]);
+
+    await act(async () => checkboxIn("send invoice")?.click());
+    await settle();
+
+    // Back in the list, in the position it held — between nothing and
+    // `book dentist`, which is id order and never Completion Status.
+    expect(rowText()).toEqual(["send invoice", "book dentist"]);
+    const row = [...container.querySelectorAll("li")].find((each) =>
+      each.textContent?.includes("send invoice"),
+    );
+    expect(row?.getAttribute("data-completed")).toBeNull();
+    expect(row?.getAttribute("data-departing")).toBeNull();
+    expect(container.textContent).toContain("Couldn't save that change.");
+  });
+
+  it("re-attempts the same change on Retry, and lets it depart (AC4, AC5)", async () => {
+    stubMotionPreference(false);
+    const fetchStub = refusingServer(1);
+    await mountCard();
+
+    await act(async () => tab("Active").click());
+    await act(async () => checkboxIn("send invoice")?.click());
+    await settle();
+
+    await act(async () => retryButton()?.click());
+    await settle();
+
+    // The second `PATCH` asks for the same status the first one did — the
+    // status the user asked for, not a toggle of the row as it stands now.
+    const patches = fetchStub.mock.calls.filter(([, init]) => init?.method === "PATCH");
+    expect(patches).toHaveLength(2);
+    expect(JSON.parse(String(patches[1][1]?.body))).toEqual({ completed: true });
+
+    // And the departure ran this time: the row is still on screen, marked
+    // leaving, in its new status. A retry that skipped `noteToggle` would have
+    // filtered it out in the same commit with no transition and no
+    // announcement.
+    const row = [...container.querySelectorAll("li")].find((each) =>
+      each.textContent?.includes("send invoice"),
+    );
+    expect(row?.getAttribute("data-departing")).toBe("true");
+    expect(row?.getAttribute("data-completed")).toBe("true");
+
+    // The banner went with the success, and the row is gone once it reports.
+    expect(retryButton()).toBeUndefined();
+    await act(async () => {
+      row?.dispatchEvent(
+        Object.assign(new Event("transitionend", { bubbles: true }), {
+          propertyName: "opacity",
+        }),
+      );
+    });
+    expect(rowText()).toEqual(["book dentist"]);
+    expect(liveRegion("polite")).toBe("send invoice, removed from Active");
+  });
+
+  it("retries nothing and lets the banner go when the row is gone (AC6)", async () => {
+    stubMotionPreference(false);
+    let stored = [...LIST];
+    let patches = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>((_input, init) => {
+        if (init?.method !== "PATCH") {
+          return Promise.resolve(Response.json(stored, { status: 200 }));
+        }
+        patches += 1;
+        return Promise.resolve(
+          Response.json({ error: { kind: "update", message: "x" } }, { status: 500 }),
+        );
+      }),
+    );
+    await mountCard();
+
+    await act(async () => checkboxIn("book dentist")?.click());
+    await settle();
+    expect(container.textContent).toContain("Couldn't save that change.");
+
+    // The row leaves the cache — Epic 5's delete, or, as here, a read arriving
+    // without it. Driven through a focus refetch because `mountCard()` mounts
+    // the real `AppProviders` and builds its own client, which is the point of
+    // it: there is no handle to write the cache behind the product's back.
+    //
+    // `focusManager` is a module-level singleton shared by every test in this
+    // worker, so it is restored in a `finally` — the discipline the read's own
+    // refetch case above established.
+    stored = stored.filter((each) => !each.text.includes("book dentist"));
+    try {
+      await act(async () => {
+        focusManager.setFocused(false);
+        focusManager.setFocused(true);
+      });
+      await settle();
+      await settle();
+    } finally {
+      focusManager.setFocused(undefined);
+    }
+    expect(rowText()).toEqual(["pay rent", "send invoice"]);
+    // The read succeeding says nothing about a failed toggle: the banner is
+    // cleared by kind, so it is still standing here (EXPERIENCE.md:109).
+    expect(container.textContent).toContain("Couldn't save that change.");
+
+    const retry = retryButton();
+    expect(retry, "the banner's Retry is still there to press").toBeDefined();
+    await act(async () => retry?.click());
+    await settle();
+
+    // Nothing re-sent, and the banner is gone regardless — `retryCurrentError`
+    // empties the slot before it invokes the closure and does not care what the
+    // closure does (AD-9).
+    expect(patches).toBe(1);
+    // Asserted on the banner rather than on the container's text: the
+    // assertive region keeps the words it announced, and that is correct.
+    expect(container.querySelector(".banner-region")?.children).toHaveLength(0);
+    expect(retryButton()).toBeUndefined();
+  });
+
+  it("raises the banner again when the retried toggle fails again", async () => {
+    stubMotionPreference(false);
+    refusingServer(2);
+    await mountCard();
+
+    await act(async () => checkboxIn("book dentist")?.click());
+    await settle();
+    await act(async () => retryButton()?.click());
+    await settle();
+
+    // `retryCurrentError` empties the slot *before* invoking the closure, so a
+    // synchronous re-raise has to survive that clear rather than be wiped by it.
+    expect(container.textContent).toContain("Couldn't save that change.");
+    expect(retryButton()).toBeDefined();
   });
 });

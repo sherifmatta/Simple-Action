@@ -4,6 +4,8 @@ import { fileURLToPath } from "node:url";
 import { MutationObserver, QueryClient } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { ERROR_COPY, RETRY_LABEL } from "@/client/feedback/error-copy";
+import type { ErrorSlotEntry } from "@/client/feedback/error-slot-state";
 import type { Todo } from "@/shared/contract/todo";
 
 import { TODOS_QUERY_KEY } from "./query-keys";
@@ -16,10 +18,11 @@ import {
   type SetCompletedVariables,
 } from "./use-set-completed";
 
-// Covers epics.md Story 4.2 AC1-AC7 at the layer below React: what the cache
-// holds before the request resolves, what replaces it afterwards, what a
-// refusal puts back, and — the row the whole design turns on — what a refusal
-// leaves alone while a second toggle is still in flight.
+// Covers epics.md Story 4.2 AC1-AC7 and Story 4.4 AC1-AC7 at the layer below
+// React: what the cache holds before the request resolves, what replaces it
+// afterwards, what a refusal puts back and says, what its `Retry` re-attempts,
+// and — the row the whole design turns on — what a refusal leaves alone while a
+// second toggle is still in flight.
 //
 // Driven through a real `MutationObserver` against a real `QueryClient` under
 // `environment: "node"`, which is `todo-list-query.ts`'s own argument reached
@@ -53,19 +56,48 @@ const LIST: Todo[] = [ACTIVE, COMPLETED];
 type Harness = {
   client: QueryClient;
   announce: ReturnType<typeof vi.fn>;
+  raiseError: ReturnType<typeof vi.fn>;
+  clearError: ReturnType<typeof vi.fn>;
+  onRequested: ReturnType<typeof vi.fn>;
+  onRefused: ReturnType<typeof vi.fn>;
   toggle: (variables: SetCompletedVariables) => Promise<Todo>;
   cached: () => Todo[] | undefined;
   row: (id: string) => Todo | undefined;
+  /** The entry the last refusal put in the slot, which is where `Retry` lives. */
+  raised: () => ErrorSlotEntry;
 };
 
+/**
+ * The seams, all spied.
+ *
+ * The hook wires `reattempt` to its own `mutate`, and so does this: a `Retry`
+ * that re-entered the mutation by some other route would prove nothing about
+ * the product. `onRequested` is spied rather than stubbed out because AC5 is
+ * precisely that a retry makes the call a first attempt makes.
+ */
 function harness(mutationFn: (variables: SetCompletedVariables) => Promise<Todo>): Harness {
   const client = new QueryClient();
   client.setQueryData<Todo[]>(TODOS_QUERY_KEY, LIST);
 
   const announce = vi.fn();
+  const raiseError = vi.fn();
+  const clearError = vi.fn();
+  const onRequested = vi.fn();
+  const onRefused = vi.fn();
+
   const observer = new MutationObserver<Todo, Error, SetCompletedVariables>(
     client,
-    { ...setCompletedMutationOptions(client, announce), mutationFn },
+    {
+      ...setCompletedMutationOptions(client, {
+        announce,
+        raiseError,
+        clearError,
+        onRequested,
+        onRefused,
+        reattempt: (variables) => void observer.mutate(variables).catch(() => undefined),
+      }),
+      mutationFn,
+    },
   );
 
   const cached = () => client.getQueryData<Todo[]>(TODOS_QUERY_KEY);
@@ -73,11 +105,24 @@ function harness(mutationFn: (variables: SetCompletedVariables) => Promise<Todo>
   return {
     client,
     announce,
+    raiseError,
+    clearError,
+    onRequested,
+    onRefused,
     toggle: (variables) => observer.mutate(variables),
     cached,
     row: (id) => cached()?.find((todo) => todo.id === id),
+    raised: () => raiseError.mock.lastCall?.[0] as ErrorSlotEntry,
   };
 }
+
+/** The seams a structural check does not exercise, spelled once. */
+const inertSeams = () => ({
+  announce: vi.fn(),
+  raiseError: vi.fn(),
+  clearError: vi.fn(),
+  reattempt: vi.fn(),
+});
 
 /** A promise with its settlement pulled out, so a test can hold it open. */
 function deferred<T>() {
@@ -310,18 +355,19 @@ describe("a refusal reverts one row and nothing else (AC4, AC5)", () => {
     expect(cached()).toEqual(LIST);
   });
 
-  it("says nothing and raises nothing — that is Story 4.4", async () => {
-    // A refused toggle reverts and is silent here. Splitting the banner across
-    // two stories would leave one behaviour with two owners; Story 4.4's AC1
-    // re-covers this restore and adds the announcement, the message and
-    // `Retry`.
-    const { toggle, announce } = harness(() =>
-      Promise.reject(new TodoRequestError("update")),
+  it("tells the Filter View the row is back, before it says anything else", async () => {
+    // Story 4.3's departure is leaving over a change that did not happen, and
+    // the order is load-bearing: the cache is restored first, so anybody acting
+    // on this sees the row as it is again rather than as the toggle left it.
+    const { toggle, onRefused, row } = harness(() =>
+      Promise.reject(new TodoRequestError("update", { status: 500 })),
     );
 
     await toggle({ todo: ACTIVE, completed: true }).catch(() => undefined);
 
-    expect(announce).not.toHaveBeenCalled();
+    expect(onRefused).toHaveBeenCalledTimes(1);
+    expect(onRefused).toHaveBeenCalledWith(ACTIVE);
+    expect(row(ACTIVE.id)?.completed).toBe(false);
   });
 
   it("leaves a concurrent toggle's change alone when the first fails (AC5)", async () => {
@@ -370,7 +416,7 @@ describe("a refusal reverts one row and nothing else (AC4, AC5)", () => {
     // left to the concurrency case to catch.
     const client = new QueryClient();
     client.setQueryData<Todo[]>(TODOS_QUERY_KEY, LIST);
-    const options = setCompletedMutationOptions(client, vi.fn());
+    const options = setCompletedMutationOptions(client, inertSeams());
 
     const context = await options.onMutate?.(
       { todo: ACTIVE, completed: true },
@@ -378,14 +424,183 @@ describe("a refusal reverts one row and nothing else (AC4, AC5)", () => {
     );
     expect(context).toBeUndefined();
 
-    // The one text scan left: `getQueryData` in this module could only be a
-    // snapshot being taken, and the behavioural cases above cannot see a
-    // snapshot that is taken and never restored.
+    // The text scan, narrowed by Story 4.4 rather than dropped. `getQueryData`
+    // used to be bannable outright here, because in a mutation that never reads
+    // the cache it could only be a snapshot being taken — and the behavioural
+    // cases above cannot see a snapshot that is taken and never restored.
+    //
+    // A refusal's `Retry` now has to look one row up (AC6), so the ban becomes
+    // a ban on the *shape*: exactly one call, and it ends in `.find(`, which is
+    // a single-row lookup and cannot be a list anybody could restore.
     const source = readFileSync(
       fileURLToPath(new URL("./use-set-completed.ts", import.meta.url)),
       "utf8",
     );
-    expect(source).not.toMatch(/getQueryData/);
+    expect(source.match(/getQueryData/g)).toHaveLength(1);
+    expect(source).toMatch(/getQueryData<Todo\[\]>\(TODOS_QUERY_KEY\)\s*\?\.find\(/);
+  });
+});
+
+describe("a refused toggle says so, and offers the same change again (Story 4.4)", () => {
+  const refuses = () =>
+    harness(() => Promise.reject(new TodoRequestError("update", { status: 500 })));
+
+  it("raises exactly one `update` entry into the one slot (AC2, AC7)", async () => {
+    const { toggle, raiseError, announce } = refuses();
+
+    await toggle({ todo: ACTIVE, completed: true }).catch(() => undefined);
+
+    expect(raiseError).toHaveBeenCalledTimes(1);
+    expect(raiseError.mock.lastCall?.[0].kind).toBe("update");
+    // Not announced from here. `error-banner.tsx` announces whatever the slot
+    // holds, assertively, from one site for all four kinds — so a second
+    // announcement raised here would be the same sentence spoken twice.
+    expect(announce).not.toHaveBeenCalled();
+  });
+
+  it("uses the shared save string and the one `Retry` label (AC2)", () => {
+    // The kind is what the entry carries; this is the tie that makes the kind
+    // mean the sentence AC2 asks for. A new string invented for the toggle
+    // would pass every other assertion here.
+    expect(ERROR_COPY.update).toBe("Couldn't save that change.");
+    expect(RETRY_LABEL).toBe("Retry");
+  });
+
+  it("re-attempts the status the user asked for, not a toggle of what is there (AC4)", async () => {
+    const sent: SetCompletedVariables[] = [];
+    const client = new QueryClient();
+    client.setQueryData<Todo[]>(TODOS_QUERY_KEY, LIST);
+
+    const raiseError = vi.fn();
+    const observer = new MutationObserver<Todo, Error, SetCompletedVariables>(
+      client,
+      {
+        ...setCompletedMutationOptions(client, {
+          announce: vi.fn(),
+          raiseError,
+          clearError: vi.fn(),
+          reattempt: (variables) =>
+            void observer.mutate(variables).catch(() => undefined),
+        }),
+        mutationFn: (variables) => {
+          sent.push(variables);
+          return Promise.reject(new TodoRequestError("update", { status: 500 }));
+        },
+      },
+    );
+
+    await observer.mutate({ todo: ACTIVE, completed: true }).catch(() => undefined);
+
+    // The row drifts between the failure and the press — a background read
+    // landing with an edit made elsewhere. Without it this case cannot tell the
+    // two implementations apart: the rollback restores exactly `ACTIVE`, so
+    // reusing the closure's `todo` and reading the cache produce the same
+    // object and the assertion below passes either way.
+    const edited = { ...ACTIVE, text: "send invoice (final)" };
+    client.setQueryData<Todo[]>(TODOS_QUERY_KEY, [edited, COMPLETED]);
+
+    (raiseError.mock.lastCall?.[0] as ErrorSlotEntry).retry();
+    await settle();
+
+    expect(sent).toHaveLength(2);
+    // The status is the closure's, because AC4 is explicit that `Retry`
+    // re-attempts what the user asked for. The row is the cache's, because that
+    // value is this attempt's own rollback if it fails again.
+    expect(sent[1]).toEqual({ todo: edited, completed: true });
+  });
+
+  it("re-runs the request in full, so the departure starts again (AC5)", async () => {
+    const answers = [
+      Promise.reject(new TodoRequestError("update", { status: 500 })),
+      Promise.resolve({ ...ACTIVE, completed: true }),
+    ];
+    const { toggle, raised, onRequested, row, clearError } = harness(() =>
+      answers.shift()!,
+    );
+
+    await toggle({ todo: ACTIVE, completed: true }).catch(() => undefined);
+    expect(onRequested).toHaveBeenCalledTimes(1);
+
+    raised().retry();
+    await settle();
+
+    // The Filter View is asked a second time, which is what makes the row
+    // depart again when the view no longer matches it.
+    expect(onRequested).toHaveBeenCalledTimes(2);
+    expect(onRequested).toHaveBeenLastCalledWith(ACTIVE, true);
+    expect(row(ACTIVE.id)?.completed).toBe(true);
+    expect(clearError).toHaveBeenLastCalledWith("update");
+  });
+
+  it("does nothing when the row it refers to is gone (AC6)", async () => {
+    let attempts = 0;
+    const client = new QueryClient();
+    client.setQueryData<Todo[]>(TODOS_QUERY_KEY, LIST);
+
+    const raiseError = vi.fn();
+    const observer = new MutationObserver<Todo, Error, SetCompletedVariables>(
+      client,
+      {
+        ...setCompletedMutationOptions(client, {
+          announce: vi.fn(),
+          raiseError,
+          clearError: vi.fn(),
+          reattempt: (variables) =>
+            void observer.mutate(variables).catch(() => undefined),
+        }),
+        mutationFn: () => {
+          attempts += 1;
+          return Promise.reject(new TodoRequestError("update", { status: 500 }));
+        },
+      },
+    );
+
+    await observer.mutate({ todo: ACTIVE, completed: true }).catch(() => undefined);
+    // Epic 5's delete, or a list that arrived without it.
+    client.setQueryData<Todo[]>(TODOS_QUERY_KEY, [COMPLETED]);
+
+    (raiseError.mock.lastCall?.[0] as ErrorSlotEntry).retry();
+    await settle();
+
+    expect(attempts).toBe(1);
+    // The banner clears regardless: `retryCurrentError` empties the slot before
+    // it invokes this and does not care what the closure does (AD-9).
+  });
+
+  it("reloads rather than re-sending when the Client Identity has expired", async () => {
+    // The one non-retryable failure, reached from a third side. `middleware.ts`
+    // never mints under `app/api/`, so a `401` on the `PATCH` means re-sending
+    // yields `401` for as long as the page is open.
+    const reload = vi.fn();
+    vi.stubGlobal("window", { location: { reload } });
+
+    let attempts = 0;
+    const { toggle, raised } = harness(() => {
+      attempts += 1;
+      return Promise.reject(new TodoRequestError("update", { status: 401 }));
+    });
+
+    await toggle({ todo: ACTIVE, completed: true }).catch(() => undefined);
+    raised().retry();
+    await settle();
+
+    expect(reload).toHaveBeenCalledTimes(1);
+    expect(attempts).toBe(1);
+  });
+
+  it("asks for its own banner to be taken down when a toggle succeeds", async () => {
+    // EXPERIENCE.md:109, not an AC of this story. And it is `clearError`'s
+    // *argument* that is the whole assertion: passing the kind is what makes
+    // the reducer leave a failed add's banner standing (`error-slot-state.ts`
+    // owns that rule and `error-slot.test.ts` proves it). A bare `clearError()`
+    // here would take down whatever happened to be showing.
+    const { toggle, clearError } = harness(() =>
+      Promise.resolve({ ...ACTIVE, completed: true }),
+    );
+
+    await toggle({ todo: ACTIVE, completed: true });
+
+    expect(clearError).toHaveBeenCalledWith("update");
   });
 });
 
@@ -402,7 +617,7 @@ describe("the module's export surface", () => {
   });
 
   it("is built on the read's failure discipline, not a second one", () => {
-    const options = setCompletedMutationOptions(new QueryClient(), vi.fn());
+    const options = setCompletedMutationOptions(new QueryClient(), inertSeams());
     // `retry: false` — recovery is AD-9's explicit `Retry`, never an automatic
     // chain. `networkMode: "always"` — an update attempted offline must fail
     // visibly rather than pause into a state with nothing to press (NFR-4).

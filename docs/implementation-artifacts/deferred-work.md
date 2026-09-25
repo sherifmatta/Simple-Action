@@ -494,3 +494,47 @@ the entries above.
   further under a taller sticky block than when the entry was written. Nothing
   here changes the fix or its owner (Story 6.2, WCAG 2.4.11); this records that
   the condition it was waiting for has arrived and the margin got worse.
+
+- source_spec: `spec-4-4-revert-a-toggle-the-server-refused.md`
+  summary: `todo-list.render.test.tsx`'s hand-built `mount()` helper now assembles
+  four of the shell's providers by hand, duplicating what `AppProviders` does.
+  evidence: Story 4.2 added `AnnouncerProvider`, 4.3 added `FilterViewProvider`
+  and this story added `ErrorSlotProvider` — which is every provider
+  `providers.tsx` mounts. Each addition was forced by a hook that throws outside
+  its provider, so the helper has been tracking the shell one story behind it and
+  will keep doing so. Every case written since Story 4.3 uses `mountCard()` and
+  the real `AppProviders` instead; the hand-built stack survives only for the
+  eight cases that predate it, which take a `QueryClient` the card build does not
+  expose. Converting them needs a `mountCard(client)` seam — small, but it edits
+  eight passing tests to prove nothing new, which is not this story's work.
+  Natural owner is Epic 5, whose delete hook adds the next provider-bound hook to
+  this list.
+
+- source_spec: `spec-4-4-revert-a-toggle-the-server-refused.md`
+  summary: `npm test` fails intermittently in `announcer.test.ts` with `ENOENT`
+  on a `.drift-probe-<pid>.config.ts` file it did not create.
+  evidence: `schema.test.ts:239-243` writes a temporary `.drift-probe-<pid>.config.ts`
+  at the repository root and deletes it; `announcer.test.ts:237-241` globs every
+  source file in the repository and reads each one, so with the two files in
+  different workers the glob can list the probe and the read can miss it. Seen
+  once during this story and not reproducible on demand; nothing in this change
+  touches either file. The fix is for the probe to live under a temp directory,
+  or for the scan to tolerate a file vanishing between the list and the read.
+  Natural owner is whoever next touches either file — or Epic 6, where a flaky
+  suite is the thing being relied on.
+
+- source_spec: `spec-4-4-revert-a-toggle-the-server-refused.md`
+  summary: Re-answered, not closed — two toggles of the same row still have no
+  ordering guarantee, and this story's banner makes the consequence louder.
+  evidence: The open entry above records that the fix is `scope: { id: todo.id }`
+  on the mutation, "a decision that belongs with Story 4.4's rollback and banner
+  rather than ahead of it". Revisited here, and deliberately not taken: serialising
+  per row would make a *queued* toggle run after a failure that has already put the
+  row back and raised a banner offering to re-send the earlier status, so pressing
+  `Retry` and letting the queue drain would fight over one row with two closures
+  that each believe they hold the rollback value. The endpoint is a set rather
+  than a toggle (AD-6), so each response is individually correct and the next read
+  corrects any disagreement; what is left is a brief wrong picture, which is what
+  the entry already said. The new fact is that the wrong picture can now be
+  accompanied by a banner for a change that did land. Still Epic 6's to see
+  end-to-end before anything is serialised.

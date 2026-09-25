@@ -112,15 +112,26 @@ export function TodoList() {
     endDeparture,
   } = useFilterView();
 
+  // The two moments the Filter View cares about, handed to the mutation rather
+  // than wrapped around it.
+  //
+  // `noteToggle` goes in as the request seam so that a `Retry` pressed in the
+  // banner starts a departure too (Story 4.4 AC5) — a wrapper here would only
+  // ever run for the checkbox, and the banner has no wrapper to go through.
+  //
   // A refused toggle undoes the change a departure is leaving over, and this
   // is the only place that learns of it: the rollback is a cache write, and
   // polling the cache for it cannot work because `onMutate` is async — there
   // is always a commit where the row is marked departing and the optimistic
   // write has not landed. Without this the row finishes collapsing, announces
   // a removal that never happened, and pops back at full height.
-  const setCompleted = useSetCompleted(
-    useCallback((todo: Todo) => cancelDepartures([todo.id]), [cancelDepartures]),
-  );
+  const toggle = useSetCompleted({
+    onRequested: noteToggle,
+    onRefused: useCallback(
+      (todo: Todo) => cancelDepartures([todo.id]),
+      [cancelDepartures],
+    ),
+  });
   // One attribute, set from the product's only reader of the preference; the
   // recipes in `app/globals.css` derive the stillness from it (AR-28). No
   // component branches on a duration and no `className` here is computed.
@@ -134,19 +145,13 @@ export function TodoList() {
     (todo) => matchesFilterView(todo, view) || isDeparting(todo.id),
   );
 
-  // A departure is a row that stopped matching the view, so a row that matches
-  // again is not departing — whoever made it match. A toggle back is the
-  // obvious case and the Filter View handles that itself; the one it cannot
-  // see is a *refused* toggle, where Story 4.2's rollback restores the status
-  // in the cache and deliberately says nothing to anybody. Without this the
-  // row would finish collapsing, announce a removal that never happened, and
-  // then pop back at full height.
+  // The rows currently leaving, as ids. Joined into a string so the effect
+  // below has a statically checkable dependency: the array's identity changes
+  // on every render and its contents almost never do.
   //
-  // A departing row that has left the cache entirely is released for the same
-  // reason: it will never render again, so no `transitionend` is coming for it.
-  // Joined into a string so the effect below has a statically checkable
-  // dependency: the array's identity changes on every render and its contents
-  // almost never do.
+  // This is the reduced-motion release and nothing else — a departure cancelled
+  // by a refusal is handled at the seam above, and a departure cancelled by a
+  // toggle back is the Filter View's own business.
   const departing = (data ?? [])
     .filter((todo) => isDeparting(todo.id))
     .map((todo) => todo.id)
@@ -159,15 +164,6 @@ export function TodoList() {
     // what AC16 asks for when the preference was set to begin with.
     if (still && departing !== "") releaseDepartures(departing.split(" "));
   }, [still, releaseDepartures, departing]);
-
-  // The Filter View is told before the cache is written, so the marker and the
-  // optimistic status land in one commit: the row holds in its *new* status,
-  // which is the whole point of the hold. Both calls take the status the user
-  // asked for rather than a toggle instruction (AD-6).
-  const toggle = (todo: Todo, completed: boolean) => {
-    noteToggle(todo, completed);
-    setCompleted(todo, completed);
-  };
 
   return (
     <>

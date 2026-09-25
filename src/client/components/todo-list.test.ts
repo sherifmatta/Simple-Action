@@ -286,12 +286,19 @@ describe("the list region reads the one query hook", () => {
     // `onMutate` is async and there is always a commit where the row is marked
     // departing and the optimistic write has not landed.
     expect(listSource).toMatch(/cancelDepartures\(\[todo\.id\]\)/);
-    // Story 4.3 put one function between the hook and the row: the Filter View
-    // has to hear about a toggle before the cache is written, so the row still
-    // gets one callback and the list is still where the two are joined.
+    // Story 4.3 put a wrapper between the hook and the row, and Story 4.4 took
+    // it away again: `noteToggle` goes *into* the mutation, so the one request
+    // path is the one a `Retry` pressed in the banner re-enters too. A wrapper
+    // here would run for the checkbox and never for the banner, and a retried
+    // toggle would silently stop departing the view (Story 4.4 AC5).
+    //
+    // Which seam it goes into is the compiler's job, not this scan's:
+    // `SetCompletedCallbacks` is named rather than positional precisely because
+    // `(todo) => void` is assignable to a `(todo, completed) => void` slot, so
+    // no ordering a test could pin here was ever the thing protecting it.
+    expect(listSource).toMatch(/onRequested: noteToggle/);
     expect(listSource).toMatch(/onToggle=\{toggle\}/);
-    expect(listSource).toMatch(/noteToggle\(todo, completed\);/);
-    expect(listSource).toMatch(/setCompleted\(todo, completed\);/);
+    expect(listSource).not.toMatch(/noteToggle\(todo, completed\)/);
     // And the list itself never reads Completion Status — `todo-row.tsx` is
     // the one file that does (`todo-row.test.ts` asserts the whole surface).
     expect(listSource).not.toMatch(/\.completed\b/);
