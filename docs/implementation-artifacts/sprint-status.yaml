@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 09-21-2026 12:00
-last_updated: 09-25-2026 13:00
+last_updated: 09-25-2026 13:30
 project: Simple Action
 project_key: NOKEY
 tracking_system: file-system
@@ -63,11 +63,11 @@ development_status:
   3-4-return-the-user-s-text-when-an-add-fails: done
   epic-3-retrospective: optional
 
-  epic-4: in-progress
+  epic-4: done
   4-1-set-a-todo-s-completion-status-at-the-server: done
   4-2-the-checkbox-and-the-status-change-it-applies-before-the-ser: done
   4-3-build-the-filter-tabs-and-make-a-departing-todo-leave-visibl: done
-  4-4-revert-a-toggle-the-server-refused: review
+  4-4-revert-a-toggle-the-server-refused: done
   epic-4-retrospective: optional
 
   epic-5: backlog
