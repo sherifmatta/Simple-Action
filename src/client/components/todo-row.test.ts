@@ -89,11 +89,30 @@ function ruleIndex(css: string, pattern: RegExp): number {
 
 describe("the row is a list item holding a checkbox and the Todo's text", () => {
   it("renders the checkbox before the text, inside one <li>", () => {
-    // Was `["li", "span", "svg", "path", "span"]`. Story 4.2 turns the
+    // Was `["li", "span", "svg", "path", "span"]`. Story 4.2 turned the
     // decorative glyph into the control that toggles, so the first `span` is a
     // `button` — and it is still first, which is AC14's tab order falling out
     // of document order rather than being arranged.
-    expect(elements()).toEqual(["li", "button", "svg", "path", "span"]);
+    //
+    // Story 5.2 wraps the lot in one `<div>` and adds the delete control after
+    // the text. The `<li>` is now the stationary delete lane and the `<div>` is
+    // the row surface that slides left over it (mockups/key-delete.html:414);
+    // the control is the surface's last child, so it is the last focusable
+    // element in the row by document order, again with no `tabIndex`.
+    expect(elements()).toEqual([
+      "li",
+      "div",
+      "button",
+      "svg",
+      "path",
+      "span",
+      "button",
+      "svg",
+      "path",
+      "path",
+      "path",
+      "path",
+    ]);
   });
 
   it("renders no copy of its own — the only text is the Todo's", () => {
@@ -152,7 +171,7 @@ describe("a Completed row changes three cues and its shadow at once (AC2, AC3)",
   it("fills mint, fills the checkbox and strikes the text through", async () => {
     const css = await compiled;
 
-    expect(ruleFor(css, "data-completed:bg-row-complete")).toContain(
+    expect(ruleFor(css, "group-data-completed:bg-row-complete")).toContain(
       "var(--color-row-complete)",
     );
     // Since Story 4.2 the fill is gated on the control's own `aria-checked`
@@ -183,7 +202,7 @@ describe("a Completed row changes three cues and its shadow at once (AC2, AC3)",
     // DESIGN.md:373 — the same recipe re-tinted, so the mint surface's shadow
     // belongs to it. DESIGN.md:376 — elevation never encodes state, so this is
     // the green token and not a larger one.
-    const retint = ruleFor(css, "data-completed:shadow-row-complete");
+    const retint = ruleFor(css, "group-data-completed:shadow-row-complete");
     // The whole rule, not its first fragment. Tailwind nests a block inside
     // the shadow utilities, and until the 2026-09-22 review this helper read
     // only up to the first `}` — enough to see `--tw-shadow:` and not enough
@@ -194,7 +213,7 @@ describe("a Completed row changes three cues and its shadow at once (AC2, AC3)",
     // Green, and specifically not the lavender the Active row carries.
     expect(retint).not.toContain("rgba(37, 44, 74");
     expect(css).toContain("--shadow-row-complete:");
-    expect(rowClasses).toContain("data-completed:shadow-row-complete");
+    expect(rowClasses).toContain("group-data-completed:shadow-row-complete");
   });
 
   it("survives colour being removed, because two cues are not colour (AC3)", async () => {
@@ -377,10 +396,13 @@ describe("Completion Status is expressed exactly once (AC4)", () => {
     const statusClasses = rowClasses.filter((name) =>
       STATUS_UTILITIES.test(name.split(":").at(-1) ?? ""),
     );
-    // Ten of them since this story: two on the `<li>`, six on the control and
-    // two on the text. Exact, not a floor — a class silently dropped from the
-    // control is precisely what a floor would let through.
-    expect(statusClasses).toHaveLength(10);
+    // Twelve of them since Story 5.2: two on the row surface, six on the
+    // checkbox, two on the text and two on the delete control, which takes the
+    // same pair of focus rings for the same reason — a Todo can be deleted in
+    // either Completion Status, so its control is reachable on mint and
+    // `accent` there is 2.97:1 (epics.md Story 5.2 AC6). Exact, not a floor — a
+    // class silently dropped from a control is what a floor would let through.
+    expect(statusClasses).toHaveLength(12);
     for (const name of statusClasses) {
       const gates = name.split(":").slice(0, -1);
       expect(gates, `${name} must be gated, not chosen`).not.toEqual([]);
@@ -448,10 +470,22 @@ describe("the checkbox is the only control, and the row body is not one (AC6, AC
     // interactive — it answers the stylesheet, not the user — and the removal
     // has to hang off it because a timer would be a duration this product
     // forbids outside the motion module.
+    //
+    // Story 5.2 adds the gesture and the second control, and neither makes the
+    // row body interactive either. The four touch handlers read a swipe and
+    // set one attribute; they carry no `onClick`, no role and no tab stop, so
+    // the row still has nothing for a tap on its text to do. The second
+    // `onClick` and the `onBlur` are the delete control's own.
     const names = attributeNames();
     expect(names.filter((name) => /^on[A-Z]/.test(name))).toEqual([
+      "onTouchStart",
+      "onTouchMove",
+      "onTouchEnd",
+      "onTouchCancel",
       "onTransitionEnd",
       "onClick",
+      "onClick",
+      "onBlur",
     ]);
     expect(names.filter((name) => name === "role")).toEqual(["role"]);
     // `tabIndex` is absent on purpose (AC14): a `<button>` is focusable
@@ -524,6 +558,7 @@ describe("the rendered row carries the marker and nothing else varies", () => {
         departing: false,
         onToggle: () => {},
         onDeparted: () => {},
+        onRequestDelete: () => {},
       }),
     );
 

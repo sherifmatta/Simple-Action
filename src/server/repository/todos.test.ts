@@ -4,7 +4,7 @@ import { clientIdentity, todo } from "@/server/db/schema";
 import { mintIdentityId } from "@/server/identity/identity-token";
 import { db } from "./client";
 import * as todosRepository from "./todos";
-import { createTodo, listTodos, setTodoCompleted } from "./todos";
+import { createTodo, deleteTodo, listTodos, setTodoCompleted } from "./todos";
 
 // Story 2.1 AC1 (the wire shape), AC2 (`id DESC`, never `created_at`), AC3 (the
 // `ownerId`-first signature) and AC4 (one caller's rows only), live against the
@@ -15,6 +15,12 @@ import { createTodo, listTodos, setTodoCompleted } from "./todos";
 // the owner scoping lives in the `UPDATE`'s own `WHERE`, and that a repeat
 // stores the value asked for rather than its inverse, are both properties of
 // the statement the database runs and of nothing a mock could stand in for.
+//
+// Story 5.1 AC1, AC2, AC3, AC4 and AC5 join them for `deleteTodo`: that the row is
+// actually gone, that deleting it twice is not an error, that a row another
+// owner holds is untouched, and that a Todo in either Completion Status goes.
+// Every one of those is a property of the statement the database runs — a mock
+// asked to resolve `undefined` would prove all four without a table existing.
 //
 // Story 3.1 AC1, AC3, AC4 and AC5 join them for `createTodo`. Its idempotency
 // is `ON CONFLICT (id) DO NOTHING` plus an owner-scoped read, which is SQL the
@@ -498,12 +504,131 @@ describe("setTodoCompleted — against the live branch", () => {
   });
 });
 
+describe("deleteTodo — against the live branch", () => {
+  /** The stored row, or `undefined` when nothing holds that id any more. */
+  async function storedRow(id: string) {
+    const rows = await db.select().from(todo).where(eq(todo.id, id));
+    return rows.at(0);
+  }
+
+  it("removes the caller's Todo and reports nothing back (AC1)", async () => {
+    const ownerId = await freshOwner();
+    const id = freshId();
+    await insertTodo({ id, ownerId, text: "Buy milk" });
+    await expect(storedRow(id)).resolves.toBeDefined();
+
+    const answer = await deleteTodo(ownerId, id);
+
+    // Nothing back, deliberately: with no result there is nothing for the
+    // route handler to branch on, which is what makes its `204` unconditional
+    // and stops the status becoming an existence oracle.
+    expect(answer).toBeUndefined();
+    await expect(storedRow(id)).resolves.toBeUndefined();
+    // And it is gone from the caller's list, because it is gone from the
+    // table — there is no soft-delete column and nothing filters on one.
+    await expect(listTodos(ownerId)).resolves.toEqual([]);
+  });
+
+  it("deletes a Completed Todo just as readily (AC5)", async () => {
+    const ownerId = await freshOwner();
+    const id = freshId();
+    await insertTodo({ id, ownerId, text: "Buy milk", completed: true });
+
+    await deleteTodo(ownerId, id);
+
+    await expect(storedRow(id)).resolves.toBeUndefined();
+  });
+
+  it("succeeds a second time on a row that is already gone (AC2)", async () => {
+    // A retry of a delete whose answer the browser never saw must not fail.
+    // The `DELETE` matches nothing the second time, which is not an error in
+    // SQL and must not become one here.
+    const ownerId = await freshOwner();
+    const id = freshId();
+    await insertTodo({ id, ownerId, text: "Buy milk" });
+
+    await deleteTodo(ownerId, id);
+    await expect(deleteTodo(ownerId, id)).resolves.toBeUndefined();
+
+    await expect(storedRow(id)).resolves.toBeUndefined();
+  });
+
+  it("resolves for a well-formed id that never named a row", async () => {
+    const ownerId = await freshOwner();
+
+    await expect(deleteTodo(ownerId, freshId())).resolves.toBeUndefined();
+  });
+
+  it("settles two concurrent deletes of the same row on the same answer (AC2)", async () => {
+    // What a browser retrying a delete actually does. Interleaving changes
+    // neither answer nor the outcome: the row is gone once, and neither call
+    // reports anything the other could contradict.
+    const ownerId = await freshOwner();
+    const id = freshId();
+    await insertTodo({ id, ownerId, text: "Buy milk" });
+
+    const answers = await Promise.all([
+      deleteTodo(ownerId, id),
+      deleteTodo(ownerId, id),
+    ]);
+
+    expect(answers).toEqual([undefined, undefined]);
+    await expect(storedRow(id)).resolves.toBeUndefined();
+  });
+
+  it("leaves a Todo another owner holds exactly where it was (AC3)", async () => {
+    // The `WHERE` clause *is* the ownership check, and this is the row that
+    // proves it: the same call, with the same well-formed id, from the wrong
+    // owner, removes nothing and reports the same nothing.
+    const theirs = await freshOwner();
+    const mine = await freshOwner();
+    const id = freshId();
+    await insertTodo({ id, ownerId: theirs, text: "their Todo" });
+    const before = await storedRow(id);
+    // `storedRow` answers `undefined` for a row that is not there, so without
+    // this the comparison below is `undefined === undefined` and would pass
+    // for a seeding insert that silently wrote nothing.
+    expect(before).toBeDefined();
+
+    await expect(deleteTodo(mine, id)).resolves.toBeUndefined();
+
+    // Every column, not merely the row's existence.
+    await expect(storedRow(id)).resolves.toEqual(before);
+    await expect(listTodos(theirs)).resolves.toHaveLength(1);
+  });
+
+  it("removes one row and no other of the caller's own list", async () => {
+    const ownerId = await freshOwner();
+    const [target, bystander] = [freshId(), freshId()];
+    await insertTodo({ id: target, ownerId, text: "the one being removed" });
+    await insertTodo({ id: bystander, ownerId, text: "the one left alone" });
+
+    await deleteTodo(ownerId, target);
+
+    await expect(storedRow(target)).resolves.toBeUndefined();
+    await expect(storedRow(bystander)).resolves.toMatchObject({
+      text: "the one left alone",
+    });
+  });
+
+  it("takes two parameters, neither defaulted nor rest (AC4)", () => {
+    // Arity, and only arity: `Function.length` cannot see which parameter is
+    // which. What pins `ownerId` *first* is the foreign-owner row above, which
+    // would fail against any other order because the `WHERE` would then be
+    // matching an owner id against `todo.id`. This row is the compiler's half.
+    expect(deleteTodo.length).toBe(2);
+  });
+});
+
 describe("repository scope — the Todo module", () => {
-  it("exports the list, the create and the set, and nothing more yet; delete arrives with Epic 5", () => {
+  it("exports the list, the create, the set and the delete, and nothing more", () => {
     // `CreateTodoResult` is a type and emits no runtime value, so it does not
-    // appear here — the surface this pins is the functions.
+    // appear here — the surface this pins is the functions. Story 5.1 added
+    // the fourth, which is the last one FR-1 to FR-5 asks for: a fifth here
+    // would be a repository function no endpoint calls.
     expect(Object.keys(todosRepository).sort()).toEqual([
       "createTodo",
+      "deleteTodo",
       "listTodos",
       "setTodoCompleted",
     ]);

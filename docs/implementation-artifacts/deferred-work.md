@@ -538,3 +538,68 @@ the entries above.
   the entry already said. The new fact is that the wrong picture can now be
   accompanied by a banner for a change that did land. Still Epic 6's to see
   end-to-end before anything is serialised.
+
+## Deferred from: `spec-5-1-5-2-delete-at-the-server-and-three-routes-to-one-dialog.md`
+
+- source_spec: `spec-5-1-5-2-delete-at-the-server-and-three-routes-to-one-dialog.md`
+  summary: The confirmation dialog does not name the Todo it is asking about.
+  evidence: EXPERIENCE.md:74 and mockups/key-delete.html step C name the Todo
+  by showing its own text on a sub-surface inside the dialog — "no new sentence
+  enters the interface". The spec's own execution list for `delete-dialog.tsx`
+  is a title and two buttons, and AC9 pins "exactly two buttons", so the sub-
+  surface was not built. The gap is smaller than it looks: the control that
+  opened the dialog is named `Delete <the Todo's text>`, so a screen-reader user
+  has just heard which row this is, and focus returns to that control on Cancel.
+  What is missing is the sighted confirmation on a long list, where the dialog
+  covers the row it is about. Natural owner is Story 5.3 or Epic 6's journey
+  pass, whichever first looks at this dialog with a populated list behind it.
+
+- source_spec: `spec-5-1-5-2-delete-at-the-server-and-three-routes-to-one-dialog.md`
+  summary: The swipe threshold is a number this repository chose, and no test
+  can tell whether it is the right one.
+  evidence: `SWIPE_LATCH_PX` in `todo-row.tsx` is 32. DESIGN.md gives the panel
+  a fill and a radius but no travel, and mockups/key-delete.html records both
+  the reveal width and the latch distance as open question 1 — "not fixed by
+  the spine". The render test proves the arithmetic (past the threshold latches,
+  short of it does not, reversed closes), which is the only part a DOM can see;
+  whether 32px is comfortable on glass is a question for a thumb. Natural owner
+  is Epic 6, which drives real devices — and Story 5.D1's first-run nudge, if it
+  is ever un-deferred, is the other thing that would move the number.
+
+- source_spec: `spec-5-1-5-2-delete-at-the-server-and-three-routes-to-one-dialog.md`
+  summary: The dialog's focus trap, its Escape key, its scrim and its focus
+  restore are asserted as markup facts and never exercised.
+  evidence: jsdom 30.1.1 implements no dialog API at all — `showModal`, `show`
+  and `close` are `undefined` — so `src/test-support/dialog.ts` shims the
+  element and its own header is explicit about the line. What the suite proves
+  is this repository's logic: `showModal()` rather than `show()`, the open and
+  close being idempotent, `cancel` and the Cancel button taking one path,
+  `Delete` reporting once. What it cannot reach is everything the choice of a
+  native `<dialog>` was made *for*. Natural owner is Epic 6, and the shim
+  carries a self-deleting test: `delete-dialog.render.test.tsx` asserts that a
+  bare jsdom dialog still has no `showModal`, so the day jsdom implements it the
+  suite says so rather than quietly going on testing a stub.
+
+- source_spec: `spec-5-1-5-2-delete-at-the-server-and-three-routes-to-one-dialog.md`
+  summary: The lane's 96px reveal width, and the row geometry it produces, are
+  asserted as stylesheet facts and never measured.
+  evidence: `--delete-lane-width` in `@utility delete-lane` is the mockup's
+  96px, which mockups/key-delete.html itself records as open question 1. The
+  suite proves the three consumers agree — the lane's box, the row's travel and
+  the control's travel back all read the one declaration — and proves the row's
+  height is unchanged by reading the drawn mark against `checkbox-box`'s 21px.
+  What it cannot do is lay anything out: jsdom computes no Tailwind, so "the
+  row is 50px and not 72px" is an argument from the cascade rather than a
+  measurement. That measurement, and whether 96px is the right reveal on a
+  360px screen, belong to Epic 6.
+
+- source_spec: `spec-5-1-5-2-delete-at-the-server-and-three-routes-to-one-dialog.md`
+  summary: `placeFocusAfterDelete`'s fallback branch — a resolved row that is
+  not in the document — is written and never reached.
+  evidence: `todo-list.tsx` resolves the focus target to an element and falls
+  back to the add input when `getElementById` answers nothing, because
+  `?.focus()` on a miss leaves focus on `document.body` and EXPERIENCE.md:202
+  forbids exactly that. Story 5.2 removes no row, so every id the rule resolves
+  is still rendered and the branch cannot be driven from here. Story 5.3 is the
+  first story in which a row actually leaves between the answer and the call,
+  and is the natural owner of a test for it.

@@ -78,6 +78,18 @@ import {
  */
 export const ADD_INPUT_PLACEHOLDER = "what needs doing?";
 
+/**
+ * The field's id — what focus falls back to when the Todo List empties.
+ *
+ * Story 5.2: deleting the last Todo leaves no row to focus, and "focus is never
+ * dropped to the document body" (EXPERIENCE.md:202), so `todo-list.tsx` has to
+ * be able to find this element. A constant rather than a string spelled at both
+ * ends, for the reason the placeholder above gives about naming something
+ * twice; a fixed id rather than a generated one because there is exactly one
+ * add input on the one screen this product has.
+ */
+export const ADD_INPUT_ID = "add-todo-input";
+
 /** The pill hint's whole label (DESIGN.md `components.input-add`). */
 export const ENTER_HINT_LABEL = "Enter";
 
@@ -289,6 +301,7 @@ export function AddInput({
       */}
       <input
         ref={field}
+        id={ADD_INPUT_ID}
         type="text"
         value={text}
         maxLength={TODO_TEXT_MAX_LENGTH}

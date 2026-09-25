@@ -1,9 +1,9 @@
 // Repository functions for the Todo (AD-2, AD-5).
 //
-// The first Todo module. `setTodoCompleted` joined it with Story 4.1 and
-// `deleteTodo` arrives in Epic 5, as `createTodo` did with Story 3.1; all of
-// them take `ownerId` first (AD-2), because a Todo is an owned resource and a
-// query that forgets the owner returns somebody else's list.
+// The first Todo module. `createTodo` joined it with Story 3.1,
+// `setTodoCompleted` with Story 4.1 and `deleteTodo` with Story 5.1; all four
+// take `ownerId` first (AD-2), because a Todo is an owned resource and a query
+// that forgets the owner returns somebody else's list.
 //
 // These functions return the wire `Todo` shape rather than the Drizzle row,
 // which is a deliberate departure from `client-identity.ts`. A Client Identity
@@ -191,4 +191,40 @@ export async function setTodoCompleted(
   const row = updated.at(0);
 
   return row && toWireTodo(row);
+}
+
+/**
+ * Removes one Todo the caller owns, and reports nothing back.
+ *
+ * `Promise<void>`, and that is the whole design rather than an omission. Story
+ * 5.1 asks for two properties that pull the same way: the same delete sent
+ * twice must succeed twice (a retry must not fail for a row already gone), and
+ * a delete aimed at somebody else's row must disclose nothing about it. If this
+ * function could tell "deleted" from "nothing to delete", the route handler
+ * would have a result to branch on and the status code would become an
+ * existence oracle — `204` for rows that are yours, something else for rows
+ * that are not. Returning nothing means the property holds structurally rather
+ * than by a branch that remembered to be careful, which is the argument
+ * `setTodoCompleted` above makes for its own shape.
+ *
+ * So there is no `returning` here, deliberately. Drizzle would happily report
+ * the deleted row, and holding the other owner's text — even to throw it away —
+ * is exactly what the owner-scoped `WHERE` exists to avoid.
+ *
+ * One statement, not a read-then-delete. `neon-http` has no interactive
+ * transaction (`client.ts`), so a check-then-delete would be racy; the `WHERE`
+ * clause *is* the ownership check, as it is for the update above.
+ *
+ * Permanent. There is no soft-delete column and nothing in this module filters
+ * on deletion state (epic-5-context "Deletion is permanent and idempotent"), so
+ * the row is gone from `listTodos` because it is gone from the table.
+ *
+ * @param ownerId The Client Identity the Todo must belong to. First, and never
+ *   optional (AD-2) — a delete that forgets the owner deletes somebody else's
+ *   Todo, and unlike a mis-scoped read there is nothing to undo it with.
+ * @param id The Todo's id, already checked for canonical UUIDv7 form by the
+ *   route handler before it reaches here.
+ */
+export async function deleteTodo(ownerId: string, id: string): Promise<void> {
+  await db.delete(todo).where(and(eq(todo.id, id), eq(todo.ownerId, ownerId)));
 }

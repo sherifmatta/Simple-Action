@@ -701,3 +701,268 @@
      mid-flight. */
   [data-still="true"] > &[data-departing="true"] { transition: none; }
 }
+
+/* ---------------------------------------------------------------------------
+   The delete control's two presentations, and the confirmation dialog
+   (Story 5.2; DESIGN.md `components.delete-action`, `components.dialog-delete`;
+   EXPERIENCE.md:165-168, 202, 221; mockups/key-delete.html).
+
+   Same rule as every block above: only the value with no token behind it lives
+   here. The control's radius, its muted icon colour, its danger-toned hover and
+   both focus rings are tokens and stay as utility classes on the element, where
+   the whole-tree scans can see them; so are the dialog's fill, radius, shadow
+   and padding.
+
+   Five things below break that rule, and each breaks it for a reason a class
+   could not carry:
+
+     - The lane's `{colors.danger-fill}` and the icon's `{colors.on-danger-fill}`
+       over it. Story 5.2 AC15 pins the filled treatment to exactly one element
+       in the markup — the dialog's confirm button — because that is "the only
+       filled button in the product, because it is the only interaction that
+       cannot be taken back" (DESIGN.md:430). DESIGN.md:299 sanctions exactly
+       two `danger-fill` *surfaces*, the lane and that button, so drawing the
+       lane here is what keeps the markup's single filled button single.
+     - The 44px reach. `min-w-*` is banned tree-wide (`todo-card.test.ts`) and
+       `h-*` over the row's own classes (`todo-row.test.ts`), which is the same
+       corner `checkbox-hit-area`, `retry-pill` and `input-add` are all in. Same
+       token, read from the theme rather than retyped.
+     - `(pointer: fine)`. Touch and pointer are told apart by capability and not
+       by width (EXPERIENCE.md:245), and Tailwind has no variant for a media
+       feature — the `enter-hint` recipe above is here for the same reason.
+     - The lane's 96px width (mockups/key-delete.html:290), which is a literal
+       with no token behind it and is needed in three places at once — the
+       lane's own width, the distance the row travels, and the distance the
+       control travels back. It is declared once as `--delete-lane-width` on the
+       row and inherited, rather than transcribed three times.
+     - The scrim. DESIGN.md gives `components.dialog-delete.scrim` as a literal
+       with no token name of its own, exactly as it gives the filter tabs' two
+       shadows, and it is painted on `::backdrop`, which no class can reach.
+   --------------------------------------------------------------------------- */
+
+@utility delete-lane {
+  /* The stationary action lane, and the mechanic the whole touch presentation
+     turns on: "The row slides left over a stationary action lane — the Delete
+     panel is uncovered, not pushed in" (mockups/key-delete.html:414;
+     DESIGN.md:446; epics.md Story 5.2 AC1).
+
+     So the lane is drawn on the row's *wrapper*, behind the row's own surface,
+     and the surface is what moves — `row-sliding` below. The alternative the
+     first attempt built, a control sliding into a gutter held open inside the
+     row, is a different interaction and costs the row 22px of height; see
+     `row-sliding` and `delete-hit-area` for the two halves of that.
+
+     A `::before` rather than an element, so the markup gains no box to be
+     scanned, clipped or mis-ordered, and so the row keeps exactly the children
+     Story 2.4 gave it plus the one control. It paints below the surface because
+     both are positioned and the pseudo-element comes first in tree order —
+     which is why the surface carries `relative` rather than nothing at all.
+
+     Square on the leading edge and the row's own radius on the trailing one, so
+     a partial reveal shows a clean vertical band rather than a rounded blob
+     (mockups/key-delete.html:288). */
+  --delete-lane-width: 96px;
+
+  position: relative;
+
+  &::before {
+    content: "";
+    position: absolute;
+    inset-block: 0;
+    right: 0;
+    width: var(--delete-lane-width);
+    border-radius: 0 var(--radius-md) var(--radius-md) 0;
+    background-color: var(--color-danger-fill);
+  }
+
+  /* Clipped only once the row has travelled — the second `overflow` in this
+     stylesheet, and `todo-card.test.ts` holds the allow-list that permits it by
+     name. The Story 4.3 argument extends exactly: a clipping *ancestor* of the
+     sticky block cuts it off, and this wrapper is no ancestor of it — it is a
+     descendant of the list region, and an ancestor of nothing but one row's
+     surface and one button. Clipping it clips the thing being clipped on
+     purpose, which is the half of the row that has slid off the lane.
+
+     Gated on the marker rather than declared flat, because "only a lane whose
+     row has travelled needs to clip — everywhere else the row keeps its full
+     soft shadow" (mockups/key-delete.html:266). */
+  &[data-revealed="true"] {
+    overflow: hidden;
+  }
+}
+
+@utility row-sliding {
+  /* The row's own surface, and the only thing that moves. Positioned so it
+     paints over the lane above; `relative` and never `absolute`, so it still
+     lays the row out and still gives the row its height.
+
+     `180ms` is COLLAPSE_MS in src/client/motion/motion.ts, spelled again
+     because CSS cannot read a TypeScript constant; `todo-row.test.ts` compiles
+     this file and asserts the two agree. It is the departure's collapse reused
+     rather than a duration of its own — the reveal and the removal are the same
+     gesture's two halves and must read as one speed. */
+  position: relative;
+  transition: transform 180ms ease-out;
+
+  /* The latch. JavaScript sets one attribute on the row and the stylesheet does
+     the rest, so no `className` in this product is ever computed (AR-28) —
+     `filter-view-context.tsx`'s departure marker is the precedent. */
+  [data-revealed="true"] > & {
+    transform: translateX(calc(-1 * var(--delete-lane-width)));
+  }
+
+  /* Stillness, from the one marker the motion module sets on the list region.
+     A descendant match rather than a child chain, because this surface is the
+     region's grandchild; the two things a child combinator bought elsewhere —
+     that a `data-still="false"` marker does not suppress, and that an unrelated
+     marker cannot — are bought here by requiring the value and by `&` being
+     this recipe's own class. */
+  [data-still="true"] & {
+    transition: none;
+  }
+}
+
+@utility delete-hit-area {
+  /* The mirror of `checkbox-hit-area` above, and for the identical reason
+     DESIGN.md:354 gives: the drawn mark is smaller than the square that has to
+     be reachable, so the reach is an overlay rather than a size — "the hit area
+     is padded out to 44px without changing the mark".
+
+     This is the half of the first attempt that had to be rebuilt. A 44px box in
+     the row's flex line takes every row from the 50px mockups/key-delete.html
+     draws to 72px, because the row's height is its tallest child plus
+     `{spacing.row-padding}`. The drawn mark here is a 17px glyph — smaller than
+     the 21px checkbox that already governs the line — so the row's height is
+     exactly what it was before this control existed, and the 44px lives in an
+     `::after` that contributes nothing to layout at all. */
+  position: relative;
+
+  &::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: var(--spacing-touch-target-min);
+    height: var(--spacing-touch-target-min);
+    transform: translate(-50%, -50%);
+  }
+}
+
+@utility delete-action {
+  /* The reveal, and the rule the keyboard route turns on.
+
+     At rest the control is invisible and untappable on every device, so the row
+     is the clean sub-surface mockups/key-delete.html draws at rest. Hidden by
+     `opacity` rather than by `display` or a branch, because it must stay in the
+     tab order whether or not it is shown (epics.md Story 5.2 AC3) — a control
+     that is not rendered cannot be tabbed to, and one that is merely
+     transparent can. `pointer-events` is what stops an invisible control from
+     accepting a tap it gives no sign of being there for; it does not affect
+     keyboard focus, which is the route that is supposed to reach it.
+
+     Hover is gated on `(pointer: fine)` and never on a width breakpoint: a
+     finger has no hover at any viewport size and a 700px laptop window has one
+     (EXPERIENCE.md:245). The hover is the *row's*, not the control's, because
+     DESIGN.md:446 reveals the icon when the row is hovered — `.group` is the
+     marker `todo-row.tsx` already carries for exactly this kind of derivation.
+
+     The focus reveal is deliberately OUTSIDE that media query, and that is the
+     whole of why this is a recipe and not two classes. The keyboard route "is
+     mandatory and is not a fallback: it is the WCAG 2.2 AA floor, and a
+     pointer-hover-only or gesture-only affordance would fail it"
+     (EXPERIENCE.md:168). A reveal that lived inside `(pointer: fine)` would
+     take the control away on exactly the devices with no other route to it.
+     `:focus-visible` and not `:focus`, so a tap that lands on the control does
+     not also reveal it behind the dialog it just opened. */
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity 180ms ease-out,
+    transform 180ms ease-out;
+
+  @media (pointer: fine) {
+    .group:hover & {
+      opacity: 1;
+      pointer-events: auto;
+    }
+  }
+
+  &:focus-visible {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  /* The revealed lane's icon. The control travels back by exactly what the
+     surface travelled forward, so it stands still while the row slides out from
+     under it and ends up over the uncovered lane — one icon for both
+     presentations rather than a second one drawn inside the panel.
+
+     The colour pair is the collision this rule exists to settle. The element
+     carries `hover:text-danger-text` (0,2,0) and Tailwind emits it after this
+     block, so a plain `[data-revealed="true"] &` at (0,2,0) would lose to it
+     and paint `{colors.danger-text}` on `{colors.danger-fill}` — the same hex,
+     an icon at 1:1 on its own ground. The `&:hover` arm below is (0,3,0) and
+     wins outright, so the revealed icon is `{colors.on-danger-fill}` whether or
+     not a pointer happens to be over it. */
+  [data-revealed="true"] & {
+    opacity: 1;
+    pointer-events: auto;
+    transform: translateX(var(--delete-lane-width));
+    color: var(--color-on-danger-fill);
+  }
+
+  [data-revealed="true"] &:hover {
+    color: var(--color-on-danger-fill);
+  }
+
+  [data-still="true"] & {
+    transition: none;
+  }
+}
+
+@utility dialog-button {
+  /* DESIGN.md `components.dialog-delete` — `cancel-border` and
+     `confirm-border` are both `1.5px solid`, differing only in colour, and the
+     colour is the element's own utility class per the rule at the top of the
+     Story 2.4 block. The same two declarations `retry-pill` carries, and its
+     own copy rather than a second consumer of it: a dialog button and a banner
+     pill are two components that agree today, and `retry-pill`'s note points at
+     `components.error-banner.retry-border` for its number.
+
+     `{spacing.touch-target-min}`, which DESIGN.md:430 names both buttons in.
+     The height half is `min-h-touch-target-min` on the element; this half
+     cannot be, because `todo-card.test.ts` bans the whole `min-w-*` family
+     tree-wide as something that can outgrow the card. */
+  border-width: 1.5px;
+  min-width: var(--spacing-touch-target-min);
+}
+
+@utility dialog-delete {
+  /* The modal itself. Its fill, radius, shadow and `{spacing.7}` padding are
+     all tokens and stay as classes on the element; what is here is the two
+     things a class cannot say.
+
+     The width ceiling is mockups/key-delete.html's 400px — a literal with no
+     token, the same treatment `top-block-stack`'s 10px and `filter-tab-track`'s
+     2px get. `width: 100%` under it is what makes the dialog fill a phone
+     rather than shrink to its own text; the UA's own modal max-width keeps it
+     inside the viewport, so nothing here has to reach for one.
+
+     There is deliberately no `position` in this recipe, and that is the reason
+     the dialog is a native `<dialog>` at all. `showModal()` puts the element in
+     the top layer, positioned by the UA stylesheet, so the product needs no
+     `position: fixed` scrim of its own — which `todo-card.test.ts` bans from
+     both the markup and this stylesheet, because a fixed ancestor is how the
+     sticky block gets covered. The focus trap, Escape-as-cancel and the focus
+     restore to the trigger come from the same place.
+
+     The scrim is `components.dialog-delete.scrim`, transcribed exactly. It is
+     `::backdrop` rather than an element, so there is no second box in the
+     markup to be scanned, to be clipped, or to be positioned wrongly. */
+  width: 100%;
+  max-width: 400px;
+
+  &::backdrop {
+    background-color: rgba(36, 36, 58, 0.32);
+  }
+}

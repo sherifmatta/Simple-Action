@@ -75,18 +75,21 @@
 // design value; here it is the value's own job. The `<ul>` needs no list
 // reset — Tailwind's preflight already strips the marker, margin and padding.
 
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { useReducedMotion } from "@/client/motion/motion";
 import type { Todo } from "@/shared/contract/todo";
 import { matchesFilterView } from "@/client/todos/filter-view";
 import { useFilterView } from "@/client/todos/filter-view-context";
+import { focusTargetAfterDelete } from "@/client/todos/focus-after-delete";
 import { useSetCompleted } from "@/client/todos/use-set-completed";
 import { useTodos } from "@/client/todos/use-todos";
 
+import { ADD_INPUT_ID } from "./add-input";
+import { DeleteDialog } from "./delete-dialog";
 import { EmptyState } from "./empty-state";
 import { SKELETON_ROW_KEYS, SkeletonRow } from "./skeleton-row";
-import { TodoRow } from "./todo-row";
+import { rowCheckboxId, TodoRow } from "./todo-row";
 
 export function TodoList() {
   const { isFetching, data, listLanded } = useTodos();
@@ -137,6 +140,20 @@ export function TodoList() {
   // component branches on a duration and no `className` here is computed.
   const still = useReducedMotion();
 
+  // Which Todo the confirmation is asking about, and the only state this
+  // component holds. One dialog for the whole list rather than one per row —
+  // "one dialog, one level deep, nothing stacks on top of it" is a property of
+  // where the element lives, not of what it renders, and a `<dialog>` per row
+  // would be a hundred modals in a hundred-row list.
+  //
+  // An **id**, and never the Todo. AD-8 keeps server state in the one cache
+  // entry, and a `Todo` parked in React state is a copy of a row that can go
+  // stale under it: toggle the Todo while the dialog is open and the object
+  // held here still describes the row as it was. The id is the client's own
+  // (AD-4) and never changes, so the row is looked up again on every render and
+  // the dialog is asking about whatever the cache currently holds.
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+
   // A departing row no longer matches the view — that is what makes it depart
   // — so it is kept by name until its transition reports that it has finished.
   // Without this the row would be filtered out in the same commit that marked
@@ -144,6 +161,77 @@ export function TodoList() {
   const visible = data?.filter(
     (todo) => matchesFilterView(todo, view) || isDeparting(todo.id),
   );
+
+  // The row the dialog is asking about, derived rather than stored — see the
+  // note on the state above. `null` closes the dialog, which is also the right
+  // answer when the row leaves the view underneath it: there is nothing left to
+  // confirm, so the question goes away.
+  const pendingDelete =
+    visible?.find((todo) => todo.id === pendingDeleteId) ?? null;
+
+  // ...and the id has to go with it, or the dialog and this component disagree
+  // about whether anything is pending. Two bugs follow from the one stale
+  // value, and both were shipped by the attempt this story replaces: pressing
+  // the same row's control again calls `setPendingDeleteId` with the value it
+  // already holds, React bails out of the re-render, and the dialog never
+  // reopens; and when the row comes back into view — a toggle back, a Filter
+  // View change — the dialog reopens unasked.
+  //
+  // Guarded on `visible` being defined, because while the list is loading or
+  // after a failed read every id looks stale and clearing then would throw away
+  // a pending delete the user is looking at.
+  //
+  // Adjusted during render rather than in an effect, which is React's own
+  // "adjusting state when a prop changes" pattern and the one the lint rule
+  // `react-hooks/set-state-in-effect` exists to push work towards: React
+  // discards this render and re-runs the component before committing, so the
+  // dialog is never painted holding a row the list no longer shows, and there
+  // is no second commit for anything to flash in.
+  if (
+    pendingDeleteId !== null &&
+    visible !== undefined &&
+    pendingDelete === null
+  ) {
+    setPendingDeleteId(null);
+  }
+
+  // Where focus goes when the dialog closes on `Delete`, and the one thing this
+  // component does that reaches into the document.
+  //
+  // Which control it is belongs to `focusTargetAfterDelete`, which is pure and
+  // is tested against every arrangement the list can be in; what is here is
+  // only turning that answer into an element. The rule it implements spans the
+  // 5.2/5.3 seam — Story 5.2 removes no row, so the "row that took its place"
+  // is still on screen — and placing focus now is what leaves 5.3 with nothing
+  // to wire up when it does remove one.
+  //
+  // The two ids are built by the components that own the elements rather than
+  // spelled here, so a renamed control breaks at the import instead of silently
+  // focusing nothing. Cancel and Escape need none of this: `showModal()`
+  // restores focus to the control that opened the dialog by itself.
+  //
+  // Not wrapped in `useCallback`: `visible` is a fresh array on every render, so
+  // the memo would be recomputed every time and buy a dependency list rather
+  // than a stable identity.
+  function placeFocusAfterDelete(deletedId: string): void {
+    // Departing rows are excluded. A row on its way out of the Filter View is
+    // kept in `visible` so it has something to leave with, but it is about to
+    // unmount — focus parked on it is focus dropped to `document.body` the
+    // moment its transition ends.
+    const onScreen = (visible ?? []).filter((todo) => !isDeparting(todo.id));
+    const target = focusTargetAfterDelete(onScreen, deletedId);
+    const row =
+      target.kind === "row"
+        ? document.getElementById(rowCheckboxId(target.id))
+        : null;
+
+    // The fallback is explicit rather than an optional call that swallows a
+    // miss: `document.getElementById(id)?.focus()` on an element that is not
+    // there leaves focus on `document.body`, which is the one outcome
+    // EXPERIENCE.md:202 forbids. The add input is the answer the empty-list case
+    // already resolves to, and the one control this screen always has.
+    (row ?? document.getElementById(ADD_INPUT_ID))?.focus();
+  }
 
   // The rows currently leaving, as ids. Joined into a string so the effect
   // below has a statically checkable dependency: the array's identity changes
@@ -193,6 +281,7 @@ export function TodoList() {
             departing={isDeparting(todo.id)}
             onToggle={toggle}
             onDeparted={endDeparture}
+            onRequestDelete={(pending) => setPendingDeleteId(pending.id)}
           />
         ))}
         {loading
@@ -216,6 +305,28 @@ export function TodoList() {
         Todos and no Active one is empty in the Active view and says so.
       */}
       {listLanded && visible?.length === 0 ? <EmptyState variant={view} /> : null}
+      {/*
+        One dialog for the whole list, a sibling of the region rather than a
+        child of it — a `<dialog>` is not valid inside a `<ul>`, and it must
+        outlive any one row besides. `showModal()` puts it in the top layer, so
+        where it sits in the markup decides nothing about where it is drawn.
+
+        Rendered unconditionally and closed by its `todo` being `null`, so the
+        element is the same element across every open: the platform's focus
+        restore remembers the control that opened it, and an element remounted
+        per Todo would have nothing to restore to.
+
+        `onConfirm` is the seam this story stops at. It closes the dialog and
+        places focus; Story 5.3 is what makes it also remove the Todo.
+      */}
+      <DeleteDialog
+        todo={pendingDelete}
+        onCancel={() => setPendingDeleteId(null)}
+        onConfirm={(confirmed) => {
+          setPendingDeleteId(null);
+          placeFocusAfterDelete(confirmed.id);
+        }}
+      />
     </>
   );
 }

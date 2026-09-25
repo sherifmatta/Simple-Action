@@ -170,11 +170,27 @@ describe("the page body is the only scrolling element (AC3)", () => {
     // added to any *other* recipe would keep a count of one honest while
     // reintroducing exactly the clipping ancestor this whole describe block is
     // about.
+    //
+    // Story 5.2 adds the second entry, and the same argument carries it. The
+    // delete lane is the row's own wrapper: it holds the stationary
+    // `danger-fill` panel and the row surface that slides left over it, so the
+    // half of the row that has travelled has to be cut off at the wrapper's
+    // edge or it spills across the rows beside it. That wrapper is a descendant
+    // of the list region, inside the list, and an ancestor of nothing but one
+    // row's surface and one button — it is no ancestor of the sticky block, and
+    // it cannot become one without moving files.
+    //
+    // It is gated on `data-revealed` rather than declared flat, which is the
+    // second half of why it is safe: a row that has not been swiped clips
+    // nothing at all and keeps its full soft shadow.
     const declarations = [
       ...globalsCss.matchAll(/([^{}]*)\{[^{}]*\boverflow(-[xy])?\s*:/g),
     ].map(([, before]) => before.trim().split("\n").pop()?.trim());
 
-    expect(declarations).toEqual(['&[data-departing="true"]']);
+    expect(declarations).toEqual([
+      '&[data-departing="true"]',
+      '&[data-revealed="true"]',
+    ]);
   });
 });
 

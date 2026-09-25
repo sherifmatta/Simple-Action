@@ -293,16 +293,27 @@ describe("repository scope — identity functions only (AC4, matrix row 'Reposit
       )
       .join("\n");
 
-    // `listTodos` left this list with Story 2.1, `createTodo` with Story 3.1
-    // and `setTodoCompleted` with Story 4.1 — each story removes the function
-    // it consumes. The one remaining arrives with Epic 5.
-    for (const todoFunction of ["deleteTodo"]) {
-      expect(source).not.toMatch(
-        new RegExp(`export\\s+(async\\s+)?function\\s+${todoFunction}\\b`),
-      );
-      expect(source).not.toMatch(
-        new RegExp(`export\\s+const\\s+${todoFunction}\\b`),
-      );
+    // `listTodos` left this list with Story 2.1, `createTodo` with Story 3.1,
+    // `setTodoCompleted` with Story 4.1 and `deleteTodo` with Story 5.1 — each
+    // story removed the function it consumed, and the list is now empty
+    // because FR-1 to FR-5 have nothing left to ask for.
+    //
+    // So the ratchet turns over: what was a list of functions that must *not*
+    // be here yet is now the list that must be, in the one module that may
+    // hold them. A fifth Todo function, or any of these four appearing in a
+    // second file, is what this now catches.
+    for (const todoFunction of [
+      "listTodos",
+      "createTodo",
+      "setTodoCompleted",
+      "deleteTodo",
+    ]) {
+      expect(
+        source.match(
+          new RegExp(`export\\s+(async\\s+)?function\\s+${todoFunction}\\b`, "g"),
+        ),
+        `${todoFunction} is declared somewhere other than todos.ts, or not at all`,
+      ).toHaveLength(1);
     }
   });
 });

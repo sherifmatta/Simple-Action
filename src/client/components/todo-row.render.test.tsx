@@ -58,6 +58,7 @@ afterEach(async () => {
 async function mount(todo: Todo, departing = false) {
   const onToggle = vi.fn();
   const onDeparted = vi.fn();
+  const onRequestDelete = vi.fn();
   // A `<ul>` around it, because an `<li>` outside a list is not what the
   // product renders and React would warn about the nesting.
   await act(async () => {
@@ -68,14 +69,41 @@ async function mount(todo: Todo, departing = false) {
           departing={departing}
           onToggle={onToggle}
           onDeparted={onDeparted}
+          onRequestDelete={onRequestDelete}
         />
       </ul>,
     );
   });
 
-  const checkbox = container.querySelector("button");
-  expect(checkbox, "the row rendered no control").not.toBeNull();
-  return { checkbox: checkbox as HTMLButtonElement, onToggle, onDeparted };
+  const controls = [...container.querySelectorAll("button")];
+  expect(controls, "the row rendered no control").not.toHaveLength(0);
+  const row = container.querySelector("li");
+  expect(row, "the row rendered no list item").not.toBeNull();
+  return {
+    checkbox: controls[0] as HTMLButtonElement,
+    // The row's last control, by document order — which is what makes it the
+    // last tab stop without a `tabIndex` saying so.
+    deleteControl: controls.at(-1) as HTMLButtonElement,
+    row: row as HTMLLIElement,
+    onToggle,
+    onDeparted,
+    onRequestDelete,
+  };
+}
+
+/**
+ * One touch point, as a `TouchEvent` React will read `touches[0]` off.
+ *
+ * jsdom implements no `Touch` constructor and no `TouchEvent`, so the event is
+ * an ordinary one with the two lists React's synthetic event copies across.
+ * That is enough for the handler under test, which reads `touches[0].clientX`
+ * and `.clientY` and nothing else — and honest about its limit: this drives the
+ * handler, it does not prove a browser would deliver the sequence.
+ */
+function touch(type: string, x: number, y: number): Event {
+  const event = new Event(type, { bubbles: true });
+  const point = { clientX: x, clientY: y };
+  return Object.assign(event, { touches: [point], changedTouches: [point] });
 }
 
 /**
@@ -268,16 +296,20 @@ describe("the status classes are on the control that carries the attribute (AC11
 
 describe("the tab order within a row (AC14)", () => {
   it("puts the checkbox first, with no tabIndex of its own", async () => {
-    const { checkbox } = await mount(ACTIVE);
+    const { checkbox, deleteControl } = await mount(ACTIVE);
 
     const focusable = [...container.querySelectorAll("a, button, input, [tabindex]")];
     expect(focusable[0]).toBe(checkbox);
     // Document order is what gives the row its tab order; an explicit
-    // `tabindex` would be arranging something that is already arranged, and
-    // would be the first thing to go wrong when Epic 5 adds the delete control
-    // after it.
+    // `tabindex` would be arranging something that is already arranged.
     expect(checkbox.hasAttribute("tabindex")).toBe(false);
-    expect(focusable).toHaveLength(1);
+    // Two controls since Story 5.2, and the delete control is the second —
+    // epics.md Story 5.2 AC7's "it is the **last** focusable control within its
+    // row, which places it after the checkbox once Epic 4 ships one". Neither
+    // carries a `tabindex`, so the order is the markup's.
+    expect(focusable).toHaveLength(2);
+    expect(focusable[1]).toBe(deleteControl);
+    expect(deleteControl.hasAttribute("tabindex")).toBe(false);
   });
 });
 
@@ -356,5 +388,224 @@ describe("the row reports its own departure (AC13)", () => {
     const staying = await mount(ACTIVE);
     expect(container.querySelector("li")?.getAttribute("data-departing")).toBeNull();
     expect(staying.onDeparted).not.toHaveBeenCalled();
+  });
+});
+
+// --- Story 5.2: the delete control and the swipe that reveals it -------------
+//
+// epics.md Story 5.2 AC1 (the swipe reveals the lane and tapping it opens the
+// dialog), AC3 (the control is reachable whether or not it is revealed, and
+// Enter and Space open the dialog), AC5 (it is named with the Todo it acts on)
+// and AC7 (it is the last focusable control in the row).
+//
+// What is *drawn* is `delete-dialog.test.ts`'s — jsdom computes no Tailwind, so
+// nothing here can see the lane, the travel or the 44px. What is here is the
+// behaviour: which handler runs, what it sets, and what it calls.
+
+describe("the delete control (AC3, AC5, AC7)", () => {
+  it("is named with the Todo it acts on, not with the verb alone", async () => {
+    // "So the tab order does not read as a list of identical `Delete` buttons"
+    // (EXPERIENCE.md:217). The name is two parts, which is why this one is an
+    // `aria-label` where the checkbox's is an `aria-labelledby`.
+    const { deleteControl } = await mount(ACTIVE);
+    expect(deleteControl.getAttribute("aria-label")).toBe("Delete send invoice");
+
+    const completed = await mount(COMPLETED);
+    expect(completed.deleteControl.getAttribute("aria-label")).toBe(
+      "Delete book dentist",
+    );
+  });
+
+  it("is rendered on every row, revealed or not — the keyboard route", async () => {
+    // The reveal is the stylesheet's (`@utility delete-action`), never a
+    // branch: a control that is not rendered cannot be tabbed to, and AC3 makes
+    // the keyboard route the WCAG 2.2 AA floor rather than a fallback.
+    const { row, deleteControl } = await mount(ACTIVE);
+    expect(row.getAttribute("data-revealed")).toBeNull();
+    expect(deleteControl.isConnected).toBe(true);
+    expect(deleteControl.hasAttribute("hidden")).toBe(false);
+    expect(deleteControl.hasAttribute("disabled")).toBe(false);
+  });
+
+  it("asks rather than removes — it reports the Todo and nothing else", async () => {
+    // "Releasing here opens the confirmation dialog in Step C; the swipe itself
+    // never deletes" (mockups/key-delete.html). The row holds no dialog and
+    // removes no Todo; `onRequestDelete` is the whole of its part.
+    const { deleteControl, onRequestDelete, onToggle } = await mount(ACTIVE);
+
+    await act(async () => deleteControl.click());
+
+    expect(onRequestDelete).toHaveBeenCalledExactlyOnceWith(ACTIVE);
+    expect(onToggle).not.toHaveBeenCalled();
+  });
+
+  it("opens the dialog on Enter and on Space, from the platform (AC3)", async () => {
+    // A `<button>`, so both keys arrive as a click through one handler — the
+    // argument `todo-row.tsx` already makes for the checkbox. jsdom dispatches
+    // no synthetic click for a key, so the keys are pressed and the click the
+    // platform would raise is raised with them; what is under test is that
+    // there is one activation path and no `onKeyDown` beside it.
+    const { deleteControl, onRequestDelete } = await mount(ACTIVE);
+
+    for (const key of ["Enter", " "]) {
+      await act(async () => {
+        deleteControl.dispatchEvent(
+          new KeyboardEvent("keydown", { key, bubbles: true }),
+        );
+        deleteControl.click();
+      });
+    }
+
+    expect(onRequestDelete).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("the swipe that reveals the lane (AC1)", () => {
+  /** A leftward travel of `distance`, with `drift` of vertical wander. */
+  async function swipe(
+    row: HTMLElement,
+    distance: number,
+    drift = 0,
+  ): Promise<void> {
+    await act(async () => {
+      row.dispatchEvent(touch("touchstart", 200, 100));
+      row.dispatchEvent(touch("touchmove", 200 - distance, 100 + drift));
+      row.dispatchEvent(touch("touchend", 200 - distance, 100 + drift));
+    });
+  }
+
+  it("marks the row revealed once the travel passes the threshold", async () => {
+    const { row } = await mount(ACTIVE);
+    await swipe(row, 60);
+    expect(row.getAttribute("data-revealed")).toBe("true");
+  });
+
+  it("leaves a short travel alone, so a tap is not a swipe", async () => {
+    const { row } = await mount(ACTIVE);
+    await swipe(row, 8);
+    expect(row.getAttribute("data-revealed")).toBeNull();
+  });
+
+  it("closes again on the same travel back the other way", async () => {
+    // A half-swipe is recoverable by reversing it rather than by finding
+    // something else to press.
+    const { row } = await mount(ACTIVE);
+    await swipe(row, 60);
+    await swipe(row, -60);
+    expect(row.getAttribute("data-revealed")).toBeNull();
+  });
+
+  it("ignores a scroll that drifted sideways (AC1)", async () => {
+    // The finding that sent the first attempt back: `clientX` alone, with no
+    // axis comparison, arms a destructive control on a vertical flick that
+    // wandered 40px across. A list is scrolled with the same thumb on the same
+    // row, so this is the common gesture and not the exotic one.
+    const { row } = await mount(ACTIVE);
+    await swipe(row, 40, 120);
+    expect(row.getAttribute("data-revealed")).toBeNull();
+  });
+
+  it("latches when the same travel is dominantly horizontal", async () => {
+    // The other side of the comparison, so the guard above is a discrimination
+    // rather than a threshold nobody can cross.
+    const { row } = await mount(ACTIVE);
+    await swipe(row, 40, 10);
+    expect(row.getAttribute("data-revealed")).toBe("true");
+  });
+
+  it("does not move the origin when a second finger lands mid-swipe", async () => {
+    // `touchstart` fires again for the second finger, and `touches[0]` is by
+    // then the *current* position of the first — so an unguarded assignment
+    // measures the rest of the travel from wherever the swipe had got to, and
+    // a gesture that has already travelled 50px never reaches the threshold.
+    const { row } = await mount(ACTIVE);
+
+    await act(async () => {
+      row.dispatchEvent(touch("touchstart", 200, 100));
+      row.dispatchEvent(touch("touchmove", 175, 100));
+      // A second finger, reported at the first one's current position.
+      row.dispatchEvent(touch("touchstart", 175, 100));
+      row.dispatchEvent(touch("touchmove", 160, 100));
+    });
+
+    expect(row.getAttribute("data-revealed")).toBe("true");
+  });
+
+  it("measures the next gesture from its own origin after a cancel", async () => {
+    // The browser cancels a touch when it takes the gesture over, and no
+    // `touchend` follows. An origin left behind here measures the next gesture
+    // from a point the finger was at some time ago — so a 10px tap at the far
+    // left of the row would read as a 150px swipe.
+    const { row } = await mount(ACTIVE);
+
+    await act(async () => {
+      row.dispatchEvent(touch("touchstart", 300, 100));
+      row.dispatchEvent(touch("touchcancel", 300, 100));
+      row.dispatchEvent(touch("touchstart", 140, 100));
+      row.dispatchEvent(touch("touchmove", 132, 100));
+    });
+
+    expect(row.getAttribute("data-revealed")).toBeNull();
+  });
+});
+
+describe("the reveal is a step in a gesture, not a row state (AC1)", () => {
+  async function reveal(row: HTMLElement): Promise<void> {
+    await act(async () => {
+      row.dispatchEvent(touch("touchstart", 200, 100));
+      row.dispatchEvent(touch("touchmove", 120, 100));
+      row.dispatchEvent(touch("touchend", 120, 100));
+    });
+    expect(row.getAttribute("data-revealed")).toBe("true");
+  }
+
+  it("un-latches when the control is pressed", async () => {
+    // The question has been asked; leaving the panel open would park a
+    // destructive surface under the dialog and still be open behind a Cancel.
+    const { row, deleteControl, onRequestDelete } = await mount(ACTIVE);
+    await reveal(row);
+
+    await act(async () => deleteControl.click());
+
+    expect(row.getAttribute("data-revealed")).toBeNull();
+    expect(onRequestDelete).toHaveBeenCalledOnce();
+  });
+
+  it("un-latches when the control loses focus", async () => {
+    const { row, deleteControl } = await mount(ACTIVE);
+    await reveal(row);
+
+    await act(async () => {
+      deleteControl.focus();
+      deleteControl.blur();
+    });
+
+    expect(row.getAttribute("data-revealed")).toBeNull();
+  });
+
+  it("is never revealed while it is departing", async () => {
+    // A row collapsing out of the Filter View with a destructive panel hanging
+    // open is the one frame this must not have. Derived from the two rather
+    // than cleared in an effect, so they cannot disagree for a commit.
+    const { row } = await mount(ACTIVE);
+    await reveal(row);
+
+    await act(async () => {
+      root.render(
+        <ul>
+          <TodoRow
+            todo={ACTIVE}
+            departing
+            onToggle={() => {}}
+            onDeparted={() => {}}
+            onRequestDelete={() => {}}
+          />
+        </ul>,
+      );
+    });
+
+    const departing = container.querySelector("li");
+    expect(departing?.getAttribute("data-departing")).toBe("true");
+    expect(departing?.getAttribute("data-revealed")).toBeNull();
   });
 });

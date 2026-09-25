@@ -1,0 +1,3851 @@
+diff --git a/app/api/todos/[id]/route.test.ts b/app/api/todos/[id]/route.test.ts
+index 4685768..18e2d6e 100644
+--- a/app/api/todos/[id]/route.test.ts
++++ b/app/api/todos/[id]/route.test.ts
+@@ -11,7 +11,12 @@ import {
+ } from "@/server/identity/identity-token";
+ import { drizzleQueryError } from "@/test-support/drizzle-error";
+ import * as routeModule from "./route";
+-import { PATCH, UPDATE_FAILED_MESSAGE } from "./route";
++import {
++  DELETE,
++  DELETE_FAILED_MESSAGE,
++  PATCH,
++  UPDATE_FAILED_MESSAGE,
++} from "./route";
+ 
+ // Story 4.1 AC1 (the Completion Status is *set* to the value asked for and the
+ // updated Todo comes back bare), AC2 (no toggle anywhere in the API surface),
+@@ -19,6 +24,14 @@ import { PATCH, UPDATE_FAILED_MESSAGE } from "./route";
+ // exactly as a missing row is), AC5 (`ownerId` first, and no query built here)
+ // and AC6 (`update` is the kind of every failure this endpoint reports).
+ //
++// Story 5.1 AC1-AC6 join them for `DELETE`: that an owned row, a row already
++// gone and a row another identity owns are one answer (`204`, no body), that a
++// malformed path segment is `400` before any query runs, that `deleteTodo`
++// takes `ownerId` first, and that `delete` is the kind of every failure this
++// endpoint reports. That the `DELETE` statement itself scopes by owner and
++// actually removes the row is SQL, and is proved live in
++// `src/server/repository/todos.test.ts`.
++//
+ // Both repositories are mocked, following the pattern `app/api/todos/route.ts`
+ // established: what is under test is which repository call the handler makes
+ // and with what, and what it does with each answer. That the `UPDATE` itself
+@@ -32,6 +45,7 @@ const todosRepository = vi.hoisted(() => ({
+   listTodos: vi.fn(),
+   createTodo: vi.fn(),
+   setTodoCompleted: vi.fn(),
++  deleteTodo: vi.fn(),
+ }));
+ 
+ vi.mock("@/server/repository/client-identity", () => identityRepository);
+@@ -59,6 +73,9 @@ const UPDATE_ENVELOPE = {
+   error: { kind: "update", message: UPDATE_FAILED_MESSAGE },
+ };
+ 
++const DELETE_ENVELOPE = {
++  error: { kind: "delete", message: DELETE_FAILED_MESSAGE },
++};
+ 
+ // `body` is serialized unless it is already a string, so a test can submit
+ // something that is not JSON at all.
+@@ -92,6 +109,23 @@ function identifiedPatch(body: unknown, id = TODO_ID): NextRequest {
+   );
+ }
+ 
++// The `DELETE` equivalents of the two helpers above. A `DELETE` carries no
++// body, so there is nothing to serialize and nothing to smuggle — which is the
++// whole difference between this endpoint's gate order and `PATCH`'s.
++function deleteRequest(cookie?: string, id = TODO_ID) {
++  return new NextRequest(`https://simple-action.test/api/todos/${id}`, {
++    method: "DELETE",
++    headers: cookie === undefined ? {} : { cookie },
++  });
++}
++
++/** A `DELETE` whose cookie resolves to `OWNER_ID`. */
++function identifiedDelete(id = TODO_ID): NextRequest {
++  identifyTheCaller();
++
++  return deleteRequest(`${IDENTITY_COOKIE_NAME}=${mintIdentityToken()}`, id);
++}
++
+ /**
+  * The route context Next 16 hands a dynamic segment's handler.
+  *
+@@ -804,6 +838,362 @@ describe("PATCH /api/todos/:id — the response belongs to one caller (AC1)", ()
+   );
+ });
+ 
++// --- Story 5.1: DELETE /api/todos/:id ---------------------------------------
++
++describe("DELETE /api/todos/:id — one answer for three states (AC1, AC2, AC3)", () => {
++  // The three cases the I/O matrix separates and this endpoint deliberately
++  // does not: a row that was there, a row already gone, and a row another
++  // identity owns. `deleteTodo` resolves to `undefined` in all three — it
++  // returns `void` — so the handler has nothing to branch on and could not
++  // tell them apart even if a later change wanted it to.
++  it.each([
++    ["a row the caller owns", TODO_ID],
++    ["the same delete sent a second time", TODO_ID],
++    ["a row another identity owns", FOREIGN_ID],
++    ["an id that names no row at all", MISSING_ID],
++  ])("answers 204 with no body for %s", async (_case, id) => {
++    todosRepository.deleteTodo.mockResolvedValue(undefined);
++
++    const response = await DELETE(identifiedDelete(id), contextFor(id));
++
++    expect(response.status).toBe(204);
++    // Not merely an empty string: a `204` carries no body at all, and
++    // `Response.json({})` would still read as `""` under `.text()` for nobody.
++    expect(response.body).toBeNull();
++    await expect(response.text()).resolves.toBe("");
++    // No envelope on a success, either — SPINE "Error shape" envelopes
++    // failures and nothing else.
++    expect(response.headers.get("content-type")).toBeNull();
++  });
++
++  it("answers the retry byte-for-byte as it answered the first delete (AC2)", async () => {
++    // A retry of a delete whose answer the browser never saw must succeed.
++    // Nothing here reads whether the row was present, so the second response
++    // is built by the identical path as the first.
++    todosRepository.deleteTodo.mockResolvedValue(undefined);
++
++    const first = await DELETE(identifiedDelete(), contextFor(TODO_ID));
++    const second = await DELETE(identifiedDelete(), contextFor(TODO_ID));
++
++    expect(second.status).toBe(first.status);
++    expect(await second.text()).toBe(await first.text());
++    expect([...second.headers].sort()).toEqual([...first.headers].sort());
++    expect(todosRepository.deleteTodo).toHaveBeenCalledTimes(2);
++  });
++
++  it("answers a foreign owner byte-for-byte as it answers an owned row (AC3)", async () => {
++    // Any difference between the two — a status, a body, a header — is itself
++    // the disclosure AC3 forbids: it would tell a caller which ids exist and
++    // whose they are. Pinning the equality is what keeps the two paths one.
++    todosRepository.deleteTodo.mockResolvedValue(undefined);
++
++    const mine = await DELETE(identifiedDelete(TODO_ID), contextFor(TODO_ID));
++    const theirs = await DELETE(
++      identifiedDelete(FOREIGN_ID),
++      contextFor(FOREIGN_ID),
++    );
++
++    expect(theirs.status).toBe(mine.status);
++    expect(await theirs.text()).toBe(await mine.text());
++    expect([...theirs.headers].sort()).toEqual([...mine.headers].sort());
++  });
++
++  it("deletes a Completed row exactly as it deletes an Active one", async () => {
++    // Deletion works on a Todo in either Completion Status (epic-5-context),
++    // and the reason it does is that nothing on this path names `completed` at
++    // all — there is no body, and the repository takes an owner and an id.
++    todosRepository.deleteTodo.mockResolvedValue(undefined);
++
++    const response = await DELETE(identifiedDelete(), contextFor(TODO_ID));
++
++    expect(response.status).toBe(204);
++    expect(todosRepository.deleteTodo).toHaveBeenCalledWith(OWNER_ID, TODO_ID);
++    for (const call of todosRepository.deleteTodo.mock.calls) {
++      expect(call).toHaveLength(2);
++    }
++  });
++
++  it("passes the resolved identity first and the path id second (AC5)", async () => {
++    todosRepository.deleteTodo.mockResolvedValue(undefined);
++
++    await DELETE(identifiedDelete(), contextFor(TODO_ID));
++
++    expect(todosRepository.deleteTodo).toHaveBeenCalledTimes(1);
++    expect(todosRepository.deleteTodo).toHaveBeenCalledWith(OWNER_ID, TODO_ID);
++  });
++
++  it("ignores request-supplied ownership — the cookie names the owner (AD-7)", async () => {
++    todosRepository.deleteTodo.mockResolvedValue(undefined);
++    const request = identifiedDelete();
++    request.headers.set("x-owner-id", "11111111-2222-7000-8000-333333333333");
++    request.headers.set("x-forwarded-owner", "someone else entirely");
++
++    await DELETE(request, contextFor(TODO_ID));
++
++    expect(todosRepository.deleteTodo.mock.calls[0][0]).toBe(OWNER_ID);
++  });
++
++  it("awaits the params promise rather than reading id off the promise itself", async () => {
++    // Next 16's `params` is a `Promise`. A handler that forgot the `await`
++    // would read `id` as `undefined`, fail `isCanonicalUuidV7` and answer 400.
++    todosRepository.deleteTodo.mockResolvedValue(undefined);
++
++    const response = await DELETE(identifiedDelete(), {
++      // Deliberately not already-resolved: a microtask later, like the real one.
++      params: new Promise((resolve) =>
++        setTimeout(() => resolve({ id: TODO_ID }), 0),
++      ),
++    });
++
++    expect(response.status).toBe(204);
++    expect(todosRepository.deleteTodo.mock.calls[0][1]).toBe(TODO_ID);
++  });
++
++  it("logs nothing at all on the success path", async () => {
++    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
++    todosRepository.deleteTodo.mockResolvedValue(undefined);
++
++    await DELETE(identifiedDelete(), contextFor(TODO_ID));
++
++    expect(logged).not.toHaveBeenCalled();
++  });
++});
++
++describe("DELETE /api/todos/:id — the path id must be a lowercase canonical UUIDv7 (AC4)", () => {
++  it.each([
++    ["uppercase hex", TODO_ID.toUpperCase()],
++    ["a v4", "0199a1b2-c3d4-4e5f-8a9b-0c1d2e3f4a5b"],
++    ["a wrong variant nibble", "0199a1b2-c3d4-7e5f-ca9b-0c1d2e3f4a5b"],
++    ["braces", `{${TODO_ID}}`],
++    ["a urn prefix", `urn:uuid:${TODO_ID}`],
++    ["the wrong length", TODO_ID.slice(0, -1)],
++    ["no hyphens", TODO_ID.replaceAll("-", "")],
++    ["an empty segment", ""],
++    ["a SQL fragment", "1 or 1=1"],
++  ])(
++    "answers 400 with the delete envelope and runs no query for %s",
++    async (_case, id) => {
++      const response = await DELETE(
++        identifiedDelete(encodeURIComponent(id) || "x"),
++        contextFor(id),
++      );
++
++      expect(response.status).toBe(400);
++      await expect(response.json()).resolves.toEqual(DELETE_ENVELOPE);
++      // Refused before the repository: a malformed id never reaches Postgres's
++      // `uuid` type, where it would become a driver error and a 500.
++      expect(todosRepository.deleteTodo).not.toHaveBeenCalled();
++    },
++  );
++
++  it("discloses nothing of the row it refused to name", async () => {
++    const response = await DELETE(identifiedDelete("x"), contextFor("x"));
++    const serialized = await response.text();
++
++    expect(JSON.parse(serialized)).toEqual(DELETE_ENVELOPE);
++    expect(serialized).not.toContain("owner");
++    for (const [, value] of response.headers) {
++      expect(value).not.toContain(OWNER_ID);
++    }
++  });
++});
++
++describe("DELETE /api/todos/:id — no valid identity", () => {
++  it.each([
++    ["no cookie at all", undefined],
++    ["an empty cookie", `${IDENTITY_COOKIE_NAME}=`],
++  ])("answers 401 and deletes nothing when there is %s", async (_c, cookie) => {
++    const response = await DELETE(deleteRequest(cookie), contextFor(TODO_ID));
++
++    expect(response.status).toBe(401);
++    expect(todosRepository.deleteTodo).not.toHaveBeenCalled();
++  });
++
++  it("answers 401 when the token names no row — a forged or stale cookie", async () => {
++    identityRepository.findClientIdentityByTokenHash.mockResolvedValue(
++      undefined,
++    );
++
++    const response = await DELETE(
++      deleteRequest(`${IDENTITY_COOKIE_NAME}=${mintIdentityToken()}`),
++      contextFor(TODO_ID),
++    );
++
++    expect(response.status).toBe(401);
++    expect(todosRepository.deleteTodo).not.toHaveBeenCalled();
++  });
++
++  it("carries the shared envelope with kind delete, the kind a DELETE is classified by (AC6)", async () => {
++    const body = await (
++      await DELETE(deleteRequest(), contextFor(TODO_ID))
++    ).json();
++
++    expect(body).toEqual({
++      error: { kind: "delete", message: "No Client Identity on this request." },
++    });
++  });
++
++  it("answers 401 rather than 400 when the id is also invalid — identity is checked first", async () => {
++    // An unidentified caller learns nothing about this endpoint's validation,
++    // and a `400` here would be exactly that.
++    const response = await DELETE(
++      deleteRequest(undefined, "not-a-uuid"),
++      contextFor("not-a-uuid"),
++    );
++
++    expect(response.status).toBe(401);
++    expect(todosRepository.deleteTodo).not.toHaveBeenCalled();
++  });
++});
++
++describe("DELETE /api/todos/:id — a delete that fails (AC6)", () => {
++  // Shaped like what `neon-http` actually rejects with: Drizzle wraps the
++  // driver error, and the message names the statement, the relation *and* the
++  // bound parameters. This statement binds two — the Todo's id and the owner
++  // id — and the owner id is the Client Identity every one of this person's
++  // rows is keyed by, which is reason enough to cut the line.
++  const DELETE_STATEMENT =
++    'delete from "todo" where ("todo"."id" = $1 and "todo"."owner_id" = $2)';
++  const DRIVER_ERROR = drizzleQueryError(DELETE_STATEMENT, [TODO_ID, OWNER_ID]);
++
++  it("carries the bound parameters in its own message — the fixture is the leak, not a stand-in", () => {
++    expect(DRIVER_ERROR.message).toContain(OWNER_ID);
++    expect(DRIVER_ERROR.message).toContain(TODO_ID);
++    expect(DRIVER_ERROR.message).toContain("\nparams:");
++  });
++
++  it("answers 500 with the delete envelope when the repository rejects", async () => {
++    vi.spyOn(console, "error").mockImplementation(() => {});
++    todosRepository.deleteTodo.mockRejectedValue(DRIVER_ERROR);
++
++    const response = await DELETE(identifiedDelete(), contextFor(TODO_ID));
++
++    expect(response.status).toBe(500);
++    // Equality covers the kind too: `delete` is what `errorKindForMethod`
++    // maps a `DELETE` to, and reporting it as `update` or `load` would put the
++    // wrong copy in the single error slot.
++    await expect(response.json()).resolves.toEqual(DELETE_ENVELOPE);
++  });
++
++  it("never forwards the driver's text to the wire", async () => {
++    vi.spyOn(console, "error").mockImplementation(() => {});
++    todosRepository.deleteTodo.mockRejectedValue(DRIVER_ERROR);
++
++    const serialized = await (
++      await DELETE(identifiedDelete(), contextFor(TODO_ID))
++    ).text();
++
++    // Equality, not "some string": the driver's own text is a string too, so
++    // `expect.any(String)` would pass on exactly the leak this guards against.
++    expect(JSON.parse(serialized).error.message).toBe(DELETE_FAILED_MESSAGE);
++    // SQL fragments only: the word "delete" on its own is also the error
++    // *kind* every failure here legitimately carries.
++    for (const fragment of [
++      "Failed query",
++      "owner_id",
++      '"todo"',
++      "delete from",
++      TODO_ID,
++      OWNER_ID,
++    ]) {
++      expect(serialized).not.toContain(fragment);
++    }
++  });
++
++  it("logs strings only, the statement summary among them, and nothing after \\nparams:", async () => {
++    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
++    todosRepository.deleteTodo.mockRejectedValue(DRIVER_ERROR);
++
++    await DELETE(identifiedDelete(), contextFor(TODO_ID));
++
++    expect(logged).toHaveBeenCalledTimes(1);
++    // Something diagnostic survives — the SQL this repository wrote — and the
++    // bound parameters do not.
++    expect(logged.mock.calls[0]).toContain(`Failed query: ${DELETE_STATEMENT}`);
++    for (const argument of logged.mock.calls[0]) {
++      expect(typeof argument).toBe("string");
++      expect(argument).not.toContain("params:");
++      expect(argument).not.toContain(OWNER_ID);
++      expect(argument).not.toContain(TODO_ID);
++    }
++  });
++
++  it("answers the same enveloped 500 when the identity lookup itself fails", async () => {
++    vi.spyOn(console, "error").mockImplementation(() => {});
++    identityRepository.findClientIdentityByTokenHash.mockRejectedValue(
++      new Error("Failed query: select from client_identity"),
++    );
++
++    const response = await DELETE(
++      deleteRequest(`${IDENTITY_COOKIE_NAME}=${mintIdentityToken()}`),
++      contextFor(TODO_ID),
++    );
++
++    expect(response.status).toBe(500);
++    await expect(response.json()).resolves.toEqual(DELETE_ENVELOPE);
++  });
++
++  it("answers the same enveloped 500 when the params promise itself rejects", async () => {
++    // `params` is the platform's promise, and an unhandled rejection here
++    // would escape as an unenveloped crash rather than as the error shape
++    // AD-10 requires of every failure.
++    vi.spyOn(console, "error").mockImplementation(() => {});
++    identifyTheCaller();
++    const params = Promise.reject(new Error("params unavailable"));
++    // Vitest fails a run on an unhandled rejection, and this one is only
++    // handled once `resolveClientIdentity` has resolved — a turn later than
++    // Node's watcher looks. The handler still awaits the rejecting promise
++    // itself; this second consumer only tells the watcher someone is home.
++    params.catch(() => {});
++
++    const response = await DELETE(
++      deleteRequest(`${IDENTITY_COOKIE_NAME}=${mintIdentityToken()}`),
++      { params },
++    );
++
++    expect(response.status).toBe(500);
++    await expect(response.json()).resolves.toEqual(DELETE_ENVELOPE);
++  });
++});
++
++describe("DELETE /api/todos/:id — no identity is ever issued, and every answer is one caller's", () => {
++  // AD-17: a route handler reads an identity and never creates one. And every
++  // response here is decided by the identity cookie, so without the two
++  // headers a shared cache may key it on the URL alone and hand one person's
++  // `204` — or `401` — to the next caller.
++  it.each([
++    [
++      "the 204",
++      async () => {
++        todosRepository.deleteTodo.mockResolvedValue(undefined);
++        return DELETE(identifiedDelete(), contextFor(TODO_ID));
++      },
++    ],
++    [
++      "the 400 for a malformed id",
++      async () => DELETE(identifiedDelete("x"), contextFor("x")),
++    ],
++    ["the 401", async () => DELETE(deleteRequest(), contextFor(TODO_ID))],
++    [
++      "the 500",
++      async () => {
++        vi.spyOn(console, "error").mockImplementation(() => {});
++        todosRepository.deleteTodo.mockRejectedValue(new Error("unreachable"));
++        return DELETE(identifiedDelete(), contextFor(TODO_ID));
++      },
++    ],
++  ])("issues no identity and marks %s private", async (_case, respond) => {
++    const response = await respond();
++
++    expect(identityRepository.createClientIdentity).not.toHaveBeenCalled();
++    expect(response.headers.get("cache-control")).toBe("private, no-store");
++    // The exact value, not a `/\bCookie\b/` match: `privateToTheCaller`
++    // appends rather than sets, so a double wrap yields `Cookie, Cookie` —
++    // valid HTTP, and exactly what a word-boundary match fails to catch.
++    expect(response.headers.get("vary")).toBe("Cookie");
++  });
++});
++
+ describe("the route's exported surface", () => {
+   // The same exclusion `app/api/todos/route.test.ts` makes: Next.js recognises
+   // route *segment config* exports, which are declarations about how the route
+@@ -818,14 +1208,21 @@ describe("the route's exported surface", () => {
+     "maxDuration",
+   ]);
+ 
+-  it("exports PATCH and its message constant, and no second HTTP method", () => {
+-    // Epic 5's `DELETE` lands in this file and updates this list; until then an
+-    // extra export is an endpoint nobody designed.
++  it("exports the two methods this segment serves and their two messages", () => {
++    // Story 5.1's `DELETE` landed in this file and updated this list, which is
++    // what the previous wording said would happen. The list stays exact: an
++    // extra export here is an endpoint nobody designed, and a missing one is a
++    // handler Next.js would answer `405` for.
+     const surface = Object.keys(routeModule)
+       .filter((name) => !SEGMENT_CONFIG.has(name))
+       .sort();
+ 
+-    expect(surface).toEqual(["PATCH", "UPDATE_FAILED_MESSAGE"]);
++    expect(surface).toEqual([
++      "DELETE",
++      "DELETE_FAILED_MESSAGE",
++      "PATCH",
++      "UPDATE_FAILED_MESSAGE",
++    ]);
+   });
+ });
+ 
+@@ -881,7 +1278,7 @@ describe("the whole app surface — no toggle anywhere in it (AC2)", () => {
+     ]);
+   });
+ 
+-  it("offers GET and POST on the collection and PATCH on the one Todo, and nothing else", async () => {
++  it("offers GET and POST on the collection and PATCH and DELETE on the one Todo, and nothing else", async () => {
+     // Imported rather than pattern-matched, so what is enumerated is what
+     // Next.js would actually route: an endpoint exported as `export const
+     // PUT = …` counts exactly as much as a function declaration does.
+@@ -894,7 +1291,7 @@ describe("the whole app surface — no toggle anywhere in it (AC2)", () => {
+         .sort();
+ 
+     expect(methodsOf(collection)).toEqual(["GET", "POST"]);
+-    expect(methodsOf(one)).toEqual(["PATCH"]);
++    expect(methodsOf(one)).toEqual(["DELETE", "PATCH"]);
+   });
+ 
+   it("names no toggle in a path segment or an export (AC2)", async () => {
+diff --git a/app/api/todos/[id]/route.ts b/app/api/todos/[id]/route.ts
+index 6811418..4013217 100644
+--- a/app/api/todos/[id]/route.ts
++++ b/app/api/todos/[id]/route.ts
+@@ -9,12 +9,14 @@ import {
+   resolveClientIdentity,
+   unauthorizedIdentityResponse,
+ } from "@/server/identity/request-identity";
+-import { setTodoCompleted } from "@/server/repository/todos";
++import { deleteTodo, setTodoCompleted } from "@/server/repository/todos";
+ import { isCanonicalUuidV7 } from "@/server/validation/todo-id";
+ 
+ // The one-Todo endpoint: the path segment names the resource, so everything
+ // that acts on a single Todo lands here rather than on the collection route
+-// next door. Epic 5's `DELETE` joins this file for that reason.
++// next door. Story 5.1's `DELETE` joined it for that reason, and shares this
++// file's identity gate and id gate verbatim rather than restating them one
++// segment along.
+ //
+ // Like its sibling it reads an identity and never issues one (AD-17), and
+ // `middleware.ts` already answers `401` for any `/api/**` request without a
+@@ -44,6 +46,26 @@ import { isCanonicalUuidV7 } from "@/server/validation/todo-id";
+  */
+ export const UPDATE_FAILED_MESSAGE = "The Todo could not be updated.";
+ 
++/**
++ * The body of every failure `DELETE` reports — its own string, not a reuse.
++ *
++ * Its own constant rather than a second consumer of `UPDATE_FAILED_MESSAGE`,
++ * for the reason that constant's own note gives: the message names the
++ * operation that did not happen, and "the Todo could not be updated" is the
++ * wrong sentence for a refused deletion however similar the two look today.
++ * The two are free to diverge, and the client never renders either — AD-10
++ * makes the envelope's `message` diagnostic only, and the interface shows the
++ * shared save-failure copy instead.
++ *
++ * Fixed, and never composed from the caught error, for the same reason the
++ * update's is: `ErrorEnvelope["error"]["message"]` is an unconstrained `string`
++ * crossing the wire, so a driver error interpolated here would put SQL text in
++ * the browser. The real error is logged instead.
++ *
++ * Exported so `route.test.ts` can assert equality rather than "some string".
++ */
++export const DELETE_FAILED_MESSAGE = "The Todo could not be deleted.";
++
+ /**
+  * The `PATCH` body, as the wire actually delivers it.
+  *
+@@ -168,3 +190,71 @@ export async function PATCH(
+     );
+   }
+ }
++
++/**
++ * `DELETE /api/todos/:id` — remove the caller's Todo, permanently.
++ *
++ * The same gate order as `PATCH` above, minus the body step, and the order is
++ * load-bearing for the same three reasons. Identity first, so a request
++ * carrying no Client Identity is `401` whatever else is wrong with it. The path
++ * id's *form* second, so a segment that is not a lowercase-canonical UUIDv7 is
++ * refused before any query runs — Postgres's `uuid` type would otherwise turn a
++ * typo into a driver error and a `500`. The repository last, which is the only
++ * thing here that touches the database: this handler builds no query (AD-2).
++ *
++ * `204` with no body, and unconditionally so. Three cases answer identically —
++ * a row that was there and is now gone, a row that was already gone, and a row
++ * another identity owns — because `deleteTodo` returns `void` and there is
++ * nothing here to branch on. That is the point rather than a simplification: a
++ * retry of a delete whose answer the browser never saw must succeed (Story 5.1
++ * AC2), and a delete aimed at somebody else's row must disclose nothing about
++ * it (AC3), and any status that told the three apart would be an existence
++ * oracle serving both failures at once. The property is structural — this
++ * handler *could not* distinguish them if a later change wanted it to.
++ *
++ * `new Response(null, { status: 204 })` rather than `Response.json`: a `204`
++ * carries no body by definition, and a JSON envelope on a success would also
++ * contradict SPINE "Error shape", where only failures are enveloped. It is
++ * still wrapped in `privateToTheCaller` — the answer is decided by the identity
++ * cookie like every other response under `app/api/`, and a shared cache keying
++ * on the URL alone is the bug that wrap exists to prevent.
++ *
++ * The id is read from the awaited `params` and the owner from the cookie, never
++ * the other way round (AD-7, AD-17). Next 16's `params` is a `Promise` and is
++ * typed inline for the same reason `PATCH`'s is: `RouteContext<'/api/todos/[id]'>`
++ * is generated into `.next/types`, which `npm run build` writes only after
++ * `lint` and `typecheck` have already run.
++ */
++export async function DELETE(
++  request: NextRequest,
++  { params }: { params: Promise<{ id: string }> },
++): Promise<Response> {
++  try {
++    const identity = await resolveClientIdentity(request);
++    if (!identity) return unauthorizedIdentityResponse(request.method);
++
++    const { id } = await params;
++
++    if (!isCanonicalUuidV7(id)) {
++      return privateToTheCaller(
++        requestFailedResponse(request.method, 400, DELETE_FAILED_MESSAGE),
++      );
++    }
++
++    await deleteTodo(identity.id, id);
++
++    return privateToTheCaller(new Response(null, { status: 204 }));
++  } catch (error) {
++    // The statement summary only — never the error object, which carries the
++    // query, and never the message whole, which carries the bound parameters
++    // (SPINE "Logging"). This statement binds the Todo's id and the owner id;
++    // there is no `RETURNING` and no text among them, but the owner id is the
++    // Client Identity every one of this person's rows is keyed by, which is
++    // reason enough on its own. See `logSafeError`.
++    console.error("DELETE /api/todos/[id] failed:", logSafeError(error));
++
++    return privateToTheCaller(
++      requestFailedResponse(request.method, 500, DELETE_FAILED_MESSAGE),
++    );
++  }
++}
+diff --git a/app/globals.css b/app/globals.css
+index fa92615..5cf19f2 100644
+--- a/app/globals.css
++++ b/app/globals.css
+@@ -701,3 +701,208 @@
+      mid-flight. */
+   [data-still="true"] > &[data-departing="true"] { transition: none; }
+ }
++
++/* ---------------------------------------------------------------------------
++   The delete control's two presentations, and the confirmation dialog
++   (Story 5.2; DESIGN.md `components.delete-action`, `components.dialog-delete`;
++   EXPERIENCE.md:165-168, 202, 221; mockups/key-delete.html).
++
++   Same rule as every block above: only the value with no token behind it lives
++   here. The control's radius, its muted icon colour, its danger-toned hover and
++   both focus rings are tokens and stay as utility classes on the element, where
++   the whole-tree scans can see them; so are the dialog's fill, radius, shadow
++   and padding.
++
++   Four things below break that rule, and each breaks it for a reason a class
++   could not carry:
++
++     - The revealed panel's `{colors.danger-fill}` and `{colors.on-danger-fill}`.
++       Story 5.2 AC12 pins `bg-danger-fill` to exactly one element in the whole
++       product — the dialog's confirm button — because that is "the only filled
++       button in the product, because it is the only interaction that cannot be
++       taken back" (DESIGN.md:430). The swipe panel wears the same fill on a
++       control that merely *opens* that dialog, so drawing it here is what keeps
++       the markup's single filled button single.
++     - The 44px reach. `min-w-*` is banned tree-wide (`todo-card.test.ts`) and
++       `h-*` over the row's own classes (`todo-row.test.ts`), which is the same
++       corner `checkbox-hit-area`, `retry-pill` and `input-add` are all in. Same
++       token, read from the theme rather than retyped.
++     - `(pointer: fine)`. Touch and pointer are told apart by capability and not
++       by width (EXPERIENCE.md:245), and Tailwind has no variant for a media
++       feature — the `enter-hint` recipe above is here for the same reason.
++     - The scrim. DESIGN.md gives `components.dialog-delete.scrim` as a literal
++       with no token name of its own, exactly as it gives the filter tabs' two
++       shadows, and it is painted on `::backdrop`, which no class can reach.
++   --------------------------------------------------------------------------- */
++
++@utility delete-hit-area {
++  /* The mirror of `checkbox-hit-area` above, and for the identical reason: the
++     drawn mark is smaller than the square that has to be reachable, so the
++     reach is an overlay rather than a size. Padding the control itself would
++     grow the row and move the text beside it; `min-w-*` and `h-*` are both
++     banned as classes.
++
++     The overlay is exactly the wrapper it sits in — 44px inside a 44px clip
++     window — so the whole of `{spacing.touch-target-min}` is reachable and
++     none of it spills into the Todo's text (EXPERIENCE.md:221). */
++  position: relative;
++
++  &::after {
++    content: "";
++    position: absolute;
++    top: 50%;
++    left: 50%;
++    width: var(--spacing-touch-target-min);
++    height: var(--spacing-touch-target-min);
++    transform: translate(-50%, -50%);
++  }
++}
++
++@utility delete-panel {
++  /* The drawn surface, at the 34px mockups/key-delete.html gives it — an
++     untokenised literal, like the checkbox's 21px, and load-bearing for the
++     same measurement `checkbox-hit-area` makes: 34px centred in the 44px
++     wrapper below leaves exactly 5px of slack on every side, which is the
++     outer extent of `--shadow-focus`. A control drawn any larger would have
++     its focus ring clipped away by the wrapper, and a focus indicator that is
++     not drawn is not an indicator.
++
++     The filled treatment arrives only when the row is marked revealed, which
++     is the touch presentation: a solid `{colors.danger-fill}` panel with an
++     `{colors.on-danger-fill}` icon, "matching the dialog's confirm button, so
++     the two surfaces on the delete path read as one escalation" (DESIGN.md:446).
++     Gated on the row's own attribute, so nothing here is chosen in JavaScript
++     (AR-28); on pointer and keyboard the control stays the thin trailing line
++     icon its own classes make it. */
++  width: 34px;
++  height: 34px;
++
++  [data-revealed="true"] & {
++    background-color: var(--color-danger-fill);
++    color: var(--color-on-danger-fill);
++  }
++}
++
++@utility delete-action {
++  /* The reveal — the rule AC7 and the keyboard route both turn on.
++
++     At rest the control is pushed a full wrapper-width past the trailing edge
++     of the clip window below, so nothing of it shows on any device and the row
++     is the clean sub-surface mockups/key-delete.html draws at rest. The travel
++     is the wrapper's width rather than the control's `100%`, because the
++     control is the narrower of the two and translating it by its own width
++     would leave a sliver of it inside the window.
++
++     Hover is gated on `(pointer: fine)` and never on a width breakpoint: a
++     finger has no hover at any viewport size and a 700px laptop window has one
++     (EXPERIENCE.md:245). The hover is the *row's*, not the control's, because
++     DESIGN.md:446 reveals the icon when the row is hovered — `.group` is the
++     marker `todo-row.tsx` already carries for exactly this kind of derivation.
++
++     The focus reveal is deliberately OUTSIDE that media query, and that is the
++     whole of why this is a recipe and not two classes. The keyboard route "is
++     mandatory and is not a fallback: it is the WCAG 2.2 AA floor, and a
++     pointer-hover-only or gesture-only affordance would fail it"
++     (EXPERIENCE.md:168). A reveal that lived inside `(pointer: fine)` would
++     take the control away on exactly the devices with no other route to it.
++     `:focus-visible` and not `:focus`, so a tap that lands on the control does
++     not also latch it open behind the dialog it just opened. */
++  transform: translateX(var(--spacing-touch-target-min));
++
++  @media (pointer: fine) {
++    .group:hover & {
++      transform: none;
++    }
++  }
++
++  &:focus-visible {
++    transform: none;
++  }
++}
++
++@utility row-swipe {
++  /* The clip window the panel is uncovered through, and the second `overflow`
++     in this stylesheet. `todo-card.test.ts` holds the allow-list that permits
++     it by name, with the Story 4.3 argument extended: a clipping *ancestor* of
++     the sticky block cuts it off, and this wrapper is no ancestor of it — it is
++     a descendant of the list region, inside a row, and an ancestor of nothing
++     but one button. Clipping it clips the thing being clipped on purpose.
++
++     `180ms` is COLLAPSE_MS in src/client/motion/motion.ts, spelled again
++     because CSS cannot read a TypeScript constant; `motion.test.ts` compiles
++     this file and asserts the two agree. It is the departure's collapse
++     reused rather than a duration of its own — the reveal and the removal are
++     the same gesture's two halves and must read as one speed. */
++  overflow: hidden;
++  width: var(--spacing-touch-target-min);
++  height: var(--spacing-touch-target-min);
++
++  & > * {
++    transition: transform 180ms ease-out;
++  }
++
++  /* The latch. `filter-view-context.tsx`'s departure marker is the precedent:
++     JavaScript sets one attribute on the row and the stylesheet does the rest,
++     so no `className` in this product is ever computed (AR-28). */
++  [data-revealed="true"] & > * {
++    transform: none;
++  }
++
++  /* Stillness, from the one marker the motion module sets on the list region.
++     Matched from any ancestor depth rather than through a child chain, unlike
++     the recipes above: this wrapper is a grandchild of the region rather than a
++     child, and the two things a child combinator was buying there — that a
++     `data-still="false"` marker does not suppress, and that an unrelated marker
++     elsewhere cannot — are bought here by requiring the value and by `&` being
++     this recipe's own class. */
++  [data-still="true"] & > * {
++    transition: none;
++  }
++}
++
++@utility dialog-button {
++  /* DESIGN.md `components.dialog-delete` — `cancel-border` and
++     `confirm-border` are both `1.5px solid`, differing only in colour, and the
++     colour is the element's own utility class per the rule at the top of the
++     Story 2.4 block. The same two declarations `retry-pill` carries, and its
++     own copy rather than a second consumer of it: a dialog button and a banner
++     pill are two components that agree today, and `retry-pill`'s note points at
++     `components.error-banner.retry-border` for its number.
++
++     `{spacing.touch-target-min}`, which DESIGN.md:430 names both buttons in.
++     The height half is `min-h-touch-target-min` on the element; this half
++     cannot be, because `todo-card.test.ts` bans the whole `min-w-*` family
++     tree-wide as something that can outgrow the card. */
++  border-width: 1.5px;
++  min-width: var(--spacing-touch-target-min);
++}
++
++@utility dialog-delete {
++  /* The modal itself. Its fill, radius, shadow and `{spacing.7}` padding are
++     all tokens and stay as classes on the element; what is here is the two
++     things a class cannot say.
++
++     The width ceiling is mockups/key-delete.html's 400px — a literal with no
++     token, the same treatment `top-block-stack`'s 10px and `filter-tab-track`'s
++     2px get. `width: 100%` under it is what makes the dialog fill a phone
++     rather than shrink to its own text; the UA's own modal max-width keeps it
++     inside the viewport, so nothing here has to reach for one.
++
++     There is deliberately no `position` in this recipe, and that is the reason
++     the dialog is a native `<dialog>` at all. `showModal()` puts the element in
++     the top layer, positioned by the UA stylesheet, so the product needs no
++     `position: fixed` scrim of its own — which `todo-card.test.ts` bans from
++     both the markup and this stylesheet, because a fixed ancestor is how the
++     sticky block gets covered. The focus trap, Escape-as-cancel and the focus
++     restore to the trigger come from the same place.
++
++     The scrim is `components.dialog-delete.scrim`, transcribed exactly. It is
++     `::backdrop` rather than an element, so there is no second box in the
++     markup to be scanned, to be clipped, or to be positioned wrongly. */
++  width: 100%;
++  max-width: 400px;
++
++  &::backdrop {
++    background-color: rgba(36, 36, 58, 0.32);
++  }
++}
+diff --git a/docs/implementation-artifacts/deferred-work.md b/docs/implementation-artifacts/deferred-work.md
+index 613d057..bfdc9f8 100644
+--- a/docs/implementation-artifacts/deferred-work.md
++++ b/docs/implementation-artifacts/deferred-work.md
+@@ -538,3 +538,44 @@ the entries above.
+   the entry already said. The new fact is that the wrong picture can now be
+   accompanied by a banner for a change that did land. Still Epic 6's to see
+   end-to-end before anything is serialised.
++
++## Deferred from: `spec-5-1-5-2-delete-at-the-server-and-three-routes-to-one-dialog.md`
++
++- source_spec: `spec-5-1-5-2-delete-at-the-server-and-three-routes-to-one-dialog.md`
++  summary: The confirmation dialog does not name the Todo it is asking about.
++  evidence: EXPERIENCE.md:74 and mockups/key-delete.html step C name the Todo
++  by showing its own text on a sub-surface inside the dialog — "no new sentence
++  enters the interface". The spec's own execution list for `delete-dialog.tsx`
++  is a title and two buttons, and AC9 pins "exactly two buttons", so the sub-
++  surface was not built. The gap is smaller than it looks: the control that
++  opened the dialog is named `Delete <the Todo's text>`, so a screen-reader user
++  has just heard which row this is, and focus returns to that control on Cancel.
++  What is missing is the sighted confirmation on a long list, where the dialog
++  covers the row it is about. Natural owner is Story 5.3 or Epic 6's journey
++  pass, whichever first looks at this dialog with a populated list behind it.
++
++- source_spec: `spec-5-1-5-2-delete-at-the-server-and-three-routes-to-one-dialog.md`
++  summary: The swipe threshold is a number this repository chose, and no test
++  can tell whether it is the right one.
++  evidence: `SWIPE_LATCH_PX` in `todo-row.tsx` is 32. DESIGN.md gives the panel
++  a fill and a radius but no travel, and mockups/key-delete.html records both
++  the reveal width and the latch distance as open question 1 — "not fixed by
++  the spine". The render test proves the arithmetic (past the threshold latches,
++  short of it does not, reversed closes), which is the only part a DOM can see;
++  whether 32px is comfortable on glass is a question for a thumb. Natural owner
++  is Epic 6, which drives real devices — and Story 5.D1's first-run nudge, if it
++  is ever un-deferred, is the other thing that would move the number.
++
++- source_spec: `spec-5-1-5-2-delete-at-the-server-and-three-routes-to-one-dialog.md`
++  summary: The dialog's focus trap, its Escape key, its scrim and its focus
++  restore are asserted as markup facts and never exercised.
++  evidence: jsdom 30.1.1 implements no dialog API at all — `showModal`, `show`
++  and `close` are `undefined` — so `src/test-support/dialog.ts` shims the
++  element and its own header is explicit about the line. What the suite proves
++  is this repository's logic: `showModal()` rather than `show()`, the open and
++  close being idempotent, `cancel` and the Cancel button taking one path,
++  `Delete` reporting once. What it cannot reach is everything the choice of a
++  native `<dialog>` was made *for*. Natural owner is Epic 6, and the shim
++  carries a self-deleting test: `delete-dialog.render.test.tsx` asserts that a
++  bare jsdom dialog still has no `showModal`, so the day jsdom implements it the
++  suite says so rather than quietly going on testing a stub.
+diff --git a/docs/implementation-artifacts/epic-5-context.md b/docs/implementation-artifacts/epic-5-context.md
+new file mode 100644
+index 0000000..480912d
+--- /dev/null
++++ b/docs/implementation-artifacts/epic-5-context.md
+@@ -0,0 +1,59 @@
++# Epic 5 Context: Remove a Todo
++
++<!-- Generated from planning artifacts. Regenerate with compile-epic-context if planning docs change. -->
++
++## Goal
++
++Let a person get rid of a Todo they no longer need, without a mouse, a gesture, or a guess — and without a mis-tap costing them anything. The action is reachable three ways: swipe leftward on touch, a trailing icon on hover, and the keyboard, always. All three open one confirmation dialog that traps focus, lands on Cancel, and hands focus somewhere sensible on close rather than dropping it to the document body. Confirming closes the dialog and removes the row immediately, the rows below closing the gap with the same collapse motion a departing Todo uses; the deletion is permanent and survives a reload. If the server refuses it, the Todo comes back in its original position and the banner says so, with a `Retry` that re-attempts the same deletion and does not ask for confirmation a second time. This epic owns deletion end to end and reuses the optimistic mutation shape established for add and toggle, unchanged.
++
++## Stories
++
++- Story 5.1: Remove a Todo at the server
++- Story 5.2: Reach delete three ways, confirm once
++- Story 5.3: Remove before the server answers, restore if refused
++- Story 5.D1: Teach the swipe once, with motion — **DEFERRED post-MVP, not in this sprint**
++
++## Requirements & Constraints
++
++- **Deletion is permanent and idempotent.** The row is removed; there is no soft-delete column and nothing filters on deletion state. The same delete sent twice succeeds twice, because a retry must not fail for a row already gone. A delete for a Todo the caller does not own removes nothing and discloses nothing about it. Deletion works on a Todo in either Completion Status.
++- **The confirmation is mandatory and singular.** Nothing is removed until the user chooses `Delete`. Cancel leaves the Todo List untouched. One dialog, one level deep, nothing stacks on top of it, no third button, no checkbox, no "don't ask again".
++- **The keyboard route is not a fallback** — it is the WCAG 2.2 AA floor. A hover-only or gesture-only affordance fails the requirement outright. With the first-run nudge deferred, the keyboard route is also the only *taught* route on a touch-only device; that risk is accepted and is the first thing Epic 6's end-to-end journey would expose.
++- **The removal is on screen before the server answers, and a refusal is as visible as the removal was.** The Todo returns to its original position and the shared save-failure message appears with `Retry`. The list never holds a state the server rejected.
++- **Failure handling, keyboard routes, focus management, announcements and 44px hit areas ship inside these stories** — they are acceptance criteria here, not work for a later audit epic.
++- **Vocabulary is fixed and used verbatim in code as well as copy:** `Todo`, `Todo List`, `Completion Status`, `Active`, `Completed`, `Filter View`. The word **Done** is banned everywhere.
++- **User-facing strings are exact:** the dialog reads `Delete this Todo?` with `Cancel` and `Delete`; the failure message is the shared save string used by a failed toggle, not a new one. Plain declaratives, no personality, no exclamation marks.
++
++## Technical Decisions
++
++- **`DELETE /api/todos/:id` returns `204` whether or not the row was present, provided the caller owns it.** Failures return the shared error envelope with kind `delete`; the server message is never forwarded to the interface. The repository stays the only Drizzle importer, `deleteTodo` takes `ownerId` first, and the route handler builds no query.
++- **The optimistic removal is written via `setQueryData` on the single `['todos']` key.** Unlike create, a delete *may* cancel in-flight reads, because it acts on a row the server already knows about.
++- **Rollback re-inserts only the one row this mutation removed**, back at its `id DESC` position. Restoring a whole-list snapshot is forbidden — with a second mutation in flight it would undo changes this mutation never made.
++- **Every duration comes from the motion module seeded in Epic 2.** The delete collapse is the departure collapse *minus the hold* — the same named constant, not a second one — and `prefers-reduced-motion` is honoured in that one place. No component inlines a duration or reads the media query itself.
++- **Design tokens only.** No hex literal, no arbitrary-value class; a value not in the theme is added there first under its original token name. The filled destructive surface is its own token, distinct from the de-escalated banner text colour that happens to share its value today.
++- **Announcements go through the single `announce(message, urgency)` function** — the deletion politely, the failure assertively. No component renders its own live region.
++- **The error slot holds one entry**; this mutation supplies a retry closure capturing exactly the Todo it tried to delete. A newer error replaces an older one and the replaced operation is not retried. If the target no longer exists, `Retry` does nothing and clears the banner.
++- **Testing:** Vitest for per-entity rollback and re-insertion position under concurrent mutations; end-to-end coverage of the forced delete-failure path belongs to Epic 6.
++
++## UX & Interaction Patterns
++
++- **Two presentations of one action.** On pointer, a thin trailing line icon appears on row hover, muted at rest and taking the danger hue on its own hover. On touch, a leftward swipe reveals a solid filled panel behind the row with a white icon — the same filled treatment as the dialog's confirm button, so the two surfaces on the delete path read as one escalation. Touch and pointer are decided by *capability*, not viewport width; a device supporting both offers both.
++- **The delete control is in the tab order whether or not it is visually revealed, and receiving focus reveals it.** It is the last focusable control in its row (after the checkbox), at least 44px in both dimensions, and labelled with the Todo it acts on so the tab order does not read as a list of identical `Delete` buttons. On a Completed row it takes the deepened-accent focus ring, because the standard accent fails contrast on mint.
++- **The dialog** is a centred modal on a translucent scrim, card-shadowed, with two pill buttons at least 44px tall: Cancel transparent with a control-border edge, Delete a solid filled button with a white label — the only filled button in the product, because it is the only interaction that cannot be taken back.
++- **Focus management is explicit.** Trapped while open; initial focus on Cancel, not Delete; Tab cycles within the dialog only; Escape closes exactly as Cancel does. On close by Cancel or Escape, focus returns to the control that opened it. On close by Delete, focus goes to the first focusable control of the row that took its place — the checkbox — or to the input if the list is now empty. Focus is never dropped to the document body.
++- **The removal itself:** the dialog closes, the row goes, the rows below close the gap over the collapse duration with **no hold** — a deleted Todo has no new state to show. The filter-tab counts update instantly. Under reduced motion it cuts to the end state and the announcement still fires.
++- **Banned:** undo toasts, long-press menus, bulk actions, drag-to-reorder, modal stacks deeper than one, any animation on dialog open. The row body is not a click target.
++
++## Cross-Story Dependencies
++
++- **Story 5.1 is independent** and was deliberately kept separate so Epic 5's server work could start in parallel with Epic 4. **Story 5.2 depends on 5.1** only loosely (the dialog can be built against a stubbed mutation), and **Story 5.3 depends on both** — it needs the endpoint to call and the dialog's `Delete` to fire it.
++- **Epic 4 is complete**, so this epic's position rules resolve concretely: the checkbox exists, so the delete control is second in each row's tab order and focus-after-delete lands on the replacement row's checkbox. The filter tabs exist, so the tab counts must update on optimistic removal. The departure collapse exists — reuse its constant rather than declaring a second.
++- **Depends on Epic 3** for the optimistic mutation shape, the retry-closure convention and per-entity rollback; reuse them unchanged. **Depends on Epic 2** for the error slot and banner with all four kinds modelled, the empty-state component, the motion module, the announcer, the sticky block and the `['todos']` hook. **Depends on Epic 1** for the contract, the owner-scoped repository, identity middleware and design tokens.
++- **Obligations carried in from earlier work, each becoming actionable here:**
++  - The departing-row set releases entries on the row's own `transitionend`, so a row that leaves the cache mid-transition leaks a dead id. Delete is the first thing that removes rows for real and needs the same release path — answer both together.
++  - The optimistic-create guard protects an unconfirmed id for the mutation's garbage-collection window, which was harmless while nothing removed rows. Delete changes that; the precise fix needs request-ordering information the query does not yet carry.
++  - A request-size guard ahead of JSON parsing was deferred from the create endpoint on the reasoning that the update and delete endpoints would want the same one — this is the last endpoint where writing it once is still cheap.
++  - The error envelope's `message` field is still unconstrained by anything but precedent, and this is the fourth and final endpoint to follow it.
++  - There is no lint rule keeping mutation hooks inside the todos module; this epic adds the third such hook, which is the point at which the rule becomes worth writing.
++  - The oldest render-test helper hand-assembles every shell provider one story behind the real one; this epic's delete hook adds the next provider-bound dependency, so converting those cases to the real provider tree belongs here.
++- **Beware stale story numbers in older documents and code comments.** The 2026-09-22 consolidation renumbered several stories; references to `5.1` are unaffected, but earlier `5.2`–`5.6` references may not map to today's numbering. Fix such references opportunistically in files you are already touching.
++- **The epics file spells one contract field in snake_case; the contract wins.** Todo fields are camelCase on the wire.
+diff --git a/docs/implementation-artifacts/spec-5-1-5-2-delete-at-the-server-and-three-routes-to-one-dialog.md b/docs/implementation-artifacts/spec-5-1-5-2-delete-at-the-server-and-three-routes-to-one-dialog.md
+new file mode 100644
+index 0000000..f9367f0
+--- /dev/null
++++ b/docs/implementation-artifacts/spec-5-1-5-2-delete-at-the-server-and-three-routes-to-one-dialog.md
+@@ -0,0 +1,184 @@
++---
++title: 'Stories 5.1 and 5.2 — remove a Todo at the server, and reach delete three ways with one confirmation'
++type: 'feature'
++created: '2026-09-25'
++status: 'in-progress'
++baseline_revision: 'f13b8da80fbd18f57f6b69361c57a6bae0f8d023'
++review_loop_iteration: 0
++followup_review_recommended: false
++context:
++  - '{project-root}/docs/implementation-artifacts/epic-5-context.md'
++warnings: ['multiple-goals', 'oversized']
++deferred: []
++---
++
++<intent-contract>
++
++## Intent
++
++**Problem:** A Todo can be created and toggled but never removed. There is no `DELETE` endpoint, no `deleteTodo` in the repository, and no delete control on a row — so FR-5 is entirely unbuilt, and a list can only grow.
++
++**Approach:** Two independently shippable halves of Epic 5, built together because they share no code and conflict nowhere. **5.1** adds `DELETE /api/todos/:id` beside the existing `PATCH` in the same route file, plus `deleteTodo(ownerId, id)` in the repository. **5.2** adds the delete control to `TodoRow` in its two presentations (swipe-revealed panel on touch, trailing hover icon on pointer, focusable always) and one `<dialog>`-based confirmation owned by `TodoList`. The two halves do not meet: 5.2's `Delete` button calls an `onConfirm` prop, and Story 5.3 is what wires that prop to the endpoint.
++
++## Boundaries & Constraints
++
++**Always:**
++- The repository is the only Drizzle importer and `deleteTodo` takes `ownerId` first (AD-2); the route handler builds no query.
++- Every `className` in the product stays a single static string literal — variation is carried by `data-*` attributes and derived in CSS (AR-28). `dynamicClassNames()` must keep returning only `app/layout.tsx:{poppins.variable}`.
++- Design values are transcribed only into `app/globals.css` under their DESIGN.md token names (AD-13). No hex literal and no Tailwind arbitrary-value class outside it.
++- Durations come from `src/client/motion/motion.ts`; no component inlines one or reads the motion media query.
++- Copy is verbatim: `Delete this Todo?`, `Cancel`, `Delete`. The word *Done* is banned.
++- The delete control is the **last** focusable control in its row, at least 44px in both dimensions, focusable whether or not it is visually revealed, and labelled with the Todo it acts on.
++
++**Never:**
++- No soft-delete column, no `deletedAt`, and no query that filters on deletion state.
++- No optimistic removal, no `setQueryData`, no announcement, no error banner, and no call to the endpoint from the client — all of that is Story 5.3. 5.2 stops at `onConfirm`.
++- No first-run swipe nudge (Story 5.D1, deferred).
++- No `position: fixed` in markup or in `app/globals.css` — `todo-card.test.ts` pins both, and the confirmation must not be the thing that widens that wall.
++- No third dialog button, no checkbox, no "don't ask again", nothing stacked on top of the dialog.
++
++## I/O & Edge-Case Matrix
++
++| Scenario | Input / State | Expected Output / Behavior | Error Handling |
++|----------|--------------|---------------------------|----------------|
++| Owned row deleted | `DELETE /api/todos/:id`, caller owns the row | Row removed; `204` with no body | No error expected |
++| Same delete retried | The same `DELETE` sent a second time | `204` again — the row is already gone and that is success | No error expected |
++| Foreign-owner delete | `DELETE` for a row another identity owns | Row untouched; `204`, identical to the two rows above | Indistinguishable by design — the status must not disclose existence |
++| Completed row deleted | Row with `completed = true` | Row removed; `204` | No error expected |
++| Malformed id | Path segment is not a lowercase canonical UUIDv7 | `400`, envelope kind `delete`, message `DELETE_FAILED_MESSAGE` | Refused before any query runs |
++| No identity | No valid Client Identity cookie | `401` from `unauthorizedIdentityResponse("DELETE")` | Identity gate runs first |
++| Driver failure | `db.delete` throws | `500`, envelope kind `delete` | `logSafeError` only; never the error message whole |
++| Dialog confirmed | `Delete` pressed | Dialog closes, `onConfirm(todo)` fires once, focus is placed by `focusTargetAfterDelete` | n/a |
++| Dialog cancelled | `Cancel`, or Escape | Dialog closes, `onConfirm` never fires, Todo List untouched, focus returns to the trigger | n/a |
++
++</intent-contract>
++
++## Code Map
++
++**Story 5.1 — server**
++- `app/api/todos/[id]/route.ts` — holds `PATCH`; its header comment already says "Epic 5's `DELETE` joins this file for that reason". Add `DELETE` and `DELETE_FAILED_MESSAGE` beside `UPDATE_FAILED_MESSAGE` (`:45`). Copy `PATCH`'s gate order verbatim: identity → id form → repository (`:111`–`:169`).
++- `src/server/repository/todos.ts` — `setTodoCompleted` (`:180`) is the shape to follow: one statement, `and(eq(todo.id, id), eq(todo.ownerId, ownerId))` is the ownership check. The module header (`:3`) already names `deleteTodo` as arriving in Epic 5.
++- `src/server/http/route-failure.ts` — `errorKindForMethod` (`:36`) already maps `DELETE → "delete"`, so AC6 needs no change here. `requestFailedResponse` and `logSafeError` are used as-is.
++- `src/server/identity/request-identity.ts` — `privateToTheCaller` (`:47`) wraps every response including the `204`; `unauthorizedIdentityResponse` is the `401`.
++- `src/server/validation/todo-id.ts` — `isCanonicalUuidV7`, the `400` gate.
++- `app/api/todos/[id]/route.test.ts` — the live-Neon test shape to extend.
++- `node_modules/next/dist/docs/01-app/03-api-reference/03-file-conventions/route.md:24,82` — `DELETE` is a supported export and `params` is a `Promise`; confirmed for Next 16.3.5.
++
++**Story 5.2 — client**
++- `src/client/components/todo-row.tsx` — the checkbox (`:138`) and text span (`:172`) are the two existing children; the delete control goes after both (AC7). `data-completed` (`:118`) is the marker every descendant derives from; `group-data-completed:focus-visible:shadow-focus-on-complete` (`:147`) is the exact focus-ring idiom to repeat (AC6).
++- `src/client/components/todo-list.tsx` — owns one dialog for the whole list and the `pendingDelete` state; `:189` is where rows are mapped and where `onRequestDelete` is passed down. Precedent for hoisting shared machinery out of the row is the `useSetCompleted` comment at `:94`.
++- `app/globals.css` — `@theme static` already declares `--color-danger-fill`, `--color-on-danger-fill`, `--color-text-muted`, `--color-danger-text`, `--radius-md`, `--radius-lg`, `--radius-full`, `--spacing-touch-target-min`, `--shadow-card`, `--shadow-focus`, `--shadow-focus-on-complete`, `--spacing-7`. Only the dialog scrim is missing. `@utility checkbox-hit-area` (`:280`) is the 44px `::after` overlay recipe to mirror; `@utility row-departing` (`:640`) is the `data-*`-gated transition idiom.
++- `src/client/motion/motion.ts` — `COLLAPSE_MS` (`:58`) is the reveal/settle duration for the swipe panel. Do not add a constant.
++- `src/client/components/todo-row.render.test.tsx` — the `createRoot` + `act` render-test idiom, no testing library.
++- `src/client/components/todo-card.test.ts:44,48,233,237` — the walls: `CLIPPING` allows exactly `&[data-departing="true"]` in the stylesheet, `PINNED` allows exactly `sticky-top-block.tsx:sticky`, and `globalsCss` must not match `position: (sticky|fixed)`.
++- `src/test-support/markup.ts` — `readMarkup`, `matches`, `dynamicClassNames`, `styleSheetMatches`; `src/test-support/tailwind.ts` — `ruleFor` compiles a class to assert its declarations.
++
++**Read-only evidence gathered (do not re-investigate):**
++- `DESIGN.md` `components.dialog-delete` and `components.delete-action` carry every value needed; the scrim is `rgba(36,36,58,.32)` and has no token name, exactly as `filter-tabs`' two shadows did.
++- jsdom 30.1.1 implements **neither** `HTMLDialogElement.showModal` nor `.close` (verified by running it). Any render test of the dialog must install a shim.
++- `react` 19.3.0, no testing library, no modal library. Nothing may be added.
++
++## Tasks & Acceptance
++
++**Execution:**
++
++*Story 5.1*
++- `src/server/repository/todos.ts` — add `deleteTodo(ownerId, id): Promise<void>`, one owner-scoped `db.delete`, no `returning`. Returning nothing is the point: the handler then has no result to branch on and cannot accidentally disclose existence.
++- `app/api/todos/[id]/route.ts` — add `DELETE_FAILED_MESSAGE` and `export async function DELETE`. Gate order identical to `PATCH` minus the body step. Success is `privateToTheCaller(new Response(null, { status: 204 }))`.
++- `app/api/todos/[id]/route.test.ts` — cover every row of the I/O matrix's server half against the live branch, including: delete twice → `204` twice; a second identity's row survives and still answers `204`; a Completed row deletes; a malformed id is `400` with kind `delete` and never reaches the database.
++
++*Story 5.2*
++- `app/globals.css` — add `@utility delete-hit-area` (mirror of `checkbox-hit-area`), `@utility delete-action` (rest/hover/focus reveal, `(pointer: fine)`-gated hover, focus reveal outside the media query), `@utility delete-panel` (the `danger-fill` revealed panel), `@utility row-swipe` (the `data-revealed` transform at `COLLAPSE_MS`), and `@utility dialog-delete` (card fill, `--radius-lg`, `--shadow-card`, `--spacing-7`, and the `::backdrop` scrim).
++- `src/client/components/delete-dialog.tsx` — new. A native `<dialog>` opened with `showModal()`, `aria-labelledby` the title, `Cancel` carrying `autoFocus`, `Delete` the only `bg-danger-fill` button in the product. Props: `todo: Todo | null`, `onConfirm`, `onCancel`.
++- `src/client/todos/focus-after-delete.ts` — new. Pure `focusTargetAfterDelete(visible: Todo[], deletedId: string)` returning `{ kind: "row"; id: string } | { kind: "input" }`: the row that takes the deleted row's place, or the input when the list is now empty.
++- `src/client/components/todo-row.tsx` — add the delete control as the last child, with the swipe wrapper, the revealed panel, `aria-label={`Delete ${todo.text}`}`, `data-revealed`, and touch handlers that set it past a leftward threshold. New props `onRequestDelete` and nothing else.
++- `src/client/components/todo-list.tsx` — hold `pendingDelete`, render one `DeleteDialog`, and place focus on close using `focusTargetAfterDelete`.
++- `src/client/components/todo-card.test.ts` — extend the stylesheet `overflow` allow-list to name the swipe wrapper's selector alongside `&[data-departing="true"]`, with the Story 4.3 descendant-not-ancestor argument written out. Change nothing else.
++- `src/client/components/delete-dialog.render.test.tsx`, `src/client/components/todo-row.render.test.tsx`, `src/client/todos/focus-after-delete.test.ts`, `src/client/components/delete-dialog.test.ts` — the behaviour, the pure function, and the class/stylesheet scans.
++- `src/test-support/dialog.ts` — new. Installs a minimal `HTMLDialogElement` shim (`showModal`, `show`, `close`, `open`, the `close` and `cancel` events) so the dialog's own logic is testable under jsdom 30.
++
++**Acceptance Criteria:**
++- Given a `DELETE` for a row the caller owns, a row already gone, and a row another identity owns, when each is served, then all three answer `204` with no body and the other identity's row is still present afterwards.
++- Given a path segment that is not a lowercase canonical UUIDv7, when `DELETE` is served, then it answers `400` with envelope kind `delete` and no query runs.
++- Given `deleteTodo`, when its signature is read, then `ownerId` is its first parameter and it returns `Promise<void>`.
++- Given a row in either Completion Status, when its delete control takes focus, then the control is revealed, its ring is `shadow-focus` on Active and `shadow-focus-on-complete` on Completed, and it is the last focusable element in the row.
++- Given a screen reader, when it reaches a row's delete control, then the accessible name contains both `Delete` and that row's own text.
++- Given a leftward swipe past the threshold on a row, when it completes, then the row carries `data-revealed` and the `danger-fill` panel with its `on-danger-fill` icon is exposed; tapping the panel calls `onRequestDelete` with that Todo.
++- Given a pointer device, when the row is hovered, then the trailing icon is revealed — and the reveal rule is gated on `(pointer: fine)` rather than on any width breakpoint.
++- Given the dialog, when it opens, then `showModal()` was called (not `show()`), the title reads `Delete this Todo?`, it has exactly two buttons reading `Cancel` and `Delete`, and `Cancel` carries `autoFocus`.
++- Given the dialog is open, when `Cancel` is pressed or the `cancel` event fires, then it closes, `onConfirm` never fires, and the Todo List is unchanged.
++- Given the dialog is open, when `Delete` is pressed, then `onConfirm` fires exactly once with the pending Todo and the dialog closes.
++- Given a visible list and a deleted id, when `focusTargetAfterDelete` is called, then it returns the following row's id, the preceding row's id when the deleted row was last, and `{ kind: "input" }` when it was the only row.
++- Given the whole markup surface, when it is scanned, then `bg-danger-fill` appears on exactly one element in the product, `dynamicClassNames` still returns only the font variable, and `matches(markup, PINNED)` still returns only the sticky block.
++- Given `app/globals.css`, when it is scanned, then it still matches no `position: (sticky|fixed)`, and its `overflow` declarations are exactly the departing row's and the swipe wrapper's.
++
++## Spec Change Log
++
++Five departures taken during implementation, each recorded with its reason.
++
++1. **`@utility dialog-delete` carries the scrim and the width ceiling only.** The
++   spec listed the card fill, `--radius-lg`, `--shadow-card` and `--spacing-7`
++   inside the recipe; they stay as `bg-card rounded-lg shadow-card p-7` classes
++   on the element instead, per the standing rule every recipe block in
++   `app/globals.css` states — "only the value with no token behind it lives
++   here" — so the whole-tree class scans can still see them. The recipe holds
++   the two things a class cannot say: the mockup's untokenised 400px ceiling and
++   the `::backdrop` scrim.
++
++2. **A sixth recipe, `@utility dialog-button`.** DESIGN.md gives both dialog
++   buttons a `1.5px solid` border and a `{spacing.touch-target-min}` floor, and
++   `min-w-*` is banned tree-wide — the same corner `retry-pill` and `input-add`
++   are in. Its own recipe rather than a second consumer of `retry-pill`, which
++   is documented against `components.error-banner.retry-border`.
++
++3. **`todo-list.tsx` holds the pending delete as an id, not a `Todo`.**
++   `use-todos.test.ts` scans every source file for a `useState` or `useReducer`
++   that names a Todo and fails the suite for one — AD-8 keeps server state in
++   the single cache entry. The id is held and the row derived per render, which
++   is also the better behaviour: the dialog asks about whatever the cache
++   currently holds rather than a copy taken when it opened.
++
++4. **Two id constants were added so focus has something to reach.**
++   `rowCheckboxId()` in `todo-row.tsx` and `ADD_INPUT_ID` in `add-input.tsx`.
++   `focusTargetAfterDelete` answers *which Todo*, as specified; turning that into
++   an element needs the two components that own those elements to name them.
++
++5. **The `autoFocus` assertion is a source scan, not a DOM one.** React applies
++   `autoFocus` imperatively on mount and renders no `autofocus` attribute, so a
++   real `showModal()` never sees one and falls back to the first focusable
++   element in the dialog. Both routes land on Cancel; `delete-dialog.test.ts`
++   pins the prop out of the AST and `delete-dialog.render.test.tsx` pins both the
++   resulting focus and the document order the fallback depends on.
++
++Three things this story leaves open are recorded in `deferred-work.md`: the
++dialog does not show the Todo's own text, the swipe threshold is a chosen number
++no test can judge, and the platform guarantees the native `<dialog>` was chosen
++for are asserted as markup facts rather than exercised.
++
++## Review Triage Log
++
++## Design Notes
++
++**Why the `204` is unconditional.** AC2 (idempotent retry) and AC3 (foreign owner discloses nothing) pull the same way: if the handler could tell "deleted" from "nothing to delete", the status code would become an existence oracle. `deleteTodo` therefore returns `void` and the handler has nothing to branch on — the property holds structurally rather than by a branch that remembered to be careful, which is the argument `setTodoCompleted`'s doc comment already makes for its own shape.
++
++**Why a native `<dialog>` and not a hand-built modal.** A hand-built modal needs `position: fixed` for its scrim, and `todo-card.test.ts` pins `fixed` out of both the markup (`PINNED`) and the stylesheet — walls that exist so nothing can clip or cover the sticky block. `showModal()` puts the dialog in the **top layer**, positioned by the UA stylesheet, so neither wall is touched and the dialog cannot be clipped by any ancestor. It also brings the focus trap (AC10), Escape-as-cancel (AC11) and focus restoration to the trigger (AC12) from the platform rather than from hand-written code that would have to be kept correct. This is the same trade `todo-row.tsx` took when it chose `<button>` to get Enter and Space "from the platform through one `onClick`".
++
++The cost is that jsdom 30 implements none of it, so `src/test-support/dialog.ts` shims the element. Be honest about what that buys: the tests prove *our* logic — that `showModal` is called rather than `show`, that `autoFocus` is on `Cancel`, that the `cancel` event and the `Cancel` button take the identical path, that `Delete` fires `onConfirm` once. The trap and the focus restore are platform guarantees and are asserted as markup facts (`aria-modal` is not hand-set; the element is a real `<dialog>`), not simulated.
++
++**Why `focusTargetAfterDelete` is a pure function.** AC13 spans the 5.2/5.3 seam: it describes where focus goes *after a row has been removed*, and 5.2 removes nothing. Extracting the rule makes it testable now against a list and an id, and leaves Story 5.3 nothing to do but delete the row — the wiring is already in place and already exercised.
++
++**Why the swipe reveal extends the `overflow` allow-list.** DESIGN.md asks for a panel revealed *behind* the row, which means the row translates over it and its left edge leaves the wrapper. Story 4.3 already narrowed this same assertion from a flat ban to an allow-list, with the argument that a departing row is a descendant of the list region and an ancestor of nothing but its own text. The swipe wrapper is in exactly that position, so the same argument extends to it — and must be written into the test, not just relied upon.
++
++**What is deliberately not here.** No `useDeleteTodo`, no `setQueryData`, no announcement, no banner wiring, no retry closure. `onConfirm` is the seam and Story 5.3 is its consumer.
++
++## Verification
++
++**Commands:**
++- `npm run lint` — expected: clean, `--max-warnings=0`.
++- `npm run typecheck` — expected: no errors.
++- `npm test` — expected: all suites pass, including the pre-existing `todo-card.test.ts` walls and `motion.test.ts`'s stylesheet/constant agreement.
++- `npx vitest run app/api/todos` — expected: the live-Neon delete cases pass; requires `DATABASE_URL`.
++
++**Manual checks:**
++- Grep the diff for `#` hex literals and `[` arbitrary values outside `app/globals.css` — expected: none.
++- Confirm `src/client/motion/motion.ts` gained no constant.
+diff --git a/src/client/components/add-input.tsx b/src/client/components/add-input.tsx
+index 5cd74e1..5db3edc 100644
+--- a/src/client/components/add-input.tsx
++++ b/src/client/components/add-input.tsx
+@@ -78,6 +78,18 @@ import {
+  */
+ export const ADD_INPUT_PLACEHOLDER = "what needs doing?";
+ 
++/**
++ * The field's id — what focus falls back to when the Todo List empties.
++ *
++ * Story 5.2: deleting the last Todo leaves no row to focus, and "focus is never
++ * dropped to the document body" (EXPERIENCE.md:202), so `todo-list.tsx` has to
++ * be able to find this element. A constant rather than a string spelled at both
++ * ends, for the reason the placeholder above gives about naming something
++ * twice; a fixed id rather than a generated one because there is exactly one
++ * add input on the one screen this product has.
++ */
++export const ADD_INPUT_ID = "add-todo-input";
++
+ /** The pill hint's whole label (DESIGN.md `components.input-add`). */
+ export const ENTER_HINT_LABEL = "Enter";
+ 
+@@ -289,6 +301,7 @@ export function AddInput({
+       */}
+       <input
+         ref={field}
++        id={ADD_INPUT_ID}
+         type="text"
+         value={text}
+         maxLength={TODO_TEXT_MAX_LENGTH}
+diff --git a/src/client/components/delete-dialog.render.test.tsx b/src/client/components/delete-dialog.render.test.tsx
+new file mode 100644
+index 0000000..202b3f5
+--- /dev/null
++++ b/src/client/components/delete-dialog.render.test.tsx
+@@ -0,0 +1,364 @@
++// @vitest-environment jsdom
++
++// The dialog's behaviour, in a real DOM and with no providers (epics.md Story
++// 5.2 AC9, AC10, AC11, AC12).
++//
++// `delete-dialog.test.ts` reads the file and compiles its classes; neither can
++// see which method opens the element, which button reports what, or whether
++// Escape and Cancel end up in the same place. This file mounts it.
++//
++// jsdom 30.1.1 implements no dialog API at all — `showModal`, `show` and
++// `close` are `undefined` — so `src/test-support/dialog.ts` installs a minimal
++// one and its own comment is explicit about the line between what that proves
++// and what it cannot. In short: everything below is a claim about *this
++// component*, never about the platform. The top layer, the focus trap, the
++// `::backdrop` and focus returning to the trigger are the browser's, are
++// asserted here only as markup facts, and are driven for real in Epic 6.
++//
++// The thinnest possible mount — `createRoot` and React's own `act`, no testing
++// library — which is this repository's established shape for a render test.
++
++import { act } from "react";
++import { createRoot, type Root } from "react-dom/client";
++import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
++
++import { dispatchCancel, installDialogShim } from "@/test-support/dialog";
++import type { Todo } from "@/shared/contract/todo";
++
++import { DeleteDialog } from "./delete-dialog";
++
++const TODO: Todo = {
++  id: "0199a2c0-0000-7000-8000-00000000000c",
++  text: "send invoice",
++  completed: false,
++  createdAt: "2026-09-25T08:00:00.000Z",
++};
++
++let container: HTMLDivElement;
++let root: Root;
++let uninstallDialog: () => void;
++
++beforeEach(() => {
++  (
++    globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }
++  ).IS_REACT_ACT_ENVIRONMENT = true;
++  uninstallDialog = installDialogShim(window.HTMLDialogElement);
++  container = document.createElement("div");
++  document.body.append(container);
++  root = createRoot(container);
++});
++
++afterEach(async () => {
++  await act(async () => root.unmount());
++  container.remove();
++  uninstallDialog();
++  (
++    globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }
++  ).IS_REACT_ACT_ENVIRONMENT = false;
++});
++
++function dialogElement(): HTMLDialogElement {
++  const found = container.querySelector("dialog");
++  expect(found, "the component rendered no <dialog>").not.toBeNull();
++  return found as HTMLDialogElement;
++}
++
++function buttons(): HTMLButtonElement[] {
++  return [...container.querySelectorAll("button")];
++}
++
++function buttonNamed(label: string): HTMLButtonElement {
++  const found = buttons().find(
++    (button) => button.textContent?.trim() === label,
++  );
++  expect(found, `no button reads ${label}`).toBeDefined();
++  return found as HTMLButtonElement;
++}
++
++async function mount(todo: Todo | null) {
++  const onConfirm = vi.fn();
++  const onCancel = vi.fn();
++
++  await act(async () => {
++    root.render(
++      <DeleteDialog todo={todo} onConfirm={onConfirm} onCancel={onCancel} />,
++    );
++  });
++
++  return { onConfirm, onCancel };
++}
++
++/** Re-renders the same element with a different `todo` — what the list does. */
++async function rerender(
++  todo: Todo | null,
++  handlers: { onConfirm: (todo: Todo) => void; onCancel: () => void },
++) {
++  await act(async () => {
++    root.render(
++      <DeleteDialog
++        todo={todo}
++        onConfirm={handlers.onConfirm}
++        onCancel={handlers.onCancel}
++      />,
++    );
++  });
++}
++
++describe("the shim stands in for something jsdom does not have", () => {
++  it("would have thrown without it, which is why every case below installs it", () => {
++    // If jsdom ever implements the dialog API, this fails and the shim can go.
++    // Asserted rather than assumed: a shim nobody notices has become a stub
++    // that hides the real element's behaviour.
++    uninstallDialog();
++    const bare = document.createElement("dialog") as HTMLDialogElement;
++    expect(bare.showModal).toBeUndefined();
++    expect(bare.close).toBeUndefined();
++
++    uninstallDialog = installDialogShim(window.HTMLDialogElement);
++    const shimmed = document.createElement("dialog") as HTMLDialogElement;
++    expect(typeof shimmed.showModal).toBe("function");
++  });
++});
++
++describe("opening it (AC9)", () => {
++  it("opens modally — showModal, never show", async () => {
++    // `show()` opens a non-modal dialog: no top layer, no focus trap, no
++    // scrim, and the list behind still operable. It looks identical in the
++    // markup, which is why the method is what is asserted.
++    const opened = vi.spyOn(window.HTMLDialogElement.prototype, "showModal");
++    const nonModal = vi.spyOn(window.HTMLDialogElement.prototype, "show");
++
++    await mount(TODO);
++
++    expect(opened).toHaveBeenCalledTimes(1);
++    expect(nonModal).not.toHaveBeenCalled();
++    expect(dialogElement().open).toBe(true);
++  });
++
++  it("stays closed while there is no Todo to ask about", async () => {
++    const opened = vi.spyOn(window.HTMLDialogElement.prototype, "showModal");
++
++    await mount(null);
++
++    expect(opened).not.toHaveBeenCalled();
++    expect(dialogElement().open).toBe(false);
++    // And it renders nothing inside itself, so the title and the two buttons
++    // are absent from the tab order and from the accessibility tree.
++    expect(buttons()).toHaveLength(0);
++    expect(dialogElement().textContent).toBe("");
++  });
++
++  it("opens once, however often it re-renders", async () => {
++    // `showModal()` on an already-open dialog throws `InvalidStateError`, so
++    // an effect that did not guard on `open` would take the whole card down
++    // the first time an unrelated re-render reached it.
++    const opened = vi.spyOn(window.HTMLDialogElement.prototype, "showModal");
++    const handlers = await mount(TODO);
++
++    await rerender(TODO, handlers);
++    await rerender(TODO, handlers);
++
++    expect(opened).toHaveBeenCalledTimes(1);
++    expect(dialogElement().open).toBe(true);
++  });
++
++  it("is a real <dialog>, so the trap and the restore are the platform's", async () => {
++    // The guarantees this component does not implement: `aria-modal` is not
++    // hand-set anywhere, the element carries no `role`, and there is no
++    // keydown handler holding Tab inside it. All four come from `showModal()`
++    // and are driven for real in Epic 6.
++    await mount(TODO);
++    const dialog = dialogElement();
++
++    expect(dialog.tagName).toBe("DIALOG");
++    expect(dialog.hasAttribute("aria-modal")).toBe(false);
++    expect(dialog.hasAttribute("role")).toBe(false);
++  });
++
++  it("is named by its own title (AC9)", async () => {
++    await mount(TODO);
++    const dialog = dialogElement();
++
++    const labelledBy = dialog.getAttribute("aria-labelledby");
++    expect(labelledBy).not.toBeNull();
++    // Resolved through the document, so an id that no element carries fails
++    // here rather than shipping as an unnamed modal.
++    const title = document.getElementById(String(labelledBy));
++    expect(title, "aria-labelledby points at nothing").not.toBeNull();
++    expect(title?.textContent?.trim()).toBe("Delete this Todo?");
++    expect(dialog.hasAttribute("aria-label")).toBe(false);
++  });
++
++  it("holds exactly two buttons, reading Cancel and Delete (AC9)", async () => {
++    // "No third button, no checkbox, no 'don't ask again'" (DESIGN.md:430).
++    await mount(TODO);
++
++    expect(buttons().map((button) => button.textContent?.trim())).toEqual([
++      "Cancel",
++      "Delete",
++    ]);
++    expect(container.querySelectorAll("input")).toHaveLength(0);
++    // Copy verbatim, and the banned word nowhere near it.
++    expect(container.textContent).toBe("Delete this Todo?CancelDelete");
++    expect(container.textContent).not.toMatch(/\bDone\b/);
++  });
++
++  it("lands initial focus on Cancel and not on Delete (AC9)", async () => {
++    // The safe default: "a keyboard user who opens this dialog and presses
++    // Enter without reading it keeps their Todo" (mockups/key-delete.html).
++    await mount(TODO);
++
++    expect(document.activeElement).toBe(buttonNamed("Cancel"));
++    expect(document.activeElement).not.toBe(buttonNamed("Delete"));
++  });
++
++  it("keeps Cancel the first focusable thing inside the dialog", async () => {
++    // Worth pinning separately, because the obvious assertion about the case
++    // above is wrong. `autoFocus` is on Cancel in the source —
++    // `delete-dialog.test.ts` reads it out of the AST — but React applies it
++    // *imperatively* on mount and renders no `autofocus` attribute at all, so
++    // a real `showModal()` never sees one and falls back to focusing the first
++    // focusable element in the dialog. That fallback is therefore load-bearing
++    // in the browser, and it is document order that decides it: swap the two
++    // buttons and initial focus lands on `Delete` with the `autoFocus` prop
++    // still exactly where it was.
++    await mount(TODO);
++
++    const focusable = [
++      ...dialogElement().querySelectorAll("a, button, input, [tabindex]"),
++    ];
++    expect(focusable[0]).toBe(buttonNamed("Cancel"));
++    expect(focusable).toHaveLength(2);
++  });
++
++  it("puts Cancel first in the tab order, with Delete one Tab away", async () => {
++    await mount(TODO);
++
++    const [first, second] = buttons();
++    expect(first.textContent?.trim()).toBe("Cancel");
++    expect(second.textContent?.trim()).toBe("Delete");
++    // Document order, not an arrangement: an explicit `tabindex` here would be
++    // ordering something that is already ordered.
++    for (const button of buttons()) {
++      expect(button.hasAttribute("tabindex")).toBe(false);
++      // `type="button"`, so a dialog inside a form could never submit it.
++      expect(button.getAttribute("type")).toBe("button");
++    }
++  });
++});
++
++describe("cancelling it (AC10)", () => {
++  it("closes, reports the cancel, and confirms nothing", async () => {
++    const { onConfirm, onCancel } = await mount(TODO);
++
++    await act(async () => buttonNamed("Cancel").click());
++
++    expect(dialogElement().open).toBe(false);
++    expect(onCancel).toHaveBeenCalledTimes(1);
++    // Nothing is removed until the user chooses `Delete` — this is the whole
++    // of AC10 at this component, and the Todo List's own untouchedness is
++    // `todo-list.render.test.tsx`'s.
++    expect(onConfirm).not.toHaveBeenCalled();
++  });
++
++  it("takes the identical path when the cancel event fires (Escape)", async () => {
++    // Escape reaches a modal as a `cancel` event. Routing it through the same
++    // handler is what makes "Escape closes it as Cancel does"
++    // (EXPERIENCE.md:202) one path rather than two that have to agree.
++    const { onConfirm, onCancel } = await mount(TODO);
++
++    await act(async () => {
++      dispatchCancel(dialogElement());
++    });
++
++    expect(dialogElement().open).toBe(false);
++    expect(onCancel).toHaveBeenCalledTimes(1);
++    expect(onConfirm).not.toHaveBeenCalled();
++  });
++
++  it("closes when the list takes the pending Todo away", async () => {
++    // The other direction of the same effect: the parent clearing its state
++    // closes the element, and does so without a second `close` when the
++    // dialog closed itself on the way out.
++    const handlers = await mount(TODO);
++    expect(dialogElement().open).toBe(true);
++
++    await rerender(null, handlers);
++
++    expect(dialogElement().open).toBe(false);
++    expect(buttons()).toHaveLength(0);
++  });
++
++  it("reopens for the next Todo on the same element", async () => {
++    // The same element across every open, which is what lets the platform
++    // restore focus to whichever control opened it.
++    const handlers = await mount(TODO);
++    const element = dialogElement();
++
++    await rerender(null, handlers);
++    await rerender({ ...TODO, id: "0199a2b0-0000-7000-8000-00000000000b" }, handlers);
++
++    expect(dialogElement()).toBe(element);
++    expect(element.open).toBe(true);
++  });
++});
++
++describe("confirming it (AC11)", () => {
++  it("fires onConfirm exactly once, with the pending Todo, and closes", async () => {
++    const { onConfirm, onCancel } = await mount(TODO);
++
++    await act(async () => buttonNamed("Delete").click());
++
++    expect(onConfirm).toHaveBeenCalledExactlyOnceWith(TODO);
++    expect(dialogElement().open).toBe(false);
++    expect(onCancel).not.toHaveBeenCalled();
++  });
++
++  it("reports the Todo it was asking about, not the one before it", async () => {
++    const other: Todo = {
++      ...TODO,
++      id: "0199a2b0-0000-7000-8000-00000000000b",
++      text: "book dentist",
++    };
++    const handlers = await mount(TODO);
++    await rerender(null, handlers);
++    await rerender(other, handlers);
++
++    await act(async () => buttonNamed("Delete").click());
++
++    expect(handlers.onConfirm).toHaveBeenCalledExactlyOnceWith(other);
++  });
++
++  it("answers once however many times Delete is pressed", async () => {
++    // A double-tap, and the frame before the list has re-rendered the dialog
++    // shut. The guard is on the element's own `open`, so the second press
++    // arrives at a closed dialog and reports nothing — "exactly once" is a
++    // property of this component rather than of how fast its consumer commits.
++    const { onConfirm } = await mount(TODO);
++    const confirm = buttonNamed("Delete");
++
++    await act(async () => {
++      confirm.click();
++      confirm.click();
++      confirm.click();
++    });
++
++    expect(onConfirm).toHaveBeenCalledTimes(1);
++  });
++
++  it("reports nothing more once it has been cancelled", async () => {
++    // The two answers are mutually exclusive, and are so through one gate: a
++    // `Delete` that lands after a `Cancel` has already closed the dialog must
++    // not remove the Todo the user just kept.
++    const { onConfirm, onCancel } = await mount(TODO);
++    const confirm = buttonNamed("Delete");
++
++    await act(async () => {
++      buttonNamed("Cancel").click();
++      confirm.click();
++    });
++
++    expect(onCancel).toHaveBeenCalledTimes(1);
++    expect(onConfirm).not.toHaveBeenCalled();
++  });
++});
+diff --git a/src/client/components/delete-dialog.test.ts b/src/client/components/delete-dialog.test.ts
+new file mode 100644
+index 0000000..6d4ecd8
+--- /dev/null
++++ b/src/client/components/delete-dialog.test.ts
+@@ -0,0 +1,496 @@
++import { readFileSync, rmSync } from "node:fs";
++import path from "node:path";
++import ts from "typescript";
++import { afterAll, describe, expect, it } from "vitest";
++
++import { COLLAPSE_MS } from "@/client/motion/motion";
++import {
++  classNamesOf,
++  dynamicClassNames,
++  matches,
++  matchesWithElement,
++  parseTsx,
++  readMarkup,
++  styleSheetMatches,
++} from "@/test-support/markup";
++import { ruleFor, tailwindCompiler } from "@/test-support/tailwind";
++
++// Story 5.2's claims about what is *drawn* and what is *declared*: the dialog's
++// recipe, the delete control's two presentations, and the three whole-tree
++// walls AC12 and AC13 name.
++//
++// The behaviour is `delete-dialog.render.test.tsx`'s and
++// `todo-row.render.test.tsx`'s. What is here is either the shape of a file or
++// the content of a CSS rule, so most of it compiles the real `app/globals.css`
++// through the real Tailwind engine and reads the emitted rule back — a test
++// that only checked class strings would pass on `dialog-delete` whether or not
++// Tailwind understood it, because an unrecognised utility is dropped silently
++// rather than reported.
++//
++// What no test here can reach — that the scrim actually dims the list, that the
++// panel actually slides, that 44px is actually tappable — is Epic 6's, which
++// drives real browsers.
++
++const repositoryRoot = process.cwd();
++
++const dialogFile = path.join("src", "client", "components", "delete-dialog.tsx");
++const rowFile = path.join("src", "client", "components", "todo-row.tsx");
++const stickyFile = path.join(
++  "src",
++  "client",
++  "components",
++  "sticky-top-block.tsx",
++);
++const layoutFile = path.join("app", "layout.tsx");
++
++const dialogSource = readFileSync(
++  path.join(repositoryRoot, dialogFile),
++  "utf8",
++);
++const dialogSourceFile = parseTsx("delete-dialog.tsx", dialogSource);
++const dialogClasses = classNamesOf(dialogSource, "delete-dialog.tsx");
++const rowClasses = classNamesOf(
++  readFileSync(path.join(repositoryRoot, rowFile), "utf8"),
++  "todo-row.tsx",
++);
++
++const markup = readMarkup();
++const productClasses = markup.flatMap(({ classes }) => classes);
++
++/** Comments stripped, so the stylesheet may explain itself in prose. */
++const globalsCss = readFileSync(
++  path.join(repositoryRoot, "app", "globals.css"),
++  "utf8",
++).replace(/\/\*[\s\S]*?\*\//g, "");
++
++const { base, compile } = tailwindCompiler();
++afterAll(() => rmSync(base, { recursive: true, force: true }));
++
++// One compilation, shared — every assertion below wants the same stylesheet
++// built from the same class list.
++const compiled = compile(productClasses);
++
++/** One `@utility` block from the source, read brace-balanced. */
++function recipe(name: string): string {
++  const opening = globalsCss.indexOf(`@utility ${name} {`);
++  expect(opening, `expected @utility ${name} to be declared`).toBeGreaterThan(
++    -1,
++  );
++
++  let depth = 0;
++  let end = globalsCss.indexOf("{", opening);
++  for (; end < globalsCss.length; end += 1) {
++    if (globalsCss[end] === "{") depth += 1;
++    else if (globalsCss[end] === "}") {
++      depth -= 1;
++      if (depth === 0) break;
++    }
++  }
++  expect(depth, `unbalanced braces in @utility ${name}`).toBe(0);
++
++  return globalsCss.slice(opening, end + 1);
++}
++
++/** Every JSX element in the dialog, in document order. */
++function elements(): string[] {
++  const found: string[] = [];
++  function visit(node: ts.Node) {
++    if (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) {
++      found.push(node.tagName.getText(dialogSourceFile));
++    }
++    ts.forEachChild(node, visit);
++  }
++  visit(dialogSourceFile);
++  return found;
++}
++
++/** The text of the JSX element carrying `name`, e.g. the autofocused button. */
++function elementCarrying(name: string): string {
++  let found: string | undefined;
++  function visit(node: ts.Node) {
++    if (
++      ts.isJsxElement(node) &&
++      node.openingElement.attributes.properties.some(
++        (attribute) =>
++          ts.isJsxAttribute(attribute) &&
++          attribute.name.getText(dialogSourceFile) === name,
++      )
++    ) {
++      found ??= node.children
++        .filter((child) => ts.isJsxText(child))
++        .map((child) => child.getText(dialogSourceFile).trim())
++        .join("");
++    }
++    ts.forEachChild(node, visit);
++  }
++  visit(dialogSourceFile);
++  expect(found, `no JSX element carries ${name}`).toBeDefined();
++  return found ?? "";
++}
++
++/** `element:attribute` for every JSX attribute in the dialog. */
++function attributes(): string[] {
++  const found: string[] = [];
++  function visit(node: ts.Node) {
++    if (ts.isJsxAttribute(node)) {
++      const opening = node.parent.parent;
++      const element =
++        ts.isJsxOpeningElement(opening) || ts.isJsxSelfClosingElement(opening)
++          ? opening.tagName.getText(dialogSourceFile)
++          : "(unknown)";
++      found.push(`${element}:${node.name.getText(dialogSourceFile)}`);
++    }
++    ts.forEachChild(node, visit);
++  }
++  visit(dialogSourceFile);
++  return found;
++}
++
++// --- The dialog is a native <dialog>, and that is load-bearing --------------
++
++describe("the dialog is the platform's, not a hand-built modal", () => {
++  it("renders a <dialog> with a title and exactly two buttons", () => {
++    expect(elements()).toEqual(["dialog", "h2", "div", "button", "button"]);
++  });
++
++  it("opens it modally, and never non-modally", () => {
++    // `show()` opens a non-modal dialog: no top layer, no focus trap, no
++    // scrim. The two calls are one character apart and the markup is identical
++    // either way, which is why the *source* is scanned as well as the mounted
++    // behaviour in the render test.
++    expect(dialogSource).toMatch(/\.showModal\(\)/);
++    expect(dialogSource).not.toMatch(/\.show\(\)/);
++  });
++
++  it("hand-sets neither the modality nor the role", () => {
++    // Both come from `showModal()`. Setting `aria-modal` by hand is the
++    // classic way to claim a trap that does not exist.
++    const names = attributes();
++    expect(names).not.toContain("dialog:aria-modal");
++    expect(names).not.toContain("dialog:role");
++    expect(names).toContain("dialog:aria-labelledby");
++  });
++
++  it("traps focus with nothing of its own", () => {
++    // No key handler, no focus-cycling, no `inert` on the rest of the tree.
++    // "Tab cycles within the dialog only" (EXPERIENCE.md:202) is the platform's
++    // to keep, and a hand-written trap beside it would be a second one to keep
++    // correct.
++    expect(dialogSource).not.toMatch(/onKeyDown|onKeyUp|\binert\b/);
++    expect(attributes().filter((name) => name.endsWith(":tabIndex"))).toEqual(
++      [],
++    );
++  });
++
++  it("puts autoFocus on Cancel and on nothing else (AC9)", () => {
++    // "Initial focus lands on Cancel, not Delete" (DESIGN.md:430). Read out of
++    // the AST because React applies `autoFocus` imperatively and renders no
++    // attribute, so the mounted DOM cannot be asked which button carries it.
++    expect(elementCarrying("autoFocus")).toBe("Cancel");
++    expect(attributes().filter((name) => name.endsWith(":autoFocus"))).toEqual([
++      "button:autoFocus",
++    ]);
++  });
++
++  it("writes the three strings verbatim, and never the banned word", () => {
++    // EXPERIENCE.md:80 — `Delete this Todo?` with `Cancel` and `Delete`. Read
++    // as JSX text so an attribute cannot stand in for a visible string.
++    const text: string[] = [];
++    function visit(node: ts.Node) {
++      if (ts.isJsxText(node) && node.getText(dialogSourceFile).trim() !== "") {
++        text.push(node.getText(dialogSourceFile).trim());
++      }
++      ts.forEachChild(node, visit);
++    }
++    visit(dialogSourceFile);
++
++    expect(text).toEqual(["Delete this Todo?", "Cancel", "Delete"]);
++    expect(dialogSource).not.toMatch(/\bDone\b/);
++    // "No third button, no checkbox, no 'don't ask again'" (DESIGN.md:430).
++    expect(dialogSource).not.toMatch(/don't ask|checkbox|<input/i);
++  });
++});
++
++// --- DESIGN.md `components.dialog-delete` -----------------------------------
++
++describe("the dialog is DESIGN.md's dialog-delete recipe", () => {
++  it("carries every class the recipe names, and each resolves to a token", async () => {
++    const css = await compiled;
++
++    expect(dialogClasses).toContain("dialog-delete");
++    expect(ruleFor(css, "bg-card")).toContain("var(--color-card)");
++    expect(ruleFor(css, "rounded-lg")).toContain("var(--radius-lg)");
++    expect(ruleFor(css, "shadow-card")).toContain("--tw-shadow:");
++    expect(ruleFor(css, "p-7")).toContain("var(--spacing-7)");
++    // The title's role and colour, and the buttons' label role.
++    expect(ruleFor(css, "text-dialog-title")).toContain("font-size: 16px");
++    expect(ruleFor(css, "text-button-label")).toContain("font-weight: 600");
++  });
++
++  it("paints the scrim DESIGN.md's value, on ::backdrop", async () => {
++    // `components.dialog-delete.scrim` — a literal with no token name of its
++    // own, like the filter tabs' two shadows, and `app/globals.css` is the one
++    // file AD-13 allows a literal in. On `::backdrop`, which no class can
++    // reach and which no element in the markup has to stand in for.
++    const block = recipe("dialog-delete");
++    expect(block).toMatch(/&::backdrop\s*\{/);
++    expect(block).toContain("rgba(36, 36, 58, 0.32)");
++
++    const css = await compiled;
++    expect(css.replace(/\s+/g, " ")).toContain(
++      "::backdrop { background-color: rgba(36, 36, 58, 0.32)",
++    );
++  });
++
++  it("gives both buttons a 44px floor and a pill radius", async () => {
++    const css = await compiled;
++
++    // The height half is a class; the width half cannot be, because `min-w-*`
++    // is banned tree-wide as something that can outgrow the card.
++    expect(dialogClasses.filter((name) => name === "min-h-touch-target-min"))
++      .toHaveLength(2);
++    expect(dialogClasses.filter((name) => name === "rounded-full")).toHaveLength(
++      2,
++    );
++    expect(dialogClasses.filter((name) => name === "dialog-button")).toHaveLength(
++      2,
++    );
++    expect(ruleFor(css, "dialog-button")).toContain(
++      "min-width: var(--spacing-touch-target-min)",
++    );
++    // `cancel-border` and `confirm-border` are both `1.5px solid`.
++    expect(ruleFor(css, "dialog-button")).toContain("border-width: 1.5px");
++  });
++
++  it("makes Cancel the outlined one and Delete the filled one", () => {
++    // DESIGN.md:430 — Cancel transparent with a `{colors.border-control}` edge
++    // and a `{colors.text-muted}` label; Delete solid `{colors.danger-fill}`
++    // with an `{colors.on-danger-fill}` label. The asymmetry is the whole
++    // point: only one of the two cannot be taken back.
++    expect(dialogClasses).toContain("border-border-control");
++    expect(dialogClasses).toContain("text-text-muted");
++    expect(dialogClasses).toContain("bg-danger-fill");
++    expect(dialogClasses).toContain("border-danger-fill");
++    expect(dialogClasses).toContain("text-on-danger-fill");
++    // And Cancel is drawn with no fill of its own at all.
++    expect(dialogClasses.filter((name) => name.startsWith("bg-"))).toEqual([
++      "bg-card",
++      "bg-danger-fill",
++    ]);
++  });
++});
++
++// --- AC12: the three whole-tree walls ---------------------------------------
++
++describe("the whole markup surface, after this story (AC12)", () => {
++  it("fills exactly one element with the danger ramp", () => {
++    // "The only filled button in the product, because it is the only
++    // interaction that cannot be taken back" (DESIGN.md:430). The swipe panel
++    // wears the same fill and is *not* here: it is painted by `@utility
++    // delete-panel`, on a control that merely opens this dialog. Pinned to the
++    // element and not just the file, so the fill cannot migrate onto Cancel.
++    expect(matchesWithElement(markup, /^bg-danger-fill$/)).toEqual([
++      `${dialogFile}:button:bg-danger-fill`,
++    ]);
++  });
++
++  it("still computes no className anywhere but the font variable", () => {
++    // The swipe, the reveal and the dialog's open state are all attributes and
++    // recipes. A `className={cn(…)}` would contribute nothing to any scan in
++    // this repository and would contribute it silently.
++    expect(dynamicClassNames(markup)).toEqual([
++      `${layoutFile}:{poppins.variable}`,
++    ]);
++  });
++
++  it("still declares stickiness exactly once, and pins nothing else", () => {
++    // The reason the dialog is a `<dialog>`: a hand-built modal needs
++    // `position: fixed` for its scrim, and a fixed or sticky element here is
++    // one that can cover the sticky top block.
++    expect(matches(markup, /^(sticky|fixed)$/)).toEqual([
++      `${stickyFile}:sticky`,
++    ]);
++  });
++
++  it("adds no motion utility, so no duration arrives through a class", () => {
++    // The reveal's duration is `COLLAPSE_MS`, spelled once in the stylesheet
++    // and asserted against the module below. A `duration-200` here would be a
++    // timing Tailwind chose rather than one EXPERIENCE.md did.
++    expect(
++      matches(markup, /^(duration-|delay-|animate-|transition($|-))/),
++    ).toEqual([]);
++  });
++
++  it("uses no hex literal and no arbitrary-value class in either new file", () => {
++    // AD-13, at the two files this story adds to the markup surface.
++    for (const file of [dialogFile, rowFile]) {
++      const source = markup.find((entry) => entry.file === file)?.source ?? "";
++      expect(source, file).not.toBe("");
++      expect(source, file).not.toMatch(
++        /#[0-9A-Fa-f]{3}(?:[0-9A-Fa-f]{3})?\b/,
++      );
++      expect(source, file).not.toMatch(/\b[a-z-]+-\[[^\]]+\]/);
++    }
++  });
++});
++
++// --- AC13: the stylesheet, after this story ---------------------------------
++
++describe("app/globals.css, after this story (AC13)", () => {
++  it("still declares no sticky or fixed position", () => {
++    // `showModal()` puts the dialog in the top layer, so the scrim needs no
++    // `position: fixed` of its own — which is the wall this story was most
++    // likely to have to widen and did not.
++    expect(globalsCss).not.toMatch(/position\s*:\s*(sticky|fixed)/);
++    expect(styleSheetMatches(/position\s*:\s*(sticky|fixed)/)).toEqual([]);
++  });
++
++  it("adds no fade, mask or gradient to the new recipes either", () => {
++    expect(
++      styleSheetMatches(/\b(mask[a-z-]*|text-overflow|[a-z-]*-gradient)\s*:/),
++    ).toEqual([]);
++  });
++
++  it("names the new recipes so none can be counted as a typography role", () => {
++    // `app/globals.test.ts` counts `@utility text-*` as the ten typography
++    // roles, so a recipe called `text-anything` would fail that count.
++    for (const name of [
++      "delete-hit-area",
++      "delete-panel",
++      "delete-action",
++      "row-swipe",
++      "dialog-button",
++      "dialog-delete",
++    ]) {
++      expect(globalsCss).toContain(`@utility ${name} {`);
++      expect(name.startsWith("text-")).toBe(false);
++    }
++  });
++});
++
++// --- DESIGN.md `components.delete-action` -----------------------------------
++
++describe("the delete control is DESIGN.md's delete-action recipe", () => {
++  it("draws the muted trailing icon that takes the danger hue on hover", async () => {
++    const css = await compiled;
++
++    // `icon: {colors.text-muted}`, `icon-hover: {colors.danger-text}`, and
++    // `radius: {rounded.md}` — all tokens, and all classes on the element.
++    expect(rowClasses).toContain("text-text-muted");
++    expect(rowClasses).toContain("hover:text-danger-text");
++    expect(ruleFor(css, "hover:text-danger-text")).toContain(
++      "var(--color-danger-text)",
++    );
++    expect(rowClasses).toContain("rounded-md");
++  });
++
++  it("takes both focus rings, stepped down on a Completed row", async () => {
++    const css = await compiled;
++
++    // `focus-ring` and `focus-ring-on-complete`. "A Todo can be deleted in
++    // either Completion Status, so this control is reachable on mint and its
++    // ring has to clear 3:1 there" (DESIGN.md:446) — `accent` on mint is
++    // 2.97:1 and fails WCAG 1.4.11.
++    expect(rowClasses).toContain("focus-visible:shadow-focus");
++    expect(rowClasses).toContain(
++      "group-data-completed:focus-visible:shadow-focus-on-complete",
++    );
++    expect(
++      ruleFor(css, "group-data-completed:focus-visible:shadow-focus-on-complete"),
++    ).toContain("var(--color-accent-deep)");
++  });
++
++  it("reserves 44px of reach without resizing the drawn mark", async () => {
++    const css = await compiled;
++
++    // The same shape as `checkbox-hit-area`: a centred transparent overlay, so
++    // the reach contributes nothing to layout and the Todo's text does not
++    // move. `hit-area: {spacing.touch-target-min}` (DESIGN.md:446).
++    const hitArea = ruleFor(css, "delete-hit-area");
++    expect(hitArea).toContain("position: relative");
++    expect(hitArea).toContain("var(--spacing-touch-target-min)");
++    expect(recipe("delete-hit-area")).toMatch(/&::after\s*\{/);
++    // And the drawn panel stays the mockup's 34px, which is what leaves the
++    // 5px of slack `--shadow-focus` needs inside the clip window.
++    expect(ruleFor(css, "delete-panel")).toContain("width: 34px");
++  });
++
++  it("wears the filled treatment only while the row is revealed", async () => {
++    const css = await compiled;
++    const panel = ruleFor(css, "delete-panel");
++
++    // `revealed-background: {colors.danger-fill}`, `revealed-icon:
++    // {colors.on-danger-fill}` — the filled treatment, matching the dialog's
++    // confirm button "so the two surfaces on the delete path read as one
++    // escalation" (DESIGN.md:446). Gated on the row's own attribute, so
++    // nothing chooses it in JavaScript.
++    expect(panel).toContain('[data-revealed="true"]');
++    expect(panel).toContain("var(--color-danger-fill)");
++    expect(panel).toContain("var(--color-on-danger-fill)");
++  });
++
++  it("gates the hover reveal on capability, and the focus reveal on nothing", async () => {
++    const css = (await compiled).replace(/\s+/g, " ");
++    const block = recipe("delete-action").replace(/\s+/g, " ");
++
++    // "Touch and pointer are detected by capability, not by width"
++    // (EXPERIENCE.md:245) — a media *feature*, which Tailwind has no variant
++    // for, which is why this is a recipe rather than a `hover:` class.
++    expect(block).toContain("@media (pointer: fine)");
++    expect(block).toContain(".group:hover &");
++    expect(block).not.toMatch(/min-width|max-width/);
++
++    // And the focus reveal is outside that query. This is the assertion that
++    // matters most in this file: the keyboard route "is mandatory and is not a
++    // fallback: it is the WCAG 2.2 AA floor, and a pointer-hover-only or
++    // gesture-only affordance would fail it" (EXPERIENCE.md:168). A
++    // `:focus-visible` rule nested inside `(pointer: fine)` would take the
++    // control away on exactly the devices with no other route to it.
++    expect(block).toMatch(/\} &:focus-visible \{/);
++
++    // The compiled sheet is where that is actually decided, so it is checked
++    // there too rather than only in the source: the emitted rule is nested,
++    // and the focus branch survives with the whole media block cut out of it.
++    const rule = ruleFor(css, "delete-action");
++    expect(rule).toContain("@media (pointer: fine)");
++    const withoutQuery = rule.replace(
++      /@media \(pointer: fine\) \{[^{}]*\{[^{}]*\} \}/,
++      "",
++    );
++    expect(withoutQuery).not.toContain("@media");
++    expect(withoutQuery).toContain("&:focus-visible { transform: none; }");
++  });
++
++  it("travels for exactly the departure's collapse, and no second duration", async () => {
++    const css = (await compiled).replace(/\s+/g, " ");
++
++    // "The same collapse runs on a confirmed delete, without the 400ms hold"
++    // (EXPERIENCE.md:161) — the reveal and the removal are one gesture's two
++    // halves and read as one speed, which is why `motion.ts` gained no
++    // constant for this. CSS cannot read a TypeScript constant, so the number
++    // is spelled twice and asserted equal here.
++    expect(css).toContain(`transition: transform ${COLLAPSE_MS}ms ease-out`);
++    expect(css).not.toContain(`transition: transform ${COLLAPSE_MS + 1}ms`);
++    // And it stops moving under reduced motion, from the one marker the motion
++    // module sets on the list region.
++    expect(recipe("row-swipe")).toContain('[data-still="true"]');
++  });
++
++  it("clips the travel on the wrapper, and on nothing above it", async () => {
++    const css = await compiled;
++    const wrapper = ruleFor(css, "row-swipe");
++
++    expect(wrapper).toContain("overflow: hidden");
++    // The wrapper is 44px, the panel 34px — the clip window is the reach, and
++    // the panel travels the window's full width so none of it shows at rest.
++    expect(wrapper).toContain("var(--spacing-touch-target-min)");
++    expect(ruleFor(css, "delete-action")).toContain(
++      "translateX(var(--spacing-touch-target-min))",
++    );
++    // The row itself must not clip: a row with `overflow` would cut off its
++    // own focus rings, and `todo-card.test.ts` holds the tree-wide rule.
++    expect(rowClasses.filter((name) => name.startsWith("overflow-"))).toEqual(
++      [],
++    );
++  });
++});
+diff --git a/src/client/components/delete-dialog.tsx b/src/client/components/delete-dialog.tsx
+new file mode 100644
+index 0000000..5a4c9ec
+--- /dev/null
++++ b/src/client/components/delete-dialog.tsx
+@@ -0,0 +1,179 @@
++// The one confirmation on the delete path (epics.md Story 5.2; DESIGN.md:430,
++// `components.dialog-delete`; EXPERIENCE.md:111, 202; mockups/key-delete.html
++// step C).
++//
++// One dialog for the whole Todo List, not one per row — `todo-list.tsx` holds
++// it and the Todo it is asking about. All three routes to delete (swipe, hover
++// icon, keyboard) open this same element, which is what "one dialog, one level
++// deep, nothing stacks on top of it" means in code rather than in prose.
++//
++// --- Why a native `<dialog>` and not a hand-built modal -----------------------
++//
++// A hand-built modal needs `position: fixed` for its scrim, and
++// `todo-card.test.ts` bans `fixed` from both the markup and `app/globals.css` —
++// walls that exist so nothing can clip or cover the sticky top block.
++// `showModal()` puts this element in the *top layer*, positioned by the UA
++// stylesheet, so neither wall is touched and the dialog cannot be clipped by
++// any ancestor however this card is later laid out.
++//
++// It also brings four behaviours from the platform rather than from
++// hand-written code that would have to be kept correct: the focus trap
++// (EXPERIENCE.md:202 "Tab cycles within the dialog only"), Escape closing it
++// exactly as Cancel does, focus returning to the control that opened it, and
++// `aria-modal` on the element without anyone setting it. This is the same trade
++// `todo-row.tsx` took when it chose `<button>` to get Enter and Space "from the
++// platform through one `onClick`".
++//
++// The cost is that jsdom 30 implements none of it — `showModal`, `show` and
++// `close` are all `undefined` there — so `src/test-support/dialog.ts` shims the
++// element for the render test. Be honest about what that buys: the tests prove
++// *this file's* logic, that `showModal()` is called rather than `show()`, that
++// `autoFocus` is on Cancel, that the `cancel` event and the Cancel button take
++// the identical path, and that `Delete` fires `onConfirm` once. The trap and
++// the focus restore are the platform's and are asserted as markup facts — the
++// element is a real `<dialog>` and nothing here hand-sets `aria-modal` — not
++// simulated.
++//
++// --- Why it closes itself ----------------------------------------------------
++//
++// Both buttons close the element and *then* report. Closing on the way out of
++// the props — waiting for `todo` to arrive as `null` — would make the dialog's
++// own behaviour depend on what its parent does with the callback, which is
++// exactly the coupling that makes a component only testable through its
++// consumer. The effect below is idempotent in both directions, so the parent's
++// `null` a commit later is a no-op rather than a second close.
++//
++// This component is deliberately not the place where anything is deleted.
++// `onConfirm` is the seam; Story 5.3 is its consumer, and until then choosing
++// `Delete` closes the dialog and changes no Todo.
++
++import { useEffect, useRef } from "react";
++
++import type { Todo } from "@/shared/contract/todo";
++
++/**
++ * The title's id, module-scoped because there is exactly one of these.
++ *
++ * `aria-labelledby` pointing at the heading rather than an `aria-label`
++ * repeating it: the name a screen reader announces is then the same string the
++ * eye reads, and cannot drift from it. Prefixed and starting with a letter, so
++ * it is a valid CSS identifier — the same care `todo-row.tsx` takes with a
++ * UUIDv7 that usually starts with a digit.
++ */
++const TITLE_ID = "delete-dialog-title";
++
++export function DeleteDialog({
++  todo,
++  onConfirm,
++  onCancel,
++}: {
++  /** The Todo being asked about, or `null` when the dialog is closed. */
++  todo: Todo | null;
++  /** `Delete` was chosen. Fires once, with the Todo the dialog was asking about. */
++  onConfirm: (todo: Todo) => void;
++  /** `Cancel`, or Escape. The Todo List is untouched. */
++  onCancel: () => void;
++}) {
++  const element = useRef<HTMLDialogElement>(null);
++
++  useEffect(() => {
++    const dialog = element.current;
++    if (!dialog) return;
++
++    // `showModal()` and never `show()`. `show()` opens a non-modal dialog: no
++    // top layer, no focus trap, no `::backdrop` scrim, and the list behind
++    // still operable — every one of the four guarantees above, gone, with the
++    // element looking identical in the markup.
++    //
++    // Both branches are guarded on `open`, so this effect is idempotent:
++    // `showModal()` on an already-open dialog throws `InvalidStateError`, and
++    // `close()` on a closed one would fire a second `close` event.
++    if (todo !== null) {
++      if (!dialog.open) dialog.showModal();
++    } else if (dialog.open) {
++      dialog.close();
++    }
++  }, [todo]);
++
++  /**
++   * Close first, then report — see the note at the top of the file.
++   *
++   * Both answers run through this, and both are refused once the dialog is
++   * already closed. That is what makes "fires exactly once" a property of the
++   * component rather than of how fast its consumer re-renders: a double-tap on
++   * `Delete`, or an Escape landing in the same frame as a click, arrives on a
++   * dialog that is no longer open and reports nothing a second time. The
++   * platform's `cancel` fires *before* the close, so Escape still gets through
++   * the guard on its one legitimate pass.
++   */
++  function answer(report: () => void) {
++    const dialog = element.current;
++    if (!dialog?.open) return;
++
++    dialog.close();
++    report();
++  }
++
++  const dismiss = () => answer(onCancel);
++
++  const confirm = () =>
++    answer(() => {
++      // `todo` cannot be `null` while this button is on screen, because the
++      // buttons render only when it is not. The guard is the compiler's, and
++      // costs one branch rather than a non-null assertion that would be wrong
++      // the day the contents stop being conditional.
++      if (todo !== null) onConfirm(todo);
++    });
++
++  return (
++    <dialog
++      ref={element}
++      aria-labelledby={TITLE_ID}
++      // Escape. The platform fires `cancel` and would then close the dialog
++      // itself; routing it through `dismiss` is what makes Escape and the
++      // Cancel button one path rather than two that have to agree
++      // (EXPERIENCE.md:202 — "Escape closes it as Cancel does"). The second
++      // `close()` inside `dismiss` is a no-op on an element already closing.
++      onCancel={dismiss}
++      className="dialog-delete rounded-lg bg-card p-7 shadow-card"
++    >
++      {todo === null ? null : (
++        // Rendered only while open, so the title and both buttons are absent
++        // from the accessibility tree and from the tab order the rest of the
++        // time — a closed `<dialog>` is `display: none`, but its contents are
++        // still in the DOM for any scan that reads it, and `autoFocus` below
++        // only means "when this mounts" if this mounts when the dialog opens.
++        <>
++          <h2 id={TITLE_ID} className="text-dialog-title text-text-primary">
++            Delete this Todo?
++          </h2>
++          <div className="mt-6 flex gap-4">
++            {/*
++              Cancel first, and focused. "Initial focus lands on Cancel, not
++              Delete: the safe default that destructive dialogs conventionally
++              use, and consistent with a product where nothing else is ever
++              lost" (DESIGN.md:430). A keyboard user who opens this and presses
++              Enter without reading it keeps their Todo; reaching Delete is one
++              Tab away and deliberate.
++            */}
++            <button
++              type="button"
++              autoFocus
++              onClick={dismiss}
++              className="dialog-button min-h-touch-target-min flex-1 rounded-full border-border-control text-button-label text-text-muted focus-visible:shadow-focus"
++            >
++              Cancel
++            </button>
++            <button
++              type="button"
++              onClick={confirm}
++              className="dialog-button min-h-touch-target-min flex-1 rounded-full border-danger-fill bg-danger-fill text-button-label text-on-danger-fill focus-visible:shadow-focus"
++            >
++              Delete
++            </button>
++          </div>
++        </>
++      )}
++    </dialog>
++  );
++}
+diff --git a/src/client/components/todo-card.test.ts b/src/client/components/todo-card.test.ts
+index 4c61b01..3be1fe0 100644
+--- a/src/client/components/todo-card.test.ts
++++ b/src/client/components/todo-card.test.ts
+@@ -152,7 +152,7 @@ describe("the page body is the only scrolling element (AC3)", () => {
+     ]);
+   });
+ 
+-  it("declares overflow in the stylesheet only where a row collapses away", () => {
++  it("declares overflow in the stylesheet only where a row collapses and where the swipe panel travels", () => {
+     // Narrowed from a flat ban by Story 4.3, and narrowed rather than dropped.
+     //
+     // The ban above exists because a clipping *ancestor* of the sticky block
+@@ -164,17 +164,29 @@ describe("the page body is the only scrolling element (AC3)", () => {
+     // content has to be cut off as it goes, or it spills over the rows sliding
+     // up underneath.
+     //
+-    // So the rule becomes an allow-list here too, and every `overflow` in the
+-    // stylesheet must still be accounted for by name. The assertion is the
+-    // declaring rule's selector rather than the mere count, because `overflow`
+-    // added to any *other* recipe would keep a count of one honest while
+-    // reintroducing exactly the clipping ancestor this whole describe block is
+-    // about.
++    // Story 5.2 adds the second entry on exactly that argument, which is why
++    // it is written out here rather than relied upon. `row-swipe` is the clip
++    // window the delete panel is uncovered through: it sits *inside* a row,
++    // which is inside the list region, and it is an ancestor of one button and
++    // nothing else. It is as far from being an ancestor of the sticky block as
++    // the departing row is, and for the same structural reason — so the same
++    // argument extends, and no wider. DESIGN.md:446 asks for a panel revealed
++    // behind the row, which means the panel travels and its edge has to leave
++    // something; this is that something.
++    //
++    // So the rule stays an allow-list, and every `overflow` in the stylesheet
++    // must still be accounted for by name. The assertion is the declaring
++    // rules' selectors rather than the mere count, because `overflow` added to
++    // any *other* recipe would keep a count of two honest while reintroducing
++    // exactly the clipping ancestor this whole describe block is about.
+     const declarations = [
+       ...globalsCss.matchAll(/([^{}]*)\{[^{}]*\boverflow(-[xy])?\s*:/g),
+     ].map(([, before]) => before.trim().split("\n").pop()?.trim());
+ 
+-    expect(declarations).toEqual(['&[data-departing="true"]']);
++    expect(declarations).toEqual([
++      '&[data-departing="true"]',
++      "@utility row-swipe",
++    ]);
+   });
+ });
+ 
+diff --git a/src/client/components/todo-list.render.test.tsx b/src/client/components/todo-list.render.test.tsx
+index 303d28c..7206fa1 100644
+--- a/src/client/components/todo-list.render.test.tsx
++++ b/src/client/components/todo-list.render.test.tsx
+@@ -29,12 +29,14 @@ import { renderToString } from "react-dom/server";
+ import { focusManager, QueryClient, QueryClientProvider } from "@tanstack/react-query";
+ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+ 
++import { installDialogShim } from "@/test-support/dialog";
+ import { AnnouncerProvider } from "@/client/feedback/announcer";
+ import { ErrorSlotProvider } from "@/client/feedback/error-slot";
+ import { AppProviders } from "@/client/providers";
+ import { FilterViewProvider } from "@/client/todos/filter-view-context";
+ import { TODOS_QUERY_KEY } from "@/client/todos/query-keys";
+ import type { Todo } from "@/shared/contract/todo";
++import { ADD_INPUT_ID } from "./add-input";
+ import { TodoCard } from "./todo-card";
+ import { TodoList } from "./todo-list";
+ 
+@@ -1456,3 +1458,180 @@ describe("the Filter Views, through the mounted card (Story 4.3)", () => {
+     expect(retryButton()).toBeDefined();
+   });
+ });
++
++// --- Story 5.2: three routes to one dialog, through the mounted card --------
++
++describe("the delete path, through the mounted card (Story 5.2)", () => {
++  // The whole tree, because the claims here are about the seam between a row,
++  // the one dialog the list owns and the control focus lands on afterwards —
++  // none of which any of the three components can be asked about alone.
++  //
++  // jsdom implements no dialog API, so the shim is installed for this block
++  // only; `src/test-support/dialog.ts` is explicit about the line between what
++  // it stands in for and what stays the browser's.
++  let uninstallDialog: () => void;
++
++  beforeEach(() => {
++    uninstallDialog = installDialogShim(window.HTMLDialogElement);
++  });
++
++  afterEach(() => uninstallDialog());
++
++  const LIST: Todo[] = [
++    {
++      id: "0199a6c5-0000-7000-8000-000000000003",
++      text: "pay rent",
++      completed: false,
++      createdAt: "2026-09-25T09:02:00.000Z",
++    },
++    {
++      id: "0199a6c5-0000-7000-8000-000000000002",
++      text: "send invoice",
++      completed: false,
++      createdAt: "2026-09-25T09:01:00.000Z",
++    },
++    {
++      id: "0199a6c5-0000-7000-8000-000000000001",
++      text: "book dentist",
++      completed: true,
++      createdAt: "2026-09-25T09:00:00.000Z",
++    },
++  ];
++
++  const rows = () => [...container.querySelectorAll("li")];
++  const rowTexts = () =>
++    rows().map((row) => row.querySelector("span")?.textContent);
++  const deleteControlIn = (text: string) =>
++    rows()
++      .find((row) => row.textContent?.includes(text))
++      ?.querySelector<HTMLButtonElement>(`[aria-label="Delete ${text}"]`);
++  const checkboxIn = (text: string) =>
++    rows()
++      .find((row) => row.textContent?.includes(text))
++      ?.querySelector<HTMLElement>('[role="checkbox"]');
++  const dialog = () => container.querySelector("dialog") as HTMLDialogElement;
++  const dialogButton = (label: string) =>
++    [...dialog().querySelectorAll("button")].find(
++      (button) => button.textContent?.trim() === label,
++    ) as HTMLButtonElement;
++
++  async function mountList(list: Todo[] = LIST) {
++    stubMotionPreference(false);
++    vi.stubGlobal(
++      "fetch",
++      vi.fn<typeof fetch>(() =>
++        Promise.resolve(Response.json(list, { status: 200 })),
++      ),
++    );
++    await mountCard();
++  }
++
++  it("holds exactly one dialog for the whole list", async () => {
++    // "One dialog, one level deep, nothing stacks on top of it." Three rows,
++    // three delete controls, one `<dialog>` — a modal per row would be three
++    // here and a hundred in a hundred-row list.
++    await mountList();
++
++    expect(rows()).toHaveLength(3);
++    expect(container.querySelectorAll("dialog")).toHaveLength(1);
++    expect(dialog().open).toBe(false);
++  });
++
++  it("opens that one dialog from any row's delete control", async () => {
++    await mountList();
++
++    await act(async () => deleteControlIn("send invoice")?.click());
++    expect(dialog().open).toBe(true);
++    expect(dialog().textContent).toContain("Delete this Todo?");
++
++    // And from a Completed row too — "delete works on a Todo in either
++    // Completion Status" (EXPERIENCE.md:106).
++    await act(async () => dialogButton("Cancel").click());
++    await act(async () => deleteControlIn("book dentist")?.click());
++    expect(dialog().open).toBe(true);
++  });
++
++  it("leaves the Todo List untouched when it is cancelled (AC10)", async () => {
++    await mountList();
++
++    await act(async () => deleteControlIn("send invoice")?.click());
++    await act(async () => dialogButton("Cancel").click());
++
++    expect(dialog().open).toBe(false);
++    // Nothing removed, nothing reordered, nothing toggled. Story 5.2 removes
++    // no row on `Delete` either — but a row removed on *Cancel* would be the
++    // failure that no later story could make right.
++    expect(rowTexts()).toEqual(["pay rent", "send invoice", "book dentist"]);
++  });
++
++  it("removes nothing on Delete either — 5.2 stops at the seam", async () => {
++    // The seam this story ends on, asserted rather than left implied: the
++    // dialog closes and the list is unchanged, because the mutation that
++    // removes the row is Story 5.3's. A row that vanished here would be an
++    // optimistic delete with no rollback and no request behind it.
++    await mountList();
++
++    await act(async () => deleteControlIn("send invoice")?.click());
++    await act(async () => dialogButton("Delete").click());
++
++    expect(dialog().open).toBe(false);
++    expect(rowTexts()).toEqual(["pay rent", "send invoice", "book dentist"]);
++    expect(container.textContent).not.toContain("Couldn't save that change.");
++  });
++
++  it("places focus on the row that would take the deleted row's place (AC13)", async () => {
++    // `focusTargetAfterDelete` decides *which* control; this is the half that
++    // proves the list actually reaches it. The row is still on screen because
++    // 5.2 removes nothing, which is exactly why the wiring can be exercised
++    // now and Story 5.3 has none of it left to do.
++    await mountList();
++
++    await act(async () => deleteControlIn("send invoice")?.click());
++    await act(async () => dialogButton("Delete").click());
++
++    expect(document.activeElement).toBe(checkboxIn("book dentist"));
++  });
++
++  it("falls back up the list when the last row is the one going", async () => {
++    await mountList();
++
++    await act(async () => deleteControlIn("book dentist")?.click());
++    await act(async () => dialogButton("Delete").click());
++
++    expect(document.activeElement).toBe(checkboxIn("send invoice"));
++  });
++
++  it("falls back to the add input when it was the only row", async () => {
++    // "Or to the input if the list is now empty. Focus is never dropped to the
++    // document body" (EXPERIENCE.md:202).
++    await mountList([LIST[1]]);
++
++    await act(async () => deleteControlIn("send invoice")?.click());
++    await act(async () => dialogButton("Delete").click());
++
++    expect(document.activeElement).toBe(
++      container.querySelector(`#${ADD_INPUT_ID}`),
++    );
++    expect(document.activeElement).not.toBe(document.body);
++  });
++
++  it("puts the delete control last in each row, and the rows in list order", async () => {
++    // The tab order EXPERIENCE.md:194 commits to, seen across the whole card
++    // rather than within one row: input → tabs → per row, checkbox then delete
++    // control. `todo-row.render.test.tsx` owns the within-a-row half.
++    await mountList();
++
++    const order = [
++      ...container.querySelectorAll<HTMLElement>("li button"),
++    ].map((control) => control.getAttribute("aria-label") ?? control.getAttribute("role"));
++
++    expect(order).toEqual([
++      "checkbox",
++      "Delete pay rent",
++      "checkbox",
++      "Delete send invoice",
++      "checkbox",
++      "Delete book dentist",
++    ]);
++  });
++});
+diff --git a/src/client/components/todo-list.test.ts b/src/client/components/todo-list.test.ts
+index 65402e9..e7d6c9e 100644
+--- a/src/client/components/todo-list.test.ts
++++ b/src/client/components/todo-list.test.ts
+@@ -261,17 +261,51 @@ describe("the list region reads the one query hook", () => {
+     );
+     expect(listSource).not.toMatch(/\buseQuery\b/);
+     expect(listSource).not.toMatch(/\bfetch\b/);
+-    expect(listSource).not.toMatch(/\buseState\b/);
++    // Was a flat ban on `useState`. Story 5.2 gives this component the one
++    // piece of state it is allowed — which Todo the confirmation is asking
++    // about — and the rule it was standing in for is narrower than the ban
++    // was: AD-8 keeps *server* state in the one cache entry, and a UI question
++    // is not server state. `use-todos.test.ts` holds that rule directly, by
++    // scanning every source file for a `useState` or `useReducer` that names a
++    // Todo; what this pins is that the only state here is an id, which is the
++    // shape that cannot go stale under a cache write.
++    const stateDeclarations = [
++      ...listSource.matchAll(/useState<([^>]*)>/g),
++    ].map(([, typeArgument]) => typeArgument);
++    expect(stateDeclarations).toEqual(["string | null"]);
++    expect(listSource).not.toMatch(/\buseReducer\b/);
+   });
+ 
+-  it("renders a <ul> of skeletons or rows, and the empty state beside it", () => {
++  it("renders a <ul> of skeletons or rows, the empty state beside it, and one dialog", () => {
+     // Was `["ul", "TodoRow"]`, then `["ul", "SkeletonRow", "TodoRow"]`, then
+     // with Story 2.6's empty state. Story 3.3 reordered the first two rather
+     // than adding anything: rows render *then* skeletons, because an
+     // optimistic row added during a load sits above the placeholders and not
+     // instead of them (AC6). Still no wrapper, which is what keeps the `<ul>`
+     // a direct child of the card.
+-    expect(elements()).toEqual(["ul", "TodoRow", "SkeletonRow", "EmptyState"]);
++    //
++    // Story 5.2 adds the fifth, last and unconditional: one `DeleteDialog` for
++    // the whole list, a sibling of the region because a `<dialog>` is not valid
++    // inside a `<ul>` and because it must outlive any one row. One element, not
++    // one per row — "one dialog, one level deep, nothing stacks on top of it".
++    expect(elements()).toEqual([
++      "ul",
++      "TodoRow",
++      "SkeletonRow",
++      "EmptyState",
++      "DeleteDialog",
++    ]);
++    expect(listSource.match(/<DeleteDialog\b/g)).toHaveLength(1);
++  });
++
++  it("asks before it removes, and removes nothing itself (Story 5.2)", () => {
++    // The seam this story stops at. The row reports a request, the dialog
++    // asks, and `onConfirm` closes it and places focus — no mutation, no cache
++    // write, no announcement. All three arrive with Story 5.3, and their
++    // absence here is what makes 5.2 shippable on its own.
++    expect(listSource).toMatch(/onRequestDelete=/);
++    expect(listSource).toMatch(/focusTargetAfterDelete\(/);
++    expect(listSource).not.toMatch(/useDeleteTodo|setQueryData|\bdeleteTodo\b/);
+   });
+ 
+   it("holds one toggle hook for the whole list and hands it to every row", () => {
+diff --git a/src/client/components/todo-list.tsx b/src/client/components/todo-list.tsx
+index 12faf67..6086326 100644
+--- a/src/client/components/todo-list.tsx
++++ b/src/client/components/todo-list.tsx
+@@ -75,18 +75,21 @@
+ // design value; here it is the value's own job. The `<ul>` needs no list
+ // reset — Tailwind's preflight already strips the marker, margin and padding.
+ 
+-import { useCallback, useEffect } from "react";
++import { useCallback, useEffect, useState } from "react";
+ 
+ import { useReducedMotion } from "@/client/motion/motion";
+ import type { Todo } from "@/shared/contract/todo";
+ import { matchesFilterView } from "@/client/todos/filter-view";
+ import { useFilterView } from "@/client/todos/filter-view-context";
++import { focusTargetAfterDelete } from "@/client/todos/focus-after-delete";
+ import { useSetCompleted } from "@/client/todos/use-set-completed";
+ import { useTodos } from "@/client/todos/use-todos";
+ 
++import { ADD_INPUT_ID } from "./add-input";
++import { DeleteDialog } from "./delete-dialog";
+ import { EmptyState } from "./empty-state";
+ import { SKELETON_ROW_KEYS, SkeletonRow } from "./skeleton-row";
+-import { TodoRow } from "./todo-row";
++import { rowCheckboxId, TodoRow } from "./todo-row";
+ 
+ export function TodoList() {
+   const { isFetching, data, listLanded } = useTodos();
+@@ -137,6 +140,20 @@ export function TodoList() {
+   // component branches on a duration and no `className` here is computed.
+   const still = useReducedMotion();
+ 
++  // Which Todo the confirmation is asking about, and the only state this
++  // component holds. One dialog for the whole list rather than one per row —
++  // "one dialog, one level deep, nothing stacks on top of it" is a property of
++  // where the element lives, not of what it renders, and a `<dialog>` per row
++  // would be a hundred modals in a hundred-row list.
++  //
++  // An **id**, and never the Todo. AD-8 keeps server state in the one cache
++  // entry, and a `Todo` parked in React state is a copy of a row that can go
++  // stale under it: toggle the Todo while the dialog is open and the object
++  // held here still describes the row as it was. The id is the client's own
++  // (AD-4) and never changes, so the row is looked up again on every render and
++  // the dialog is asking about whatever the cache currently holds.
++  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
++
+   // A departing row no longer matches the view — that is what makes it depart
+   // — so it is kept by name until its transition reports that it has finished.
+   // Without this the row would be filtered out in the same commit that marked
+@@ -145,6 +162,38 @@ export function TodoList() {
+     (todo) => matchesFilterView(todo, view) || isDeparting(todo.id),
+   );
+ 
++  // Where focus goes when the dialog closes on `Delete`, and the one thing this
++  // component does that reaches into the document.
++  //
++  // Which control it is belongs to `focusTargetAfterDelete`, which is pure and
++  // is tested against every arrangement the list can be in; what is here is
++  // only turning that answer into an element. The rule it implements spans the
++  // 5.2/5.3 seam — Story 5.2 removes no row, so the "row that took its place"
++  // is still on screen — and placing focus now is what leaves 5.3 with nothing
++  // to wire up when it does remove one.
++  //
++  // Focus is never dropped to the document body (EXPERIENCE.md:202). The two
++  // ids are built by the components that own the elements rather than spelled
++  // here, so a renamed control breaks at the import instead of silently
++  // focusing nothing. Cancel and Escape need none of this: `showModal()`
++  // restores focus to the control that opened the dialog by itself.
++  // The row the dialog is asking about, derived rather than stored — see the
++  // note on the state above. `null` closes the dialog, which also makes the
++  // right thing happen when the row leaves the view underneath it: there is
++  // nothing left to confirm, so the question goes away.
++  const pendingDelete =
++    visible?.find((todo) => todo.id === pendingDeleteId) ?? null;
++
++  const placeFocusAfterDelete = useCallback(
++    (deletedId: string) => {
++      const target = focusTargetAfterDelete(visible ?? [], deletedId);
++      const id = target.kind === "row" ? rowCheckboxId(target.id) : ADD_INPUT_ID;
++
++      document.getElementById(id)?.focus();
++    },
++    [visible],
++  );
++
+   // The rows currently leaving, as ids. Joined into a string so the effect
+   // below has a statically checkable dependency: the array's identity changes
+   // on every render and its contents almost never do.
+@@ -193,6 +242,7 @@ export function TodoList() {
+             departing={isDeparting(todo.id)}
+             onToggle={toggle}
+             onDeparted={endDeparture}
++            onRequestDelete={(pending) => setPendingDeleteId(pending.id)}
+           />
+         ))}
+         {loading
+@@ -216,6 +266,28 @@ export function TodoList() {
+         Todos and no Active one is empty in the Active view and says so.
+       */}
+       {listLanded && visible?.length === 0 ? <EmptyState variant={view} /> : null}
++      {/*
++        One dialog for the whole list, a sibling of the region rather than a
++        child of it — a `<dialog>` is not valid inside a `<ul>`, and it must
++        outlive any one row besides. `showModal()` puts it in the top layer, so
++        where it sits in the markup decides nothing about where it is drawn.
++
++        Rendered unconditionally and closed by its `todo` being `null`, so the
++        element is the same element across every open: the platform's focus
++        restore remembers the control that opened it, and an element remounted
++        per Todo would have nothing to restore to.
++
++        `onConfirm` is the seam this story stops at. It closes the dialog and
++        places focus; Story 5.3 is what makes it also remove the Todo.
++      */}
++      <DeleteDialog
++        todo={pendingDelete}
++        onCancel={() => setPendingDeleteId(null)}
++        onConfirm={(confirmed) => {
++          setPendingDeleteId(null);
++          placeFocusAfterDelete(confirmed.id);
++        }}
++      />
+     </>
+   );
+ }
+diff --git a/src/client/components/todo-row.render.test.tsx b/src/client/components/todo-row.render.test.tsx
+index 5671c90..caaafa0 100644
+--- a/src/client/components/todo-row.render.test.tsx
++++ b/src/client/components/todo-row.render.test.tsx
+@@ -58,6 +58,7 @@ afterEach(async () => {
+ async function mount(todo: Todo, departing = false) {
+   const onToggle = vi.fn();
+   const onDeparted = vi.fn();
++  const onRequestDelete = vi.fn();
+   // A `<ul>` around it, because an `<li>` outside a list is not what the
+   // product renders and React would warn about the nesting.
+   await act(async () => {
+@@ -68,26 +69,59 @@ async function mount(todo: Todo, departing = false) {
+           departing={departing}
+           onToggle={onToggle}
+           onDeparted={onDeparted}
++          onRequestDelete={onRequestDelete}
+         />
+       </ul>,
+     );
+   });
+ 
+-  const checkbox = container.querySelector("button");
+-  expect(checkbox, "the row rendered no control").not.toBeNull();
+-  return { checkbox: checkbox as HTMLButtonElement, onToggle, onDeparted };
++  const [checkbox, remove] = [...container.querySelectorAll("button")];
++  expect(checkbox, "the row rendered no control").not.toBeUndefined();
++  expect(remove, "the row rendered no delete control").not.toBeUndefined();
++  return {
++    checkbox: checkbox as HTMLButtonElement,
++    remove: remove as HTMLButtonElement,
++    onToggle,
++    onDeparted,
++    onRequestDelete,
++  };
++}
++
++/** The `touchmove` a finger travelling `dx` from `origin` produces. */
++function swipe(row: Element, origin: number, dx: number) {
++  // jsdom implements no `TouchEvent` constructor, so each event is a plain
++  // `Event` carrying the one field the handler reads. What is under test is the
++  // arithmetic the row does on a travel, not the browser's touch model — a real
++  // finger on real glass is Epic 6's.
++  const dispatch = (type: string, clientX: number) => {
++    const event = new Event(type, { bubbles: true });
++    Object.defineProperty(event, "touches", { value: [{ clientX }] });
++    row.dispatchEvent(event);
++  };
++
++  dispatch("touchstart", origin);
++  dispatch("touchmove", origin + dx);
++  dispatch("touchend", origin + dx);
+ }
+ 
+ /**
+  * The name a screen reader computes for an element, as far as this row needs.
+  *
+- * `aria-labelledby` wins over content, and it resolves by id within the
+- * document — which is exactly the step a markup scan cannot take, because it
+- * cannot know whether the id it points at exists or which element carries it.
++ * `aria-labelledby` wins over `aria-label`, which wins over content — the first
++ * two steps of the accessible-name computation, in that order. The `labelledby`
++ * step resolves by id within the document, which is exactly what a markup scan
++ * cannot do: it cannot know whether the id it points at exists or which element
++ * carries it. The `aria-label` step arrived with Story 5.2's delete control,
++ * whose name is two parts — a verb and the Todo — and so cannot be borrowed
++ * whole from an element that already renders it.
+  */
+ function accessibleName(element: Element): string {
+   const labelledBy = element.getAttribute("aria-labelledby");
+-  if (labelledBy === null) return element.textContent?.trim() ?? "";
++  if (labelledBy === null) {
++    return (
++      element.getAttribute("aria-label") ?? element.textContent?.trim() ?? ""
++    );
++  }
+   return labelledBy
+     .split(/\s+/)
+     .map((id) => document.getElementById(id)?.textContent?.trim() ?? "")
+@@ -266,18 +300,167 @@ describe("the status classes are on the control that carries the attribute (AC11
+   });
+ });
+ 
+-describe("the tab order within a row (AC14)", () => {
+-  it("puts the checkbox first, with no tabIndex of its own", async () => {
+-    const { checkbox } = await mount(ACTIVE);
++describe("the tab order within a row (AC14; Story 5.2 AC4)", () => {
++  it("puts the checkbox first and the delete control last, with no tabIndex", async () => {
++    const { checkbox, remove } = await mount(ACTIVE);
+ 
+     const focusable = [...container.querySelectorAll("a, button, input, [tabindex]")];
+-    expect(focusable[0]).toBe(checkbox);
++    // EXPERIENCE.md:194 — "per row in list order, checkbox → delete control".
++    expect(focusable).toEqual([checkbox, remove]);
+     // Document order is what gives the row its tab order; an explicit
+     // `tabindex` would be arranging something that is already arranged, and
+-    // would be the first thing to go wrong when Epic 5 adds the delete control
+-    // after it.
++    // was the first thing that would have gone wrong when Story 5.2 added the
++    // delete control after it.
+     expect(checkbox.hasAttribute("tabindex")).toBe(false);
+-    expect(focusable).toHaveLength(1);
++    expect(remove.hasAttribute("tabindex")).toBe(false);
++  });
++
++  it("keeps the delete control focusable whether or not it is revealed", async () => {
++    // The keyboard route "is mandatory and is not a fallback: it is the WCAG
++    // 2.2 AA floor" (EXPERIENCE.md:168). The control is always rendered and
++    // always reachable; whether it is *seen* is `app/globals.css`'s business,
++    // which is why nothing here conditionally renders it.
++    const { remove } = await mount(ACTIVE);
++
++    remove.focus();
++
++    expect(document.activeElement).toBe(remove);
++    expect(remove.hasAttribute("hidden")).toBe(false);
++    expect(remove.hasAttribute("disabled")).toBe(false);
++    expect(remove.getAttribute("tabindex")).toBeNull();
++  });
++});
++
++// --- Story 5.2: the three routes to one dialog ------------------------------
++
++describe("the delete control asks, and never removes (Story 5.2 AC4, AC5, AC6)", () => {
++  it("reports the Todo it belongs to when it is pressed", async () => {
++    const { remove, onRequestDelete, onToggle } = await mount(ACTIVE);
++
++    await act(async () => remove.click());
++
++    // The whole Todo, because the dialog beyond it has to say which row it is
++    // asking about and Story 5.3 has to put that row back if the server
++    // refuses. And nothing was toggled on the way through.
++    expect(onRequestDelete).toHaveBeenCalledExactlyOnceWith(ACTIVE);
++    expect(onToggle).not.toHaveBeenCalled();
++  });
++
++  it("is reachable on a Completed row too, with the deepened focus ring", async () => {
++    // "A Todo can be deleted in either Completion Status, so this control is
++    // reachable on mint and its ring has to clear 3:1 there" (DESIGN.md:446).
++    // Which ring each row gets is `todo-row.test.ts`'s compiled assertion; what
++    // is here is that both classes are on this control and that the marker they
++    // derive from is on the row above it.
++    const { remove } = await mount(COMPLETED);
++    const classes = remove.className.split(/\s+/);
++
++    expect(classes).toContain("focus-visible:shadow-focus");
++    expect(classes).toContain(
++      "group-data-completed:focus-visible:shadow-focus-on-complete",
++    );
++    expect(container.querySelector("li")?.getAttribute("data-completed")).toBe(
++      "true",
++    );
++  });
++
++  it("is named with both the verb and the Todo's own text (AC5)", async () => {
++    // "The delete control is labelled with the Todo it acts on, so the tab
++    // order does not read as a list of identical `Delete` buttons"
++    // (EXPERIENCE.md:217).
++    const { remove } = await mount(ACTIVE);
++
++    expect(accessibleName(remove)).toBe("Delete send invoice");
++    // And the glyph inside it adds nothing to that name.
++    expect(remove.querySelector("svg")?.getAttribute("aria-hidden")).toBe(
++      "true",
++    );
++  });
++
++  it("carries the recipes that draw and reveal it, on the control itself", async () => {
++    // `todo-row.test.ts` compiles these and proves what each one does, but it
++    // reads them out of a flattened list of every class literal in the file —
++    // so moving the reveal onto the wrapper, or the hit area onto the text,
++    // leaves that file green while rendering both inert. Binding them to the
++    // mounted element is the half only a DOM can do.
++    const { remove } = await mount(ACTIVE);
++    const classes = remove.className.split(/\s+/);
++
++    for (const name of ["delete-action", "delete-hit-area", "delete-panel"]) {
++      expect(classes, `${name} is not on the control`).toContain(name);
++    }
++    // And the clip window is its parent, which is what the travel is measured
++    // against and what keeps the panel out of the Todo's text at rest.
++    expect(remove.parentElement?.className.split(/\s+/)).toContain("row-swipe");
++  });
++});
++
++describe("the swipe latches the panel open (Story 5.2 AC6)", () => {
++  it("marks the row revealed after a leftward travel past the threshold", async () => {
++    const { onRequestDelete } = await mount(ACTIVE);
++    const row = container.querySelector("li") as HTMLElement;
++
++    await act(async () => swipe(row, 300, -80));
++
++    expect(row.getAttribute("data-revealed")).toBe("true");
++    // The swipe itself never deletes: it reveals, and the revealed panel is
++    // what opens the dialog (mockups/key-delete.html step B).
++    expect(onRequestDelete).not.toHaveBeenCalled();
++  });
++
++  it("leaves the row alone for a short travel, or one going the other way", async () => {
++    const { onRequestDelete } = await mount(ACTIVE);
++    const row = container.querySelector("li") as HTMLElement;
++
++    await act(async () => swipe(row, 300, -4));
++    expect(row.getAttribute("data-revealed")).toBeNull();
++
++    // Rightward is the closing direction, so it cannot open the panel however
++    // far it goes — a scroll that drifts sideways must not arm a destructive
++    // control.
++    await act(async () => swipe(row, 300, 200));
++    expect(row.getAttribute("data-revealed")).toBeNull();
++    expect(onRequestDelete).not.toHaveBeenCalled();
++  });
++
++  it("closes again when the same gesture is reversed", async () => {
++    // What makes an accidental reveal recoverable without a second control:
++    // the same threshold, travelled the other way.
++    await mount(ACTIVE);
++    const row = container.querySelector("li") as HTMLElement;
++
++    await act(async () => swipe(row, 300, -80));
++    expect(row.getAttribute("data-revealed")).toBe("true");
++
++    await act(async () => swipe(row, 300, 80));
++    expect(row.getAttribute("data-revealed")).toBeNull();
++  });
++
++  it("opens the dialog when the revealed panel is tapped", async () => {
++    // The panel is the control — the same button the pointer hover reveals and
++    // the keyboard reaches — so a tap on it takes the one route all three
++    // presentations share.
++    const { remove, onRequestDelete } = await mount(ACTIVE);
++    const row = container.querySelector("li") as HTMLElement;
++
++    await act(async () => swipe(row, 300, -80));
++    await act(async () => remove.click());
++
++    expect(onRequestDelete).toHaveBeenCalledExactlyOnceWith(ACTIVE);
++    // And it is still the row's own attribute that says so — the panel is
++    // revealed by the stylesheet, never by a second element being rendered.
++    expect(row.getAttribute("data-revealed")).toBe("true");
++  });
++
++  it("carries the marker only while the panel is latched open", async () => {
++    // Absent rather than `false`, so the stylesheet keys on presence — the
++    // `data-completed` and `data-departing` idiom.
++    await mount(ACTIVE);
++    const row = container.querySelector("li") as HTMLElement;
++
++    expect(row.getAttribute("data-revealed")).toBeNull();
++    await act(async () => swipe(row, 300, -80));
++    expect(row.getAttribute("data-revealed")).toBe("true");
+   });
+ });
+ 
+diff --git a/src/client/components/todo-row.test.ts b/src/client/components/todo-row.test.ts
+index f8f52b3..fe895cb 100644
+--- a/src/client/components/todo-row.test.ts
++++ b/src/client/components/todo-row.test.ts
+@@ -88,12 +88,31 @@ function ruleIndex(css: string, pattern: RegExp): number {
+ }
+ 
+ describe("the row is a list item holding a checkbox and the Todo's text", () => {
+-  it("renders the checkbox before the text, inside one <li>", () => {
+-    // Was `["li", "span", "svg", "path", "span"]`. Story 4.2 turns the
++  it("renders the checkbox, then the text, then the delete control, in one <li>", () => {
++    // Was `["li", "span", "svg", "path", "span"]`. Story 4.2 turned the
+     // decorative glyph into the control that toggles, so the first `span` is a
+     // `button` — and it is still first, which is AC14's tab order falling out
+     // of document order rather than being arranged.
+-    expect(elements()).toEqual(["li", "button", "svg", "path", "span"]);
++    //
++    // Story 5.2 adds the delete control *after both*, which is the other half
++    // of the same claim: EXPERIENCE.md:194 commits the per-row order to
++    // "checkbox → delete control", and document order is still the only thing
++    // arranging it. The wrapper `div` between them is the swipe clip window;
++    // the four paths are the trash glyph of mockups/key-delete.html.
++    expect(elements()).toEqual([
++      "li",
++      "button",
++      "svg",
++      "path",
++      "span",
++      "div",
++      "button",
++      "svg",
++      "path",
++      "path",
++      "path",
++      "path",
++    ]);
+   });
+ 
+   it("renders no copy of its own — the only text is the Todo's", () => {
+@@ -377,10 +396,14 @@ describe("Completion Status is expressed exactly once (AC4)", () => {
+     const statusClasses = rowClasses.filter((name) =>
+       STATUS_UTILITIES.test(name.split(":").at(-1) ?? ""),
+     );
+-    // Ten of them since this story: two on the `<li>`, six on the control and
+-    // two on the text. Exact, not a floor — a class silently dropped from the
+-    // control is precisely what a floor would let through.
+-    expect(statusClasses).toHaveLength(10);
++    // Twelve of them since Story 5.2: two on the `<li>`, six on the checkbox,
++    // two on the text and the delete control's own pair of focus rings — which
++    // is the same `shadow-focus` / `shadow-focus-on-complete` step-down, for
++    // the same measurement, because "a Todo can be deleted in either Completion
++    // Status, so this control is reachable on mint and its ring has to clear
++    // 3:1 there" (DESIGN.md:446). Exact, not a floor — a class silently
++    // dropped from a control is precisely what a floor would let through.
++    expect(statusClasses).toHaveLength(12);
+     for (const name of statusClasses) {
+       const gates = name.split(":").slice(0, -1);
+       expect(gates, `${name} must be gated, not chosen`).not.toEqual([]);
+@@ -434,33 +457,63 @@ describe("a long Todo wraps and the row grows (AC5)", () => {
+   });
+ });
+ 
+-describe("the checkbox is the only control, and the row body is not one (AC6, AC8-AC10, AC14)", () => {
+-  it("carries exactly one handler, on the checkbox, and no tab stop of its own", () => {
+-    // Was "carries no handler, no tab stop and no role" — the row body still
+-    // carries no *pointer* handler and no role (EXPERIENCE.md:105: there is no
+-    // editing, so a row click has nothing to open). What changed is that the
+-    // glyph became the control, so the file holds exactly one click handler and
+-    // exactly one role.
++describe("the row's two controls, and a body that is neither (AC6, AC8-AC10, AC14)", () => {
++  it("carries a handler per control, a gesture, and no tab stop of its own", () => {
++    // Was "carries no handler, no tab stop and no role", then "exactly one
++    // handler". The row body still carries no *pointer* handler and no role
++    // (EXPERIENCE.md:105: there is no editing, so a row click has nothing to
++    // open); what has changed twice is how many controls sit inside it.
+     //
+-    // `onTransitionEnd` is the row's second handler and is not a control: it
+-    // listens for the departure collapse finishing so the row can report that
+-    // it is done leaving (Story 4.3 AC13). Nothing about it makes the body
+-    // interactive — it answers the stylesheet, not the user — and the removal
+-    // has to hang off it because a timer would be a duration this product
+-    // forbids outside the motion module.
++    // `onTransitionEnd` is not a control: it listens for the departure collapse
++    // finishing so the row can report that it is done leaving (Story 4.3 AC13).
++    // The three `onTouch*` handlers are not controls either — they read a
++    // gesture on the row body and their whole output is one attribute, which is
++    // what keeps every `className` here a static literal (AR-28). Neither makes
++    // the body interactive: a tap that is not a swipe still opens nothing.
++    //
++    // The two `onClick`s are the two controls, in document order: the checkbox
++    // and then the delete control.
+     const names = attributeNames();
+     expect(names.filter((name) => /^on[A-Z]/.test(name))).toEqual([
++      "onTouchStart",
++      "onTouchMove",
++      "onTouchEnd",
+       "onTransitionEnd",
+       "onClick",
++      "onClick",
+     ]);
+     expect(names.filter((name) => name === "role")).toEqual(["role"]);
+     // `tabIndex` is absent on purpose (AC14): a `<button>` is focusable
+     // already, and any explicit value here would be arranging a tab order that
+-    // document order gives for free.
++    // document order gives for free — including the delete control's place at
++    // the end of it.
+     expect(names).not.toContain("tabIndex");
+     expect(names).not.toContain("href");
+   });
+ 
++  it("names the delete control with the Todo it acts on (Story 5.2 AC5)", () => {
++    // "The delete control is labelled with the Todo it acts on, so the tab
++    // order does not read as a list of identical `Delete` buttons"
++    // (EXPERIENCE.md:217). Both halves of the name are asserted: the verb,
++    // which is copy this row does carry, and the Todo's own text interpolated
++    // rather than retyped.
++    expect(rowSource).toMatch(/aria-label=\{`Delete \$\{todo\.text\}`\}/);
++    expect(attributeNames()).toContain("aria-label");
++  });
++
++  it("opens a dialog rather than deleting anything (Story 5.2)", () => {
++    // The row requests; it does not remove. "Releasing here opens the
++    // confirmation dialog in Step C; the swipe itself never deletes"
++    // (mockups/key-delete.html), and the keyboard and hover routes reach the
++    // same place through the same prop. Nothing here mutates, announces, or
++    // knows what a query cache is.
++    expect(rowSource).toMatch(/onRequestDelete\(todo\)/);
++    // Scoped past the comments, which discuss what the *list* announces:
++    // `announce(` is the call, and a prose mention of announcing is not one.
++    expect(rowSource).not.toMatch(/useMutation|setQueryData|announce\(/);
++    expect(rowSource).not.toMatch(/<dialog|DeleteDialog/);
++  });
++
+   it("gets Enter and Space from the platform rather than from a key handler", () => {
+     // AC9 wants both keys. A native `<input type="checkbox">` activates on
+     // Space only, so meeting AC9 with one means hand-writing `onKeyDown` and
+@@ -470,11 +523,14 @@ describe("the checkbox is the only control, and the row body is not one (AC6, AC
+     const names = attributeNames();
+     expect(names.filter((name) => /^onKey/.test(name))).toEqual([]);
+     expect(rowSource).toMatch(/type="button"/);
+-    // The `<button>` is the one control this row has. Everything else in the
+-    // original list stays forbidden: a `<label>` would make the row body a
+-    // click target (EXPERIENCE.md:105), an `<input type="checkbox">` is the
+-    // activation path this story rejected, and a link or a select in a Todo
+-    // row is nothing this product has.
++    // The same argument covers the delete control, which is why it is a
++    // `<button>` too and why there is still no key handler in this file.
++    expect(names.filter((name) => name === "type")).toEqual(["type", "type"]);
++    // Both controls are `<button>`s. Everything else in the original list
++    // stays forbidden: a `<label>` would make the row body a click target
++    // (EXPERIENCE.md:105), an `<input type="checkbox">` is the activation path
++    // this story rejected, and a link or a select in a Todo row is nothing this
++    // product has.
+     for (const tag of ["a", "input", "label", "select"]) {
+       expect(elements(), `${tag} is a control this row does not have`).not.toContain(tag);
+     }
+@@ -487,8 +543,16 @@ describe("the checkbox is the only control, and the row body is not one (AC6, AC
+     // Completed one. The control is what puts the status on the accessibility
+     // tree, and it does so as a side effect of being a control.
+     const names = attributeNames();
+-    expect(names).not.toContain("aria-hidden");
+     expect(names).toContain("aria-checked");
++    // `aria-hidden` used to be absent from this file altogether — it was the
++    // decorative glyph Story 2.4 shipped, and removing it is what put the
++    // status on the accessibility tree. It is back once, on the delete
++    // control's trash glyph, where it is correct for the opposite reason: that
++    // button carries an `aria-label` of its own, so an exposed glyph would be
++    // a second, wordless name for the same control. The assertion is therefore
++    // the count and the element rather than the absence.
++    expect(names.filter((name) => name === "aria-hidden")).toHaveLength(1);
++    expect(rowSource).not.toMatch(/role="checkbox"[\s\S]{0,200}aria-hidden/);
+     // Named by the Todo's own text, borrowed from the element that renders it
+     // rather than duplicated into a label that could drift from it.
+     expect(names).toContain("aria-labelledby");
+@@ -524,6 +588,7 @@ describe("the rendered row carries the marker and nothing else varies", () => {
+         departing: false,
+         onToggle: () => {},
+         onDeparted: () => {},
++        onRequestDelete: () => {},
+       }),
+     );
+ 
+diff --git a/src/client/components/todo-row.tsx b/src/client/components/todo-row.tsx
+index c64e36a..6d00824 100644
+--- a/src/client/components/todo-row.tsx
++++ b/src/client/components/todo-row.tsx
+@@ -84,14 +84,78 @@
+ // `todo-card.test.ts` bans `min-w-` across the whole tree as something that
+ // can outgrow the card. This closes the `deferred-work.md` entry Story 2.3
+ // left naming this story as its owner.
++//
++// --- The delete control (Story 5.2) ------------------------------------------
++//
++// Three routes, one control, and one dialog beyond it. The row holds the
++// control and the swipe; it holds no dialog and removes no Todo — pressing it
++// calls `onRequestDelete`, and `todo-list.tsx` owns the single confirmation for
++// the whole list. The seam is the same one `onToggle` already draws: this
++// component stays presentational and needs no provider to be rendered.
++//
++// The control is the row's *last* child, so it is the last focusable thing in
++// the row (EXPERIENCE.md:194 — "per row in list order, checkbox → delete
++// control"), and that order is document order rather than a `tabIndex`
++// arranging something already arranged.
++//
++// It is reachable whether or not it is visible, which is the whole of the
++// keyboard route: the control is always rendered and always focusable, and
++// `@utility delete-action` reveals it on `:focus-visible` outside the
++// `(pointer: fine)` block that reveals it on hover. Nothing here decides
++// whether it shows — a hidden control is hidden by the stylesheet, never by a
++// branch, because a branch that did not render it could not be tabbed to.
++//
++// The swipe sets one attribute and nothing else (AR-28). `data-revealed` on the
++// row is the same idiom as `data-completed` and `data-departing` above: the
++// travel, the fill and the duration are all `app/globals.css`'s, so the class
++// strings here stay static literals and the whole-tree scans can still read
++// them. The gesture is read as a *distance*, not a velocity — a leftward travel
++// past the threshold latches it open and the same travel rightward closes it,
++// which is what makes a half-swipe recoverable without a second control.
++//
++// The panel never deletes, in either presentation: "releasing here opens the
++// confirmation dialog in Step C; the swipe itself never deletes"
++// (mockups/key-delete.html).
++
++import { useRef, useState } from "react";
+ 
+ import type { Todo } from "@/shared/contract/todo";
+ 
++/**
++ * How far a finger travels before the delete panel latches open, in pixels.
++ *
++ * Not a design token and not a duration: DESIGN.md gives the panel a fill and a
++ * radius but no travel, and mockups/key-delete.html records the latch distance
++ * as an open question rather than a value. So it is chosen here, in the one
++ * file that reads the gesture, and chosen small: a threshold longer than a
++ * thumb's comfortable arc on a phone makes the control unreachable by the very
++ * route it exists to serve, and the dialog beyond it is what makes a
++ * too-sensitive threshold cost nothing.
++ */
++const SWIPE_LATCH_PX = 32;
++
++/**
++ * The id of one row's checkbox — the control focus lands on after a delete.
++ *
++ * Exported rather than spelled at the two call sites, because
++ * `todo-list.tsx` has to find this element in the document and a second
++ * spelling of the pattern is a second thing to keep in step.
++ *
++ * The `todo-` prefix is not decoration, for the reason the text id below gives:
++ * a UUIDv7 begins with a digit about ten times in sixteen, and an id starting
++ * with a digit is legal HTML but not a valid CSS identifier, so `#…` in a
++ * `querySelector` throws on it.
++ */
++export function rowCheckboxId(todoId: string): string {
++  return `todo-${todoId}-checkbox`;
++}
++
+ export function TodoRow({
+   todo,
+   departing,
+   onToggle,
+   onDeparted,
++  onRequestDelete,
+ }: {
+   todo: Todo;
+   /** On its way out of the active Filter View, and animating as it goes. */
+@@ -99,7 +163,16 @@ export function TodoRow({
+   onToggle: (todo: Todo, completed: boolean) => void;
+   /** The departure transition finished; this row's id is done leaving. */
+   onDeparted: (id: string) => void;
++  /** The delete control was pressed. The Todo is not removed — a dialog asks. */
++  onRequestDelete: (todo: Todo) => void;
+ }) {
++  // The swipe, as two pieces of state that are not the same thing: where the
++  // finger went down, which is a measurement and never renders, and whether the
++  // panel is latched open, which is the attribute the stylesheet derives from.
++  // A ref for the first, because a re-render per touch-move frame would be a
++  // re-render per frame of a gesture.
++  const touchStartX = useRef<number | null>(null);
++  const [revealed, setRevealed] = useState(false);
+   // The accessible name is the Todo's own text, borrowed from the element that
+   // already renders it rather than duplicated into an `aria-label` that could
+   // drift from it. Unique because the Todo's id is (AD-4), and stable across a
+@@ -122,6 +195,34 @@ export function TodoRow({
+       // itself knows only that it is leaving — which view it is leaving, and
+       // what that will be announced as, belong to the Filter View.
+       data-departing={departing ? true : undefined}
++      // The latch, and the only thing the gesture produces. Absent rather than
++      // `false` when the panel is closed, so the stylesheet keys on presence
++      // the way it does for the two markers above.
++      data-revealed={revealed ? true : undefined}
++      onTouchStart={(event) => {
++        // `touches[0]` and not `changedTouches`: this is where the gesture is
++        // now, and a second finger landing mid-swipe must not move the origin.
++        touchStartX.current = event.touches[0]?.clientX ?? null;
++      }}
++      onTouchMove={(event) => {
++        const origin = touchStartX.current;
++        const here = event.touches[0]?.clientX;
++        if (origin === null || here === undefined) return;
++
++        // Leftward is positive, because leftward is the direction that reveals
++        // (EXPERIENCE.md:166). The same threshold closes it again travelling
++        // the other way, so a swipe that overshoots is undone by reversing it
++        // rather than by finding something else to press.
++        const travelled = origin - here;
++        if (travelled > SWIPE_LATCH_PX) setRevealed(true);
++        else if (travelled < -SWIPE_LATCH_PX) setRevealed(false);
++      }}
++      // The origin is released rather than the panel: a lifted finger leaves
++      // the panel where the gesture left it, which is what "latch" means, and
++      // is why the dialog rather than the swipe is what deletes.
++      onTouchEnd={() => {
++        touchStartX.current = null;
++      }}
+       // `transitionend` bubbles and fires once per property, so a descendant
+       // transitioning at the wrong moment would otherwise report a departure
+       // this row had not made, and the row's own five properties would report
+@@ -137,6 +238,7 @@ export function TodoRow({
+     >
+       <button
+         type="button"
++        id={rowCheckboxId(todo.id)}
+         role="checkbox"
+         aria-checked={todo.completed}
+         aria-labelledby={textId}
+@@ -175,6 +277,50 @@ export function TodoRow({
+       >
+         {todo.text}
+       </span>
++      {/*
++        The clip window the panel is uncovered through, and the row's last
++        child. A wrapper rather than the control itself, because the control
++        travels and something has to hold the space it travels through: without
++        it the panel at rest would sit 44px into the Todo's text, and revealing
++        it would move the text.
++      */}
++      <div className="row-swipe ml-auto flex flex-none items-center justify-center">
++        <button
++          type="button"
++          // Named with the Todo it acts on, so "the tab order does not read as
++          // a list of identical `Delete` buttons" (EXPERIENCE.md:217). An
++          // `aria-label` and not `aria-labelledby` here, unlike the checkbox:
++          // the name is two parts — the verb and the Todo — and the element
++          // that renders the second carries no word for the first.
++          aria-label={`Delete ${todo.text}`}
++          onClick={() => onRequestDelete(todo)}
++          className="delete-action delete-hit-area delete-panel flex flex-none items-center justify-center rounded-md text-text-muted hover:text-danger-text focus-visible:shadow-focus group-data-completed:focus-visible:shadow-focus-on-complete"
++        >
++          {/*
++            The thin rounded line glyph of mockups/key-delete.html, geometry
++            and stroke as attributes rather than classes — so AD-13's
++            arbitrary-value ban has nothing to catch and no token has to be
++            invented for a path. `aria-hidden`, because the button beside it is
++            already named.
++          */}
++          <svg
++            aria-hidden="true"
++            width="17"
++            height="17"
++            viewBox="0 0 24 24"
++            fill="none"
++            stroke="currentColor"
++            strokeWidth="1.6"
++            strokeLinecap="round"
++            strokeLinejoin="round"
++          >
++            <path d="M4 7h16" />
++            <path d="M9.5 7V5.4A1.4 1.4 0 0 1 10.9 4h2.2a1.4 1.4 0 0 1 1.4 1.4V7" />
++            <path d="M6.6 7l.8 11.3A1.8 1.8 0 0 0 9.2 20h5.6a1.8 1.8 0 0 0 1.8-1.7L17.4 7" />
++            <path d="M10.5 11v5M13.5 11v5" />
++          </svg>
++        </button>
++      </div>
+     </li>
+   );
+ }
+diff --git a/src/client/todos/focus-after-delete.test.ts b/src/client/todos/focus-after-delete.test.ts
+new file mode 100644
+index 0000000..a107f4f
+--- /dev/null
++++ b/src/client/todos/focus-after-delete.test.ts
+@@ -0,0 +1,116 @@
++import { describe, expect, it } from "vitest";
++
++import type { Todo } from "@/shared/contract/todo";
++import { focusTargetAfterDelete } from "./focus-after-delete";
++
++// Story 5.2 AC13, and the whole of EXPERIENCE.md:202's second half: "focus goes
++// to the first focusable control of the row that took its place — the checkbox
++// — or to the input if the list is now empty. Focus is never dropped to the
++// document body."
++//
++// A pure function, so this is a pure test: a list and an id in, one of two
++// answers out, no DOM and no component. The half that *is* a DOM — that the
++// answer is turned into something focusable — is `todo-list.render.test.tsx`'s.
++
++const todo = (id: string): Todo => ({
++  id,
++  text: `Todo ${id}`,
++  completed: false,
++  createdAt: "2026-09-25T09:00:00.000Z",
++});
++
++/** Three rows in render order, newest first, as the list actually arrives. */
++const [first, middle, last] = [todo("a"), todo("b"), todo("c")];
++const three = [first, middle, last];
++
++describe("the row that took the deleted row's place", () => {
++  it("is the row after it, wherever in the list it was", () => {
++    // Reading down the list, focus stays where the eye already is: the row
++    // below moves up into the position the finger or the caret was on.
++    expect(focusTargetAfterDelete(three, first.id)).toEqual({
++      kind: "row",
++      id: middle.id,
++    });
++    expect(focusTargetAfterDelete(three, middle.id)).toEqual({
++      kind: "row",
++      id: last.id,
++    });
++  });
++
++  it("is the row before it when the deleted row was last", () => {
++    // The only case where focus travels backwards, because there is no row
++    // after the last one to move up — and it travels the shortest distance it
++    // can rather than jumping to the top of the list.
++    expect(focusTargetAfterDelete(three, last.id)).toEqual({
++      kind: "row",
++      id: middle.id,
++    });
++  });
++
++  it("is the surviving row when there were exactly two", () => {
++    const two = [first, middle];
++    expect(focusTargetAfterDelete(two, first.id)).toEqual({
++      kind: "row",
++      id: middle.id,
++    });
++    expect(focusTargetAfterDelete(two, middle.id)).toEqual({
++      kind: "row",
++      id: first.id,
++    });
++  });
++});
++
++describe("the input, when there is no row left to take the place", () => {
++  it("is the answer when the deleted row was the only one", () => {
++    expect(focusTargetAfterDelete([first], first.id)).toEqual({
++      kind: "input",
++    });
++  });
++
++  it("is the answer for an id this list never held", () => {
++    // A stale dialog, or a row a concurrent change removed first. The honest
++    // answer is the one control the list region is guaranteed to still have
++    // above it — and never "nothing", which is the body-focus failure the
++    // return type has no way to express.
++    expect(focusTargetAfterDelete(three, "not-in-this-list")).toEqual({
++      kind: "input",
++    });
++    expect(focusTargetAfterDelete([], first.id)).toEqual({ kind: "input" });
++  });
++});
++
++describe("the rule is a function of the list it is given", () => {
++  it("reads the list it is handed and nothing else", () => {
++    // The caller passes the *visible* list — the active Filter View's rows —
++    // because the row that takes a deleted row's place is the next row on
++    // screen, and the next row in the whole cache may not be on screen at all.
++    // Two arrangements of the same three Todos, and the answers differ.
++    expect(focusTargetAfterDelete([first, last], first.id)).toEqual({
++      kind: "row",
++      id: last.id,
++    });
++    expect(focusTargetAfterDelete([first, middle], first.id)).toEqual({
++      kind: "row",
++      id: middle.id,
++    });
++  });
++
++  it("changes nothing it is given", () => {
++    const list = [...three];
++    focusTargetAfterDelete(list, middle.id);
++    expect(list).toEqual(three);
++  });
++
++  it("answers with an id that is in the list it was given", () => {
++    // The point of the type's `row` case: whatever comes back is something the
++    // caller can still find on screen. An answer naming the deleted row would
++    // pass a shape assertion and focus an element on its way out.
++    for (const target of three) {
++      const answer = focusTargetAfterDelete(three, target.id);
++      expect(answer.kind).toBe("row");
++      if (answer.kind !== "row") throw new Error("unreachable");
++      expect(answer.id).not.toBe(target.id);
++      expect(three.map(({ id }) => id)).toContain(answer.id);
++    }
++  });
++});
+diff --git a/src/client/todos/focus-after-delete.ts b/src/client/todos/focus-after-delete.ts
+new file mode 100644
+index 0000000..0fda938
+--- /dev/null
++++ b/src/client/todos/focus-after-delete.ts
+@@ -0,0 +1,71 @@
++// Where focus goes when a Todo is removed (Story 5.2 AC13; EXPERIENCE.md:202).
++//
++// "On close by Delete, focus goes to the first focusable control of the row
++// that took its place — the checkbox — or to the input if the list is now
++// empty. Focus is never dropped to the document body."
++//
++// A pure function, and that is the point rather than a convenience. The rule it
++// states spans the 5.2/5.3 seam: it is about where focus lands *after a row has
++// been removed*, and Story 5.2 removes nothing at all. Written as a function of
++// a list and an id it is testable now, against every arrangement the list can
++// be in, and Story 5.3 is left with nothing to do but delete the row — the
++// wiring is already in place and already exercised.
++//
++// It takes the list as it was *before* the removal, which is the list the
++// caller is holding at the moment the dialog closes. "The row that took its
++// place" is therefore the one after it, resolved against the pre-delete
++// arrangement rather than hunted for in the post-delete one.
++//
++// No DOM here, and no element ids. This module answers *which Todo*, and the
++// component that owns the markup turns that into something to call `focus()`
++// on — the same split `filter-view.ts` keeps between the predicate and the rows.
++
++import type { Todo } from "@/shared/contract/todo";
++
++/**
++ * The control focus should land on once a Todo has gone.
++ *
++ * Two cases and no third: a Todo still on screen, named by id, or the add
++ * input. There is deliberately no "nothing" — dropping focus to the document
++ * body is the failure EXPERIENCE.md:202 names, so the type has no way to say it.
++ */
++export type FocusAfterDelete =
++  | { kind: "row"; id: string }
++  | { kind: "input" };
++
++/** The add input, as the one thing left to focus when the list empties. */
++const INPUT: FocusAfterDelete = { kind: "input" };
++
++/**
++ * Which control takes focus after `deletedId` leaves `visible`.
++ *
++ * The row *after* the deleted one, because that is the row which will occupy
++ * its position once it is gone — reading down the list, focus stays where the
++ * eye already is. The row *before* it when the deleted row was last, because
++ * there is no row after it to move up; this is the only case where focus
++ * travels backwards, and it travels the shortest distance it can.
++ *
++ * `{ kind: "input" }` when the deleted row was the only one, when it is not in
++ * the list at all, and when the list is empty. The first is the case
++ * EXPERIENCE.md names; the other two are a deleted id this list never held — a
++ * stale dialog, or a row a concurrent change removed first — and the input is
++ * the honest answer to all three, because it is the only control the list
++ * region is guaranteed to still have above it.
++ *
++ * @param visible The Todos on screen, in the order they are rendered — the
++ *   *filtered* list and not the whole cache, because the row that takes a
++ *   deleted row's place is the next row in the active Filter View, and the row
++ *   after it in the cache may not be on screen at all.
++ * @param deletedId The Todo that is going.
++ */
++export function focusTargetAfterDelete(
++  visible: Todo[],
++  deletedId: string,
++): FocusAfterDelete {
++  const index = visible.findIndex((todo) => todo.id === deletedId);
++  if (index === -1) return INPUT;
++
++  const successor = visible[index + 1] ?? visible[index - 1];
++
++  return successor ? { kind: "row", id: successor.id } : INPUT;
++}
+diff --git a/src/server/repository/client-identity.test.ts b/src/server/repository/client-identity.test.ts
+index 4dc527e..b929760 100644
+--- a/src/server/repository/client-identity.test.ts
++++ b/src/server/repository/client-identity.test.ts
+@@ -293,16 +293,27 @@ describe("repository scope — identity functions only (AC4, matrix row 'Reposit
+       )
+       .join("\n");
+ 
+-    // `listTodos` left this list with Story 2.1, `createTodo` with Story 3.1
+-    // and `setTodoCompleted` with Story 4.1 — each story removes the function
+-    // it consumes. The one remaining arrives with Epic 5.
+-    for (const todoFunction of ["deleteTodo"]) {
+-      expect(source).not.toMatch(
+-        new RegExp(`export\\s+(async\\s+)?function\\s+${todoFunction}\\b`),
+-      );
+-      expect(source).not.toMatch(
+-        new RegExp(`export\\s+const\\s+${todoFunction}\\b`),
+-      );
++    // `listTodos` left this list with Story 2.1, `createTodo` with Story 3.1,
++    // `setTodoCompleted` with Story 4.1 and `deleteTodo` with Story 5.1 — each
++    // story removed the function it consumed, and the list is now empty
++    // because FR-1 to FR-5 have nothing left to ask for.
++    //
++    // So the ratchet turns over: what was a list of functions that must *not*
++    // be here yet is now the list that must be, in the one module that may
++    // hold them. A fifth Todo function, or any of these four appearing in a
++    // second file, is what this now catches.
++    for (const todoFunction of [
++      "listTodos",
++      "createTodo",
++      "setTodoCompleted",
++      "deleteTodo",
++    ]) {
++      expect(
++        source.match(
++          new RegExp(`export\\s+(async\\s+)?function\\s+${todoFunction}\\b`, "g"),
++        ),
++        `${todoFunction} is declared somewhere other than todos.ts, or not at all`,
++      ).toHaveLength(1);
+     }
+   });
+ });
+diff --git a/src/server/repository/todos.test.ts b/src/server/repository/todos.test.ts
+index 715871c..eeb2674 100644
+--- a/src/server/repository/todos.test.ts
++++ b/src/server/repository/todos.test.ts
+@@ -4,7 +4,7 @@ import { clientIdentity, todo } from "@/server/db/schema";
+ import { mintIdentityId } from "@/server/identity/identity-token";
+ import { db } from "./client";
+ import * as todosRepository from "./todos";
+-import { createTodo, listTodos, setTodoCompleted } from "./todos";
++import { createTodo, deleteTodo, listTodos, setTodoCompleted } from "./todos";
+ 
+ // Story 2.1 AC1 (the wire shape), AC2 (`id DESC`, never `created_at`), AC3 (the
+ // `ownerId`-first signature) and AC4 (one caller's rows only), live against the
+@@ -16,6 +16,12 @@ import { createTodo, listTodos, setTodoCompleted } from "./todos";
+ // stores the value asked for rather than its inverse, are both properties of
+ // the statement the database runs and of nothing a mock could stand in for.
+ //
++// Story 5.1 AC1, AC2, AC3 and AC5 join them for `deleteTodo`: that the row is
++// actually gone, that deleting it twice is not an error, that a row another
++// owner holds is untouched, and that a Todo in either Completion Status goes.
++// Every one of those is a property of the statement the database runs — a mock
++// asked to resolve `undefined` would prove all four without a table existing.
++//
+ // Story 3.1 AC1, AC3, AC4 and AC5 join them for `createTodo`. Its idempotency
+ // is `ON CONFLICT (id) DO NOTHING` plus an owner-scoped read, which is SQL the
+ // database has to actually perform: a mock would prove only that the branch
+@@ -498,12 +504,131 @@ describe("setTodoCompleted — against the live branch", () => {
+   });
+ });
+ 
++describe("deleteTodo — against the live branch", () => {
++  /** The stored row, or `undefined` when nothing holds that id any more. */
++  async function storedRow(id: string) {
++    const rows = await db.select().from(todo).where(eq(todo.id, id));
++    return rows.at(0);
++  }
++
++  it("removes the caller's Todo and reports nothing back (AC1)", async () => {
++    const ownerId = await freshOwner();
++    const id = freshId();
++    await insertTodo({ id, ownerId, text: "Buy milk" });
++    await expect(storedRow(id)).resolves.toBeDefined();
++
++    const answer = await deleteTodo(ownerId, id);
++
++    // Nothing back, deliberately: with no result there is nothing for the
++    // route handler to branch on, which is what makes its `204` unconditional
++    // and stops the status becoming an existence oracle.
++    expect(answer).toBeUndefined();
++    await expect(storedRow(id)).resolves.toBeUndefined();
++    // And it is gone from the caller's list, because it is gone from the
++    // table — there is no soft-delete column and nothing filters on one.
++    await expect(listTodos(ownerId)).resolves.toEqual([]);
++  });
++
++  it("deletes a Completed Todo just as readily (AC1)", async () => {
++    const ownerId = await freshOwner();
++    const id = freshId();
++    await insertTodo({ id, ownerId, text: "Buy milk", completed: true });
++
++    await deleteTodo(ownerId, id);
++
++    await expect(storedRow(id)).resolves.toBeUndefined();
++  });
++
++  it("succeeds a second time on a row that is already gone (AC2)", async () => {
++    // A retry of a delete whose answer the browser never saw must not fail.
++    // The `DELETE` matches nothing the second time, which is not an error in
++    // SQL and must not become one here.
++    const ownerId = await freshOwner();
++    const id = freshId();
++    await insertTodo({ id, ownerId, text: "Buy milk" });
++
++    await deleteTodo(ownerId, id);
++    await expect(deleteTodo(ownerId, id)).resolves.toBeUndefined();
++
++    await expect(storedRow(id)).resolves.toBeUndefined();
++  });
++
++  it("resolves for a well-formed id that never named a row", async () => {
++    const ownerId = await freshOwner();
++
++    await expect(deleteTodo(ownerId, freshId())).resolves.toBeUndefined();
++  });
++
++  it("settles two concurrent deletes of the same row on the same answer (AC2)", async () => {
++    // What a browser retrying a delete actually does. Interleaving changes
++    // neither answer nor the outcome: the row is gone once, and neither call
++    // reports anything the other could contradict.
++    const ownerId = await freshOwner();
++    const id = freshId();
++    await insertTodo({ id, ownerId, text: "Buy milk" });
++
++    const answers = await Promise.all([
++      deleteTodo(ownerId, id),
++      deleteTodo(ownerId, id),
++    ]);
++
++    expect(answers).toEqual([undefined, undefined]);
++    await expect(storedRow(id)).resolves.toBeUndefined();
++  });
++
++  it("leaves a Todo another owner holds exactly where it was (AC3)", async () => {
++    // The `WHERE` clause *is* the ownership check, and this is the row that
++    // proves it: the same call, with the same well-formed id, from the wrong
++    // owner, removes nothing and reports the same nothing.
++    const theirs = await freshOwner();
++    const mine = await freshOwner();
++    const id = freshId();
++    await insertTodo({ id, ownerId: theirs, text: "their Todo" });
++    const before = await storedRow(id);
++    // `storedRow` answers `undefined` for a row that is not there, so without
++    // this the comparison below is `undefined === undefined` and would pass
++    // for a seeding insert that silently wrote nothing.
++    expect(before).toBeDefined();
++
++    await expect(deleteTodo(mine, id)).resolves.toBeUndefined();
++
++    // Every column, not merely the row's existence.
++    await expect(storedRow(id)).resolves.toEqual(before);
++    await expect(listTodos(theirs)).resolves.toHaveLength(1);
++  });
++
++  it("removes one row and no other of the caller's own list", async () => {
++    const ownerId = await freshOwner();
++    const [target, bystander] = [freshId(), freshId()];
++    await insertTodo({ id: target, ownerId, text: "the one being removed" });
++    await insertTodo({ id: bystander, ownerId, text: "the one left alone" });
++
++    await deleteTodo(ownerId, target);
++
++    await expect(storedRow(target)).resolves.toBeUndefined();
++    await expect(storedRow(bystander)).resolves.toMatchObject({
++      text: "the one left alone",
++    });
++  });
++
++  it("takes two parameters, neither defaulted nor rest (AC5)", () => {
++    // Arity, and only arity: `Function.length` cannot see which parameter is
++    // which. What pins `ownerId` *first* is the foreign-owner row above, which
++    // would fail against any other order because the `WHERE` would then be
++    // matching an owner id against `todo.id`. This row is the compiler's half.
++    expect(deleteTodo.length).toBe(2);
++  });
++});
++
+ describe("repository scope — the Todo module", () => {
+-  it("exports the list, the create and the set, and nothing more yet; delete arrives with Epic 5", () => {
++  it("exports the list, the create, the set and the delete, and nothing more", () => {
+     // `CreateTodoResult` is a type and emits no runtime value, so it does not
+-    // appear here — the surface this pins is the functions.
++    // appear here — the surface this pins is the functions. Story 5.1 added
++    // the fourth, which is the last one FR-1 to FR-5 asks for: a fifth here
++    // would be a repository function no endpoint calls.
+     expect(Object.keys(todosRepository).sort()).toEqual([
+       "createTodo",
++      "deleteTodo",
+       "listTodos",
+       "setTodoCompleted",
+     ]);
+diff --git a/src/server/repository/todos.ts b/src/server/repository/todos.ts
+index a4e3415..d528c99 100644
+--- a/src/server/repository/todos.ts
++++ b/src/server/repository/todos.ts
+@@ -1,9 +1,9 @@
+ // Repository functions for the Todo (AD-2, AD-5).
+ //
+-// The first Todo module. `setTodoCompleted` joined it with Story 4.1 and
+-// `deleteTodo` arrives in Epic 5, as `createTodo` did with Story 3.1; all of
+-// them take `ownerId` first (AD-2), because a Todo is an owned resource and a
+-// query that forgets the owner returns somebody else's list.
++// The first Todo module. `createTodo` joined it with Story 3.1,
++// `setTodoCompleted` with Story 4.1 and `deleteTodo` with Story 5.1; all four
++// take `ownerId` first (AD-2), because a Todo is an owned resource and a query
++// that forgets the owner returns somebody else's list.
+ //
+ // These functions return the wire `Todo` shape rather than the Drizzle row,
+ // which is a deliberate departure from `client-identity.ts`. A Client Identity
+@@ -192,3 +192,39 @@ export async function setTodoCompleted(
+ 
+   return row && toWireTodo(row);
+ }
++
++/**
++ * Removes one Todo the caller owns, and reports nothing back.
++ *
++ * `Promise<void>`, and that is the whole design rather than an omission. Story
++ * 5.1 asks for two properties that pull the same way: the same delete sent
++ * twice must succeed twice (a retry must not fail for a row already gone), and
++ * a delete aimed at somebody else's row must disclose nothing about it. If this
++ * function could tell "deleted" from "nothing to delete", the route handler
++ * would have a result to branch on and the status code would become an
++ * existence oracle — `204` for rows that are yours, something else for rows
++ * that are not. Returning nothing means the property holds structurally rather
++ * than by a branch that remembered to be careful, which is the argument
++ * `setTodoCompleted` above makes for its own shape.
++ *
++ * So there is no `returning` here, deliberately. Drizzle would happily report
++ * the deleted row, and holding the other owner's text — even to throw it away —
++ * is exactly what the owner-scoped `WHERE` exists to avoid.
++ *
++ * One statement, not a read-then-delete. `neon-http` has no interactive
++ * transaction (`client.ts`), so a check-then-delete would be racy; the `WHERE`
++ * clause *is* the ownership check, as it is for the update above.
++ *
++ * Permanent. There is no soft-delete column and nothing in this module filters
++ * on deletion state (epic-5-context "Deletion is permanent and idempotent"), so
++ * the row is gone from `listTodos` because it is gone from the table.
++ *
++ * @param ownerId The Client Identity the Todo must belong to. First, and never
++ *   optional (AD-2) — a delete that forgets the owner deletes somebody else's
++ *   Todo, and unlike a mis-scoped read there is nothing to undo it with.
++ * @param id The Todo's id, already checked for canonical UUIDv7 form by the
++ *   route handler before it reaches here.
++ */
++export async function deleteTodo(ownerId: string, id: string): Promise<void> {
++  await db.delete(todo).where(and(eq(todo.id, id), eq(todo.ownerId, ownerId)));
++}
+diff --git a/src/test-support/dialog.ts b/src/test-support/dialog.ts
+new file mode 100644
+index 0000000..2078021
+--- /dev/null
++++ b/src/test-support/dialog.ts
+@@ -0,0 +1,115 @@
++// A minimal `HTMLDialogElement` for jsdom, so the delete dialog's own logic is
++// testable (Story 5.2).
++//
++// jsdom 30.1.1 implements none of the dialog API: `showModal`, `show` and
++// `close` are all `undefined` on a `<dialog>` it creates, while `open` is a
++// working reflection of the attribute. So a component that calls `showModal()`
++// throws in every test that mounts it, and the choice is between shimming the
++// element and not testing the dialog at all.
++//
++// Be precise about what this buys, because a shim that is mistaken for the
++// platform is worse than no shim. What these tests can then prove is *our*
++// logic: that `showModal()` is called and not `show()`, that the open and close
++// are idempotent, that the `cancel` event and the `Cancel` button take the same
++// path, that `Delete` reports once. What they cannot prove, and must not be
++// read as proving, is anything the browser owns — the top layer, the focus
++// trap, Escape being dispatched at all, the `::backdrop`, or focus returning to
++// the trigger. Those are asserted as markup facts (the element is a real
++// `<dialog>`; nothing hand-sets `aria-modal`) and are driven for real in
++// Epic 6.
++//
++// Installed per test file rather than globally: only the dialog's own suites
++// want it, and a global stub would quietly make every other suite pass against
++// a browser this repository does not have.
++
++/**
++ * Installs `show`, `showModal` and `close` on jsdom's `HTMLDialogElement`.
++ *
++ * `open` is left alone — jsdom already reflects the attribute, which is what
++ * these methods set and clear, so the property and the markup agree without a
++ * second source of truth.
++ *
++ * Returns the uninstall function, for an `afterEach`. Re-installing is safe:
++ * the original descriptors are captured once per call and restored in reverse.
++ */
++export function installDialogShim(dialogElement: {
++  prototype: HTMLDialogElement;
++}): () => void {
++  const prototype = dialogElement.prototype as unknown as Record<
++    string,
++    unknown
++  >;
++  const original = new Map<string, PropertyDescriptor | undefined>();
++
++  function define(name: string, value: unknown): void {
++    original.set(name, Object.getOwnPropertyDescriptor(prototype, name));
++    Object.defineProperty(prototype, name, {
++      configurable: true,
++      writable: true,
++      value,
++    });
++  }
++
++  define("show", function show(this: HTMLDialogElement) {
++    this.setAttribute("open", "");
++  });
++
++  define("showModal", function showModal(this: HTMLDialogElement) {
++    // The real one throws `InvalidStateError` on an already-open dialog, and
++    // that throw is load-bearing: it is why the component guards its effect on
++    // `open` rather than calling `showModal()` on every render. A shim that
++    // silently allowed it would let exactly that bug through.
++    if (this.open) {
++      throw new DOMException(
++        "The element already has an 'open' attribute, and therefore cannot be opened modally.",
++        "InvalidStateError",
++      );
++    }
++    this.setAttribute("open", "");
++    // The platform's own focusing rule, which is the one piece of `showModal`
++    // behaviour worth standing in for: the first element in the dialog with an
++    // `autofocus` attribute, and otherwise the first focusable one. Both
++    // branches matter here, because React sets `autoFocus` imperatively on
++    // mount and renders no attribute at all — so in a real browser this dialog
++    // reaches Cancel by the second branch, and a shim that only knew the first
++    // would be testing a DOM React does not produce.
++    const autofocus = this.querySelector<HTMLElement>("[autofocus]");
++    const focusable = this.querySelector<HTMLElement>(
++      "a[href], button:not([disabled]), input:not([disabled]), select, textarea, [tabindex]:not([tabindex='-1'])",
++    );
++    (autofocus ?? focusable ?? this).focus();
++  });
++
++  define("close", function close(this: HTMLDialogElement, returnValue?: string) {
++    // A no-op on a dialog that is already closed, exactly as the real one is:
++    // the `close` event fires once per close, and a component that closes on
++    // its way out of two code paths must not announce it twice.
++    if (!this.open) return;
++    this.removeAttribute("open");
++    if (returnValue !== undefined) this.returnValue = returnValue;
++    this.dispatchEvent(new Event("close"));
++  });
++
++  return () => {
++    for (const [name, descriptor] of [...original].reverse()) {
++      if (descriptor) Object.defineProperty(prototype, name, descriptor);
++      else delete prototype[name];
++    }
++  };
++}
++
++/**
++ * Dispatches the `cancel` a browser fires when Escape is pressed in a modal.
++ *
++ * jsdom dispatches no `cancel` of its own — it has no modal to press Escape in
++ * — so the event is raised directly rather than through a `keydown` that would
++ * be simulating a key handler nothing in this product has. Cancelable, because
++ * the platform's is: `preventDefault()` on it keeps the dialog open, and a
++ * component that relied on that would be relying on something this raises the
++ * same way.
++ */
++export function dispatchCancel(dialog: HTMLDialogElement): Event {
++  const event = new Event("cancel", { bubbles: false, cancelable: true });
++  dialog.dispatchEvent(event);
++  return event;
++}

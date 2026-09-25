@@ -101,19 +101,32 @@ function elements(): string[] {
 describe("a skeleton row is an Active row's geometry exactly (AC5, AC6)", () => {
   // The markers are not geometry: `group` is `todo-row.tsx`'s hook for its
   // `group-data-` variants, `skeleton-row` is this component's hook for the
-  // recipe, and `row-departing` is the row's hook for the collapse it leaves
-  // by — all three name a behaviour rather than describe a box. A skeleton
-  // has no departure to make: it is a placeholder for a row that has not
-  // arrived, and nothing can toggle it out of a Filter View. Everything else
-  // on either `<li>` that is not gated on a Completion Status variant *is*
-  // the geometry, and the two must agree.
-  const MARKERS = new Set(["group", "skeleton-row", "row-departing"]);
+  // recipe, `row-departing` is the row's hook for the collapse it leaves by,
+  // and `row-sliding` is its hook for the swipe — all four name a behaviour
+  // rather than describe a box. A skeleton has no departure to make and no
+  // delete lane to slide off: it is a placeholder for a row that has not
+  // arrived, and nothing can toggle it out of a Filter View or swipe it.
+  // Everything else on either element that is not gated on a Completion Status
+  // variant *is* the geometry, and the two must agree.
+  //
+  // Story 5.2 moved the row's own picture one level in. The `<li>` is now the
+  // stationary delete lane and its child is the surface that slides over it, so
+  // the fill, radius, padding, shadow, height and flex line all live on that
+  // surface — which is the element a skeleton is a placeholder for. Comparing
+  // against the `<li>` after that change would compare a skeleton row against a
+  // wrapper and pass on two classes agreeing about nothing.
+  const MARKERS = new Set([
+    "group",
+    "skeleton-row",
+    "row-departing",
+    "row-sliding",
+  ]);
   const geometryOf = (classes: string[]) =>
     classes.filter((name) => !name.includes(":") && !MARKERS.has(name)).sort();
 
   it("carries the same fill, radius, padding, shadow, height, layout and gap", () => {
     expect(geometryOf(classesOn(skeletonFile, "li"))).toEqual(
-      geometryOf(classesOn(rowFile, "li")),
+      geometryOf(classesOn(rowFile, "div")),
     );
   });
 
@@ -122,7 +135,7 @@ describe("a skeleton row is an Active row's geometry exactly (AC5, AC6)", () => 
     // This is the third copy that makes the first two mean something —
     // DESIGN.md `components.skeleton-row`: "same fill, same {rounded.md},
     // same padding, same row shadow, same minimum height".
-    expect(geometryOf(classesOn(rowFile, "li"))).toEqual(
+    expect(geometryOf(classesOn(rowFile, "div"))).toEqual(
       [
         "flex",
         "min-h-touch-target-min",
@@ -140,7 +153,7 @@ describe("a skeleton row is an Active row's geometry exactly (AC5, AC6)", () => 
     const without = classesOn(skeletonFile, "li").filter(
       (name) => name !== "shadow-row",
     );
-    expect(geometryOf(without)).not.toEqual(geometryOf(classesOn(rowFile, "li")));
+    expect(geometryOf(without)).not.toEqual(geometryOf(classesOn(rowFile, "div")));
   });
 
   it("renders three rows, which is DESIGN.md's count", () => {

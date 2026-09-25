@@ -261,7 +261,22 @@ describe("the list region reads the one query hook", () => {
     );
     expect(listSource).not.toMatch(/\buseQuery\b/);
     expect(listSource).not.toMatch(/\bfetch\b/);
-    expect(listSource).not.toMatch(/\buseState\b/);
+    // Was a flat ban on `useState`. Story 5.2 needs one piece of *interface*
+    // state here — which row the confirmation dialog is asking about — and AD-8
+    // is about server state, not about React state as such: the rule is that
+    // the Todo List lives in the one cache entry and nowhere else.
+    //
+    // So the ban narrows to what AD-8 actually forbids, and narrows without
+    // weakening: what is held is an **id**, never a Todo, and the row is looked
+    // up in the cache on every render. A `Todo` parked here would be a second
+    // copy of a row that can change under it, which is the failure the flat ban
+    // was standing in for — and `use-todos.test.ts` holds that same rule
+    // tree-wide, by type and by name, over every source file in the product.
+    const holders = [...listSource.matchAll(/useState(<[^>]*>)?\(/g)].map(
+      ([, type]) => type ?? "(inferred)",
+    );
+    expect(holders).toEqual(["<string | null>"]);
+    expect(listSource).not.toMatch(/\buseReducer\b/);
   });
 
   it("renders a <ul> of skeletons or rows, and the empty state beside it", () => {
@@ -271,7 +286,16 @@ describe("the list region reads the one query hook", () => {
     // optimistic row added during a load sits above the placeholders and not
     // instead of them (AC6). Still no wrapper, which is what keeps the `<ul>`
     // a direct child of the card.
-    expect(elements()).toEqual(["ul", "TodoRow", "SkeletonRow", "EmptyState"]);
+    // Story 5.2 adds the fifth and last: one `DeleteDialog` for the whole list,
+    // a sibling of the region rather than a child of it — a `<dialog>` is not
+    // valid inside a `<ul>`, and one dialog per row would be a modal per Todo.
+    expect(elements()).toEqual([
+      "ul",
+      "TodoRow",
+      "SkeletonRow",
+      "EmptyState",
+      "DeleteDialog",
+    ]);
   });
 
   it("holds one toggle hook for the whole list and hands it to every row", () => {

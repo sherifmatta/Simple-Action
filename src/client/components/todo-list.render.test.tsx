@@ -35,6 +35,8 @@ import { AppProviders } from "@/client/providers";
 import { FilterViewProvider } from "@/client/todos/filter-view-context";
 import { TODOS_QUERY_KEY } from "@/client/todos/query-keys";
 import type { Todo } from "@/shared/contract/todo";
+import { installDialogShim } from "@/test-support/dialog";
+import { ADD_INPUT_ID } from "./add-input";
 import { TodoCard } from "./todo-card";
 import { TodoList } from "./todo-list";
 
@@ -1454,5 +1456,262 @@ describe("the Filter Views, through the mounted card (Story 4.3)", () => {
     // synchronous re-raise has to survive that clear rather than be wiped by it.
     expect(container.textContent).toContain("Couldn't save that change.");
     expect(retryButton()).toBeDefined();
+  });
+});
+
+describe("the delete path, through the mounted card (Story 5.2)", () => {
+  // `delete-dialog.render.test.tsx` proves the dialog's own logic and
+  // `todo-row.render.test.tsx` proves the control calls its handler. Neither
+  // can see that the two are joined, and neither can see the three things that
+  // only exist once they are: that one dialog serves every row, that cancelling
+  // leaves the list able to ask again, and that focus after a confirm lands on
+  // a row that is actually rendered.
+  //
+  // jsdom 30 implements no part of `HTMLDialogElement`, so the shim is
+  // installed per case — see `src/test-support/dialog.ts` for what that does
+  // and does not buy.
+  let uninstall: () => void;
+
+  beforeEach(() => {
+    uninstall = installDialogShim(window.HTMLDialogElement);
+  });
+
+  afterEach(() => uninstall());
+
+  // Four rows, newest first, alternating Completion Status on purpose. The
+  // alternation is what makes AC13 testable: in the Active view the on-screen
+  // order is not the cache order, so a focus rule reading the cache lands on a
+  // row that is not rendered and a rule reading the view does not.
+  const LIST: Todo[] = [
+    {
+      id: "0199a5c5-0000-7000-8000-000000000014",
+      text: "pay rent",
+      completed: true,
+      createdAt: "2026-09-25T09:03:00.000Z",
+    },
+    {
+      id: "0199a5c5-0000-7000-8000-000000000013",
+      text: "send invoice",
+      completed: false,
+      createdAt: "2026-09-25T09:02:00.000Z",
+    },
+    {
+      id: "0199a5c5-0000-7000-8000-000000000012",
+      text: "call plumber",
+      completed: true,
+      createdAt: "2026-09-25T09:01:00.000Z",
+    },
+    {
+      id: "0199a5c5-0000-7000-8000-000000000011",
+      text: "book dentist",
+      completed: false,
+      createdAt: "2026-09-25T09:00:00.000Z",
+    },
+  ];
+
+  /**
+   * The card over a server that remembers, with motion enabled.
+   *
+   * The `PATCH` arm is not decoration: one case toggles a row out of the Active
+   * view to get a *departing* row on screen, and a stub answering a toggle with
+   * the whole list fails the mutation's shape guard, rolls the change back and
+   * calls the departure off — which would leave that case asserting about a row
+   * that never left.
+   */
+  async function mountList(list: Todo[] = LIST) {
+    stubMotionPreference(false);
+    let stored = [...list];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>((input, init) => {
+        if (init?.method !== "PATCH") {
+          return Promise.resolve(Response.json(stored));
+        }
+        const id = String(input).split("/").pop();
+        const { completed } = JSON.parse(String(init.body)) as {
+          completed: boolean;
+        };
+        stored = stored.map((row) =>
+          row.id === id ? { ...row, completed } : row,
+        );
+        return Promise.resolve(
+          Response.json(stored.find((row) => row.id === id)),
+        );
+      }),
+    );
+    await mountCard();
+  }
+
+  const dialog = () => container.querySelector("dialog") as HTMLDialogElement;
+  const rowText = () =>
+    [...container.querySelectorAll("li")].map(
+      (row) => row.querySelector("span")?.textContent,
+    );
+  const deleteControlFor = (text: string) =>
+    container.querySelector<HTMLButtonElement>(
+      `[aria-label="Delete ${text}"]`,
+    ) as HTMLButtonElement;
+  const dialogButton = (label: string) =>
+    [...dialog().querySelectorAll("button")].find(
+      (button) => button.textContent === label,
+    ) as HTMLButtonElement;
+  const tab = (label: string) =>
+    [...container.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find(
+      (candidate) => candidate.textContent?.startsWith(label),
+    ) as HTMLButtonElement;
+  const checkboxFor = (text: string) =>
+    [...container.querySelectorAll("li")]
+      .find((row) => row.textContent?.includes(text))
+      ?.querySelector<HTMLElement>('[role="checkbox"]');
+
+  it("opens one dialog for whichever row asked, and removes nothing (AC8)", async () => {
+    await mountList();
+
+    await act(async () => deleteControlFor("send invoice").click());
+
+    expect(dialog().open).toBe(true);
+    expect(dialog().textContent).toContain("Delete this Todo?");
+    expect([...dialog().querySelectorAll("button")].map((b) => b.textContent)).toEqual(
+      ["Cancel", "Delete"],
+    );
+    // "Nothing is removed until the user chooses `Delete`" — and Story 5.2
+    // removes nothing even then; `onConfirm` is the seam Story 5.3 consumes.
+    expect(rowText()).toEqual([
+      "pay rent",
+      "send invoice",
+      "call plumber",
+      "book dentist",
+    ]);
+    // One dialog for the whole list, not one per row (AC14).
+    expect(container.querySelectorAll("dialog")).toHaveLength(1);
+  });
+
+  it("closes on Cancel and leaves the Todo List untouched (AC9)", async () => {
+    await mountList();
+
+    await act(async () => deleteControlFor("book dentist").click());
+    await act(async () => dialogButton("Cancel").click());
+
+    expect(dialog().open).toBe(false);
+    expect(rowText()).toEqual([
+      "pay rent",
+      "send invoice",
+      "call plumber",
+      "book dentist",
+    ]);
+  });
+
+  it("opens again for the same row after a Cancel", async () => {
+    // The mutation the first attempt would have survived: the parent holds the
+    // pending row as an id, so a Cancel that forgot to clear it would make
+    // `setPendingDeleteId(sameId)` a no-op and this row unconfirmable for the
+    // rest of the session — with the control still there, still focusable, and
+    // still doing nothing.
+    await mountList();
+
+    await act(async () => deleteControlFor("send invoice").click());
+    await act(async () => dialogButton("Cancel").click());
+    expect(dialog().open).toBe(false);
+
+    await act(async () => deleteControlFor("send invoice").click());
+    expect(dialog().open).toBe(true);
+  });
+
+  it("forgets a pending row that leaves the Filter View under it", async () => {
+    // The dialog closes itself when its row stops being visible — there is
+    // nothing left to confirm. The id has to go with it, or the row comes back
+    // into view with the question reopening unasked, and pressing its control
+    // again does nothing at all.
+    await mountList();
+
+    await act(async () => deleteControlFor("send invoice").click());
+    expect(dialog().open).toBe(true);
+
+    await act(async () => tab("Completed").click());
+    await settle();
+    expect(dialog().open).toBe(false);
+
+    // Back to a view holding it: the question stays closed until it is asked.
+    await act(async () => tab("All").click());
+    await settle();
+    expect(dialog().open).toBe(false);
+
+    await act(async () => deleteControlFor("send invoice").click());
+    expect(dialog().open).toBe(true);
+  });
+
+  it("places focus on a row that is actually rendered, under any view (AC13)", async () => {
+    // The criterion is written at the post-removal surface and Story 5.2
+    // removes nothing, so what is provable now is the half that spans the seam:
+    // *which* control is chosen. In the Active view the on-screen order differs
+    // from the cache order — `pay rent` is Completed and filtered out — so a
+    // rule reading the cache would land focus on a row that is not rendered.
+    await mountList();
+    await act(async () => tab("Active").click());
+    expect(rowText()).toEqual(["send invoice", "book dentist"]);
+
+    await act(async () => deleteControlFor("send invoice").click());
+    await act(async () => dialogButton("Delete").click());
+    await settle();
+
+    // The row after it *in the view*, and its first focusable control. The row
+    // after it in the *cache* is `call plumber`, which is Completed and not
+    // rendered here — so this assertion fails for a rule that reads `data`.
+    expect(document.activeElement).toBe(checkboxFor("book dentist"));
+    expect(document.activeElement).not.toBe(document.body);
+  });
+
+  it("falls back to the preceding row when the deleted one was last (AC13)", async () => {
+    await mountList();
+    await act(async () => tab("Active").click());
+
+    await act(async () => deleteControlFor("book dentist").click());
+    await act(async () => dialogButton("Delete").click());
+    await settle();
+
+    // Backwards, and the shortest distance it can: there is no row after the
+    // last one to move up into its place.
+    expect(document.activeElement).toBe(checkboxFor("send invoice"));
+  });
+
+  it("never lands focus on a row that is on its way out (AC13)", async () => {
+    // A departing row is kept in `visible` so it has something to leave with,
+    // and it is about to unmount — focus parked on it is focus dropped to
+    // `document.body` the moment its transition ends, which is the one outcome
+    // EXPERIENCE.md:202 forbids. So the list hands the focus rule the rows that
+    // are staying, and the fallback is the add input.
+    await mountList();
+    await act(async () => tab("Active").click());
+
+    // `book dentist` starts leaving the Active view; its collapse has not
+    // finished, so it is still on screen.
+    await act(async () => checkboxFor("book dentist")?.click());
+    await settle();
+    expect(rowText()).toContain("book dentist");
+
+    await act(async () => deleteControlFor("send invoice").click());
+    await act(async () => dialogButton("Delete").click());
+    await settle();
+
+    expect(document.activeElement).not.toBe(checkboxFor("book dentist"));
+    expect(document.activeElement).not.toBe(document.body);
+    expect(document.activeElement).toBe(
+      container.querySelector(`#${ADD_INPUT_ID}`),
+    );
+  });
+
+  it("falls back to the add input when there is no row to take the place", async () => {
+    // "Or to the input if the list is now empty. Focus is never dropped to the
+    // document body" (EXPERIENCE.md:202).
+    await mountList([LIST[1]]);
+
+    await act(async () => deleteControlFor("send invoice").click());
+    await act(async () => dialogButton("Delete").click());
+    await settle();
+
+    expect(document.activeElement).toBe(
+      container.querySelector(`#${ADD_INPUT_ID}`),
+    );
+    expect(document.activeElement).not.toBe(document.body);
   });
 });
