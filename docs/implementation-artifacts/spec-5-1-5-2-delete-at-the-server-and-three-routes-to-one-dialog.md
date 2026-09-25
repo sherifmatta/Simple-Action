@@ -2,7 +2,7 @@
 title: 'Stories 5.1 and 5.2 — remove a Todo at the server, and reach delete three ways with one confirmation'
 type: 'feature'
 created: '2026-09-25'
-status: 'in-review'
+status: 'done'
 baseline_revision: 'f13b8da80fbd18f57f6b69361c57a6bae0f8d023'
 review_loop_iteration: 1
 followup_review_recommended: false
