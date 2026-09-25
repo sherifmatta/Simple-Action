@@ -95,6 +95,7 @@ out of this README to make the number look better.
 | `npm run build`       | `lint` → `typecheck` → `next build`. The deploy runs this after migrating. |
 | `npm start`           | Serves a production build.                                                 |
 | `npm test`            | Vitest, once. **Needs `DATABASE_URL`** — some tests query your branch.     |
+| `npm run test:e2e`    | Playwright, against a production build. **Needs `DATABASE_URL`** too.     |
 | `npm run lint`        | ESLint, warnings fatal. Also enforces the layer boundaries below.          |
 | `npm run typecheck`   | `tsc --noEmit`.                                                            |
 | `npm run db:generate` | Generates a migration from `src/server/db/schema.ts`. Needs no database.   |
@@ -165,7 +166,7 @@ src/server/     Route-handler support, identity, and the repository.
 src/shared/     The contract both sides import: Todo shape, error envelope, validation.
 drizzle/        Committed migration SQL. Generated, never hand-written.
 middleware.ts   Issues and resolves the Client Identity on the document request.
-e2e/            Playwright end-to-end specs. Empty until Epic 6.
+e2e/            Playwright end-to-end specs, and the locator vocabulary they share.
 docs/           Planning artifacts and the per-story implementation specs.
 ```
 
@@ -210,3 +211,19 @@ has to be set. Unset, they fail at module load with the message naming the varia
 string the branch no longer accepts, they fail with an authentication error instead — worth
 knowing apart, because the second one looks like a broken test and is actually an expired
 credential. Everything else in the suite runs offline.
+
+```bash
+npx playwright install chromium   # once
+npm run test:e2e
+```
+
+Playwright drives the four user journeys, the four forced failure paths and the three race
+cases through a real browser. It builds and starts the app itself — the end-to-end suite runs
+against a **production build** (`npm run build && npm start`), never `next dev`, because `next
+dev` compiles routes on demand and turns the first request of every journey into a wait that no
+assertion timeout makes honest. Two projects run, both **Chromium**: a `pointer` one and a
+`touch` one, which is what makes autofocus, hover-reveal and the swipe gesture testable as the
+device properties they are. There is deliberately no WebKit or Firefox project — the Client
+Identity cookie is `Secure`, and Chromium is the engine that stores a `Secure` cookie delivered
+over `http://localhost`; the others may drop it and answer every request with a `401` that
+looks like a defect and is not.

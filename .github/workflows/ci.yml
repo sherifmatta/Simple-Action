@@ -1,0 +1,65 @@
+# The gate the epic context asks for: "the suite must pass in CI against the
+# same commit that deploys." This runs the same four commands a developer runs
+# locally, in the same order, against the checked-out commit — so a green run
+# here and a green run there mean the same thing.
+#
+# `DATABASE_URL` must point at a Neon **branch**, never at production. The
+# repository tests write rows and the end-to-end suite creates Todos through
+# the UI; both are harmless against a branch and are not something to run
+# against the database a real deployment reads. Create a dedicated CI branch in
+# Neon and put its pooled connection string in the repository secret.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    env:
+      # The one variable this system needs, in every environment (README
+      # §Environments). Nothing in the codebase defaults it, so an unset secret
+      # fails loudly at module load rather than quietly skipping a test.
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # `.nvmrc` is the single Node pin; repeating the major here would be
+          # the second place it could drift.
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Chromium only, for the reason `playwright.config.ts` records: the
+      # Client Identity cookie is `Secure`, and Chromium is the engine that
+      # keeps a Secure cookie delivered over `http://localhost`.
+      - name: Install Playwright's Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit and integration tests
+        run: npm test
+
+      # `playwright.config.ts` starts the server itself with
+      # `npm run build && npm start`, so the end-to-end suite runs against a
+      # production build of this commit.
+      - name: End-to-end tests
+        run: npm run test:e2e
+
+      - name: Upload the Playwright report
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7

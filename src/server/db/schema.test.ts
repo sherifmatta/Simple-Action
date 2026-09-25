@@ -229,19 +229,23 @@ describe("drizzle/ — the committed migration (AC4, matrix row 'Migration gener
   // to a schema change — this is what holds the committed output to it.
   //
   // `drizzle-kit generate` reads schema files and the snapshot in `out`; it
-  // needs no database and no DATABASE_URL. Both paths must be relative to
-  // the project root, which is why the probe writes inside it rather than in
-  // the system temp directory.
+  // needs no database and no DATABASE_URL.
+  //
+  // Every path below is absolute, and the config is written inside `probeOut`
+  // rather than at the repository root. That is not tidiness: six test files
+  // walk the root reading every source file, and a probe config that appears
+  // and vanishes there races them — `readdirSync` sees it, the probe finishes,
+  // and their `readFileSync` fails `ENOENT`. Surfaced by Story 6.1, which made
+  // the suite wide enough for the race to land. `node_modules` is already in
+  // every one of those scans' skip lists, so nothing there can be seen at all.
   it("is current: regenerating from schema.ts produces no new migration", () => {
     const probeOut = path.join(
       "node_modules",
       ".cache",
       `drift-probe-${process.pid}`,
     );
-    const probeConfig = path.resolve(
-      process.cwd(),
-      `.drift-probe-${process.pid}.config.ts`,
-    );
+    const probeRoot = path.resolve(process.cwd(), probeOut);
+    const probeConfig = path.join(probeRoot, "drizzle.config.ts");
 
     try {
       mkdirSync(path.resolve(process.cwd(), probeOut), { recursive: true });
@@ -257,8 +261,8 @@ describe("drizzle/ — the committed migration (AC4, matrix row 'Migration gener
         `import { defineConfig } from "drizzle-kit";\n` +
           `export default defineConfig({\n` +
           `  dialect: "postgresql",\n` +
-          `  schema: "./src/server/db/schema.ts",\n` +
-          `  out: ${JSON.stringify(probeOut)},\n` +
+          `  schema: ${JSON.stringify(path.resolve(process.cwd(), "src", "server", "db", "schema.ts"))},\n` +
+          `  out: ${JSON.stringify(probeRoot)},\n` +
           `});\n`,
         "utf8",
       );
@@ -273,20 +277,17 @@ describe("drizzle/ — the committed migration (AC4, matrix row 'Migration gener
         },
       );
 
-      const generated = readdirSync(
-        path.resolve(process.cwd(), probeOut),
-      ).filter((f) => f.endsWith(".sql"));
+      const generated = readdirSync(probeRoot).filter((f) =>
+        f.endsWith(".sql"),
+      );
 
       expect(
         generated,
         `schema.ts has drifted from the committed migration — drizzle-kit produced ${generated.join(", ")}. Run \`npm run db:generate\` and commit the result.`,
       ).toHaveLength(0);
     } finally {
-      rmSync(path.resolve(process.cwd(), probeOut), {
-        recursive: true,
-        force: true,
-      });
-      rmSync(probeConfig, { force: true });
+      // One removal, because the config lives inside the tree being removed.
+      rmSync(probeRoot, { recursive: true, force: true });
     }
   }, 120_000);
 });
