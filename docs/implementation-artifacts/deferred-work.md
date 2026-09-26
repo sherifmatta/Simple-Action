@@ -686,3 +686,25 @@ closes can be found by text search.
 - source_spec: `spec-6-3-re-verify-the-readme-and-write-the-deploy-runbook.md`
   summary: `e2e/audit-vocabulary.spec.ts` does not run in the `narrow` project, so AC5's product-surface half is unproven at 320px.
   evidence: `playwright.config.ts`'s `narrow` project sets `testMatch: /audit-responsive\.spec\.ts/`, so a new spec file is silently excluded from it. The new spec runs on `pointer` and `touch` only. **The exclusion is invisible in the run output**: Playwright does not collect a `testMatch`-excluded file at all, so it is never reported as skipped. `npx playwright test --list` gives `Total: 106 tests in 7 files` and the run reports 93 passed + 13 skipped — the 13 are the pre-existing `test.skip()` calls in `journeys.spec.ts`, `audit-focus.spec.ts` and `audit-responsive.spec.ts`, and none of them is this file. Nothing in the output would tell a reader that six cases were never considered. Judged not worth closing: the banned word is not a function of viewport width, no copy in this product is chosen by a media query, and widening `testMatch` would treble the suite's wall-clock to re-prove the same strings. Recorded so that the gating is a decision on the record rather than an omission someone rediscovers.
+
+## Triaged: 2026-09-26
+
+This file is append-only, so nothing above is edited or removed — but after six epics it
+holds 106 entries and 20 closure lines, and it cannot answer "what is actually left?".
+
+`deferred-work-triage-2026-09-26.md` answers it, once, against the tree at `1c857b8`. Every
+entry above was read and checked against the current source. The result:
+
+- **19 closed**, 87 open. Of the 87: **20 are stale** (already fixed, never recorded here),
+  **27 are accepted-forever** trade-offs, **7 are superseded** by a later entry, and
+  **33 are genuinely pending** — roughly 25 distinct problems once re-affirmations and
+  duplicate recordings of one fact are merged.
+- The stale fifth is why the raw count misleads. Three of those were fixed in shipped product
+  code by Story 6.2, whose own execution list required a closure that was never written:
+  `Retry` focus (line 232), the list announced twice (236), and the silent counter (284).
+- The triage also records six defects in this file's own bookkeeping — discharges hidden
+  inside ordinary entries, closures that paraphrase rather than quote, one mis-attributed
+  closure, two partial closures that never total up, a missing section heading, and an entry
+  that undercounts its own subject.
+
+Read the triage for the "what's left" list. Keep appending here for the record.
