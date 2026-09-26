@@ -57,35 +57,69 @@ and `drizzle.config.ts`) fail immediately and name it when it is unset.
 ## How long this takes
 
 NFR-6 asks for clone-to-running in under five minutes with no undocumented steps. That is a
-testable requirement, so it was **measured with a clock rather than asserted**:
+testable requirement, so it was **measured with a clock rather than asserted** — once in
+Epic 1, against a codebase with one story in it, and again in Epic 6 against the finished
+tree. Both sets of figures are kept, so a regression reads as a delta rather than as a
+replaced number:
 
-| Step                                | Measured   |
-| ----------------------------------- | ---------- |
-| `git clone`                         | 0.4 s      |
-| `npm ci` (cold cache)               | 6.1 s      |
-| `npm run db:migrate`                | 1.0 s      |
-| `npm run dev` → first `GET /` = 200 | 3.1 s      |
-| **Total, commands only**            | **10.6 s** |
+| Step                                | Epic 1, 2026-09-21 | Epic 6, 2026-09-26 | Delta      |
+| ----------------------------------- | ------------------ | ------------------ | ---------- |
+| `git clone`                         | 0.4 s              | 0.8 s              | +0.4 s     |
+| `npm ci` (cold cache)               | 6.1 s              | 6.9 s              | +0.8 s     |
+| `npm run db:migrate`                | 1.0 s              | not re-measured    | —          |
+| `npm run dev` → first `GET /` = 200 | 3.1 s              | 10.1 s             | **+7.0 s** |
+| **Total of the three re-measured**  | **9.6 s**          | **17.8 s**         | **+8.2 s** |
 
-**Method.** A fresh `git clone` into an empty directory on an Apple Silicon Mac (macOS 25.6,
-Node 24.19.0, npm 11.17.0) over domestic broadband, measured 2026-09-21. Every step above was
-executed in one uninterrupted run against a live Neon branch — including the migration, which
-applied the committed SQL and reported `migrations applied successfully`, and the dev server,
-which was polled with `curl` until the document request returned 200 and set the Client
-Identity cookie. The clone was taken from a local path rather than over the network, so treat
-0.4 s as a floor: cloning from a remote adds however long your connection takes to move a few
-megabytes. `npm ci` ran with `--cache` pointed at an empty directory, so every package was
-downloaded rather than served from a warm local cache — the number a stranger actually gets.
+Epic 1 published a **four-step total of 10.6 s**, which included the migration. That figure has
+not changed; the 9.6 s above is the same walk re-based onto the three steps Epic 6 re-measured,
+so the delta column compares like with like. There is no four-step Epic 6 total, because the
+migration row was not re-measured.
+
+**Method.** Both walks ran the same procedure: a real `git clone` from a local path into an
+empty directory, then `npm ci` with `--cache` pointed at an empty directory so every package
+is downloaded rather than served from a warm local cache — the number a stranger actually
+gets — then `cp .env.example .env` with a Neon connection string pasted in, then the dev
+server polled with `curl` until the document request returned 200 and set the Client Identity
+cookie. **Node 24.19.0** and **npm 11.17.0** on both walks. Epic 1 recorded its host as
+"macOS 25.6", which is almost certainly a Darwin release number rather than a macOS one —
+`uname -r` on this machine reports `25.6.0` while `sw_vers` reports macOS `26.6.2` — so the
+two walks most likely ran on the same operating system, and **none of the deltas above is
+explained by it**. What did move is the tree: 7 runtime and 13 development dependencies, 622
+lockfile entries, and five epics of application code behind the first request.
+
+**What the re-walk could not hold constant**, said here rather than absorbed into a number:
+
+- **The migration was not re-measured.** Epic 1's 1.0 s applied migration `0000` to a branch
+  that did not yet carry it. The branch this walk used already carries it, so the same command
+  would have timed the no-op path — connect, read the ledger the branch itself keeps, report
+  nothing to apply — which
+  is a smaller number for a different reason, and presenting it as an improvement would be the
+  kind of flattering comparison this table exists to prevent. The step is unchanged and still
+  required on a first clone; it is the one row with no Epic 6 figure, and both totals are
+  struck over the three steps that have one.
+- **The dev server's +7.0 s is first-touch cost, not application code.** Restarting the same
+  server on the same clone, with the dependency tree already in the operating system's file
+  cache, reached its first 200 in **1.6 s**; Next.js reported `Ready in 250ms` and
+  `GET / 200 in 2.2s` on the slow run itself. The remaining seven seconds are the first read
+  of a freshly installed `node_modules` off disk. The figure is kept as measured, because a
+  stranger on a fresh clone pays it exactly once and this is that once.
+- **Both clones came from a local path**, so treat both clone figures as a floor. Cloning from
+  a remote adds however long your connection takes to move a few megabytes.
 
 **What the number excludes**, and should: installing Node 24 if you do not have it, and
 creating the Neon account and copying the connection string. Allow about two minutes for a
 first-time Neon signup. Your network, not this repository, is the variable that moves the
 total.
 
-**Outcome against NFR-6.** Just under eleven seconds of commands plus a couple of minutes of
-account signup sits comfortably inside five minutes, with the human steps — not the tooling —
-as the binding cost. NFR-6 stands as written; nothing is renegotiated, and no step was left
-out of this README to make the number look better.
+**Outcome against NFR-6.** Eighteen seconds of commands plus a couple of minutes of account
+signup still sits comfortably inside five minutes, with the human steps — not the tooling — as
+the binding cost. The re-walk also needed **no step this README does not document**. Seven of
+the eight steps were observed: clone, `cd`, install, copy the template, paste the connection
+string, start the dev server, open the page. The migration step is **inferred rather than
+verified** — it was not executed on this walk (see above), so nothing was learned about
+whether it needs an undocumented step of its own; Epic 1 ran it and found none. NFR-6 stands
+as written; nothing is renegotiated, and no step was left out of this README to make the
+number look better.
 
 ## Scripts
 
@@ -156,6 +190,12 @@ its own Neon branch rather than sharing. And a migration is not rolled back by r
 commit — the deploy applies forward only, so undoing one means generating a compensating
 migration, or resetting the Neon branch, which is usually faster for preview.
 
+**Operating a deploy is a different job from setting one up**, and the section above is the
+setup. [`docs/DEPLOY-RUNBOOK.md`](docs/DEPLOY-RUNBOOK.md) is the other half: what the deploy
+actually runs and what it does not, what differs between the three environments and what
+cannot, how to roll back code and how to roll back a migration, and what to check first when
+one fails. Read it when something is wrong; you do not need it to ship.
+
 ## How the code is arranged
 
 ```
@@ -167,7 +207,8 @@ src/shared/     The contract both sides import: Todo shape, error envelope, vali
 drizzle/        Committed migration SQL. Generated, never hand-written.
 middleware.ts   Issues and resolves the Client Identity on the document request.
 e2e/            Playwright end-to-end specs, and the locator vocabulary they share.
-docs/           Planning artifacts and the per-story implementation specs.
+docs/           Planning artifacts, the per-story implementation specs, and
+                DEPLOY-RUNBOOK.md — how to operate and roll back a deploy.
 ```
 
 Four boundaries hold this together, and `eslint.config.mjs` enforces each of them, so
