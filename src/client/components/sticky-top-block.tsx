@@ -33,9 +33,21 @@
 // `top-0` transcribes "at the top of the viewport" literally, because no
 // numeric offset is given anywhere in DESIGN.md or EXPERIENCE.md. The related
 // measurement — `scroll-padding-top` sized to this block, so a focused
-// control never lands underneath it — is UX-DR21 and is Story 6.2's, measured
-// live against a block that by then has all three occupants. Nothing here
-// hard-codes a height for it to read.
+// control never lands underneath it — is UX-DR21, and Story 6.2 built it: the
+// `id` below is the whole of this file's part in it. Nothing here hard-codes a
+// height for it to read, and `sticky-top-block.test.ts:141` fails any height
+// class that tried to, so the number has exactly one source —
+// `src/client/device/sticky-block-offset.ts`, which measures the rendered box
+// and publishes it for `app/globals.css` to read back. The id itself comes
+// from `sticky-block-contract.ts`: this file is a Server Component, so it
+// cannot import the hook's module without pulling `useLayoutEffect` into the
+// server graph.
+//
+// The `id` is an attribute rather than a wrapper, and that is forced: the two
+// exact-list assertions in this file's test count JSX tags and `bg-*` classes,
+// so a wrapper element or a measuring `<div>` would fail them. An attribute is
+// invisible to both — which is the point, because the block's shape is what
+// those assertions protect and the measurement has no business changing it.
 //
 // `bg-card` is DESIGN.md:360's "opaque surface rather than a translucent
 // one": `{colors.card}` is six hex digits with no alpha channel, and no
@@ -61,13 +73,18 @@
 // carries the block's top inset and the gap between its occupants; both are
 // untokenised literals, so both live in `app/globals.css` with the mockup
 // line they are transcribed from.
+import { STICKY_TOP_BLOCK_ID } from "@/client/device/sticky-block-contract";
+
 import { AddTodo } from "./add-todo";
 import { ErrorBannerRegion } from "./error-banner";
 import { FilterTabs } from "./filter-tabs";
 
 export function StickyTopBlock() {
   return (
-    <div className="top-block-stack sticky top-0 z-10 -mx-gutter flex flex-col bg-card px-gutter">
+    <div
+      id={STICKY_TOP_BLOCK_ID}
+      className="top-block-stack sticky top-0 z-10 -mx-gutter flex flex-col bg-card px-gutter"
+    >
       <AddTodo />
       <ErrorBannerRegion />
       <FilterTabs />

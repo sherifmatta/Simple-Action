@@ -346,7 +346,7 @@ export function TodoRow({
           // carries `completed` and the server sets it, so a retry stores the
           // same value rather than flipping it a second time (AD-6).
           onClick={() => onToggle(todo, !todo.completed)}
-          className="checkbox-box checkbox-hit-area group/box flex flex-none items-center justify-center rounded-sm border-border-control bg-row-active text-on-accent aria-checked:border-accent aria-checked:bg-accent group-data-completed:aria-checked:border-accent-deep group-data-completed:aria-checked:bg-accent-deep focus-visible:shadow-focus group-data-completed:focus-visible:shadow-focus-on-complete"
+          className="checkbox-box checkbox-hit-area scroll-clear-sticky group/box flex flex-none items-center justify-center rounded-sm border-border-control bg-row-active text-on-accent aria-checked:border-accent aria-checked:bg-accent group-data-completed:aria-checked:border-accent-deep group-data-completed:aria-checked:bg-accent-deep focus-visible:shadow-focus group-data-completed:focus-visible:shadow-focus-on-complete"
         >
           {/*
             Drawn in both statuses and revealed by the control's own state rather
@@ -398,7 +398,7 @@ export function TodoRow({
           // device leaves the panel latched open behind the control that has
           // moved on.
           onBlur={() => setRevealed(false)}
-          className="delete-action delete-hit-area ml-auto flex flex-none items-center justify-center rounded-md text-text-muted hover:text-danger-text focus-visible:shadow-focus group-data-completed:focus-visible:shadow-focus-on-complete"
+          className="delete-action delete-hit-area scroll-clear-sticky ml-auto flex flex-none items-center justify-center rounded-md text-text-muted hover:text-danger-text focus-visible:shadow-focus group-data-completed:focus-visible:shadow-focus-on-complete"
         >
           {/*
             The thin rounded line glyph of mockups/key-delete.html, geometry

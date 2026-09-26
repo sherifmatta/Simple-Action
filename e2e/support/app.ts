@@ -4,10 +4,24 @@ import { expect, test, type Locator, type Page, type Request } from "@playwright
 //
 // The first is ordinary: a locator derived once from the product's own markup
 // is a locator that cannot drift per file. There is no `data-testid` anywhere
-// in this repository and Epic 6 adds none — a test hook in product source
-// would be a product change, and this epic changes no product source — so
-// every locator below is a role, an accessible name, or a class the design
-// system already names.
+// in this repository and Epic 6 adds none — a test hook exists only to be
+// tested against, so every locator below is a role, an accessible name, or a
+// class the design system already names.
+//
+// Story 6.2 is the one story in this epic permitted to touch product source,
+// and the `#sticky-top-block` id `stickyBlock()` reaches for is the single
+// place that shows up here. It is not a test hook: the product's own
+// measurement hook resolves the block by that id at runtime
+// (`src/client/device/sticky-block-offset.ts`), where it is a constant in
+// `src/client/device/sticky-block-contract.ts`.
+//
+// It is spelled out as a literal here, and that is a deliberate trade rather
+// than an oversight. This module imports nothing from `src/` — see the
+// paragraph below, which is why — so it cannot import that constant, and a
+// rename would be caught by these specs failing rather than by the compiler.
+// The same applies to `--sticky-block-height` in `audit-focus.spec.ts`. Both
+// are the product's own names, read from the running page; neither exists
+// only for the tests.
 //
 // The second is a taboo. `announcer.test.ts` walks the whole tree and fails
 // any file that *declares* a live region, and `e2e/` is not among the
@@ -490,4 +504,137 @@ export async function refetchOnFocus(page: Page): Promise<void> {
   await page.evaluate(() => {
     window.dispatchEvent(new Event("visibilitychange"));
   });
+}
+
+
+// --- The audit's vocabulary (Story 6.2) --------------------------------------
+
+/**
+ * Exactly the ceiling, as one Todo (AC8).
+ *
+ * `TODO_TEXT_MAX_LENGTH` is 500 and this is 500 characters, built rather than
+ * pasted so the count cannot drift by a space in an editor. Real words with
+ * real spaces, because the question AC8 asks is about *wrapping*, and a
+ * single 500-character token would wrap by `overflow-wrap: anywhere` alone and
+ * would prove nothing about ordinary text.
+ *
+ * It ends in a full stop rather than the space the repetition lands on. HTML
+ * collapses trailing whitespace, so a fixture ending in a space goes in at 500
+ * characters and comes back out of `textContent` at 499 — which reads exactly
+ * like the truncation this constant exists to disprove.
+ */
+export const LONG_TODO_TEXT = `${"the quick brown fox jumps over the lazy dog "
+  .repeat(12)
+  .slice(0, 499)}.`;
+
+/** The block the whole audit is about. */
+export function stickyBlock(page: Page): Locator {
+  return page.locator("#sticky-top-block");
+}
+
+/**
+ * The card, by the recipe that gives it its ceiling.
+ *
+ * `max-w-card-max-width` is the class DESIGN.md's `card-max-width` token
+ * becomes, so this locator names the very property AC9 measures rather than a
+ * position in the tree.
+ */
+export function card(page: Page): Locator {
+  return page.locator(".max-w-card-max-width");
+}
+
+/**
+ * A locator's bounding box, or a failure that says which locator had none.
+ *
+ * `boundingBox()` returns `null` for an element that is not rendered, and an
+ * unchecked `null` propagates into the arithmetic below as `NaN`, which
+ * compares false against everything and reports a clearance failure that is
+ * really an absent element.
+ */
+export async function boxOf(
+  locator: Locator,
+  what: string,
+): Promise<{ x: number; y: number; width: number; height: number }> {
+  const box = await locator.boundingBox();
+  expect(box, `${what} has no bounding box — it is not rendered`).not.toBeNull();
+  return box!;
+}
+
+/**
+ * The control is not even partially covered by the sticky block (AC3).
+ *
+ * Both rectangles, compared — not a screenshot and not `toBeInViewport()`,
+ * which answers a different question and would pass for a control the block
+ * is sitting on top of. The failure message carries both boxes because the
+ * useful information is by how much and in which direction, and a boolean
+ * throws that away.
+ */
+export async function assertClearOfStickyBlock(
+  page: Page,
+  control: Locator,
+  what: string,
+): Promise<void> {
+  const block = await boxOf(stickyBlock(page), "the sticky block");
+  const target = await boxOf(control, what);
+  const blockBottom = block.y + block.height;
+
+  expect(
+    target.y,
+    `${what} is covered by the sticky block: the block ends at y=${blockBottom.toFixed(1)} ` +
+      `and the control starts at y=${target.y.toFixed(1)} ` +
+      `(overlap ${(blockBottom - target.y).toFixed(1)}px)`,
+  ).toBeGreaterThanOrEqual(blockBottom);
+}
+
+/**
+ * Drive `Tab` and report what took focus, in order.
+ *
+ * Accessible names where there is one, otherwise a tag-and-id sketch, because
+ * the assertion AC16 makes is about *reading* order and a name is what a
+ * screen reader reads. Returns rather than asserts: the expected order is the
+ * spec's, not this module's.
+ */
+export async function tabSequence(page: Page, steps: number): Promise<string[]> {
+  const seen: string[] = [];
+  for (let index = 0; index < steps; index += 1) {
+    await page.keyboard.press("Tab");
+    seen.push(
+      await page.evaluate(() => {
+        const element = document.activeElement;
+        if (element === null || element === document.body) return "(body)";
+
+        // The accessible name, in the order the platform computes it.
+        // `aria-labelledby` has to be *resolved* — the attribute holds an id,
+        // and reporting the id would make this read like a name while being
+        // an implementation detail.
+        const labelledBy = element.getAttribute("aria-labelledby");
+        const referenced =
+          labelledBy === null
+            ? null
+            : (document.getElementById(labelledBy)?.textContent?.trim() ?? null);
+
+        const label =
+          element.getAttribute("aria-label") ??
+          referenced ??
+          element.textContent?.trim() ??
+          "";
+
+        return `${element.tagName.toLowerCase()}${label === "" ? "" : `:${label}`}`;
+      }),
+    );
+  }
+  return seen;
+}
+
+/**
+ * Every element on the page a user can operate (AC18).
+ *
+ * Resolved in the browser rather than assembled from named locators, because
+ * the criterion is about the surface as a whole — a control nobody thought to
+ * name is exactly the one whose hit area was never checked.
+ */
+export function interactiveElements(page: Page): Locator {
+  return page.locator(
+    "button, a[href], input, select, textarea, [tabindex]:not([tabindex='-1'])",
+  );
 }

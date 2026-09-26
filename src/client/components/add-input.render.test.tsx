@@ -27,7 +27,31 @@ import { renderToString } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TODO_TEXT_MAX_LENGTH } from "@/shared/contract/validation";
+import { AnnouncerProvider } from "@/client/feedback/announcer";
+
 import { AddInput, ADD_INPUT_PLACEHOLDER, COUNTER_APPEARS_AT } from "./add-input";
+
+/**
+ * The field, under the one provider it now depends on.
+ *
+ * Story 6.2's decision 3 gave the counter a voice, and it routes through
+ * `announce()` like every other utterance in the product — so `AddInput`
+ * calls `useAnnounce()` and, like every other consumer, throws without the
+ * provider above it. In the running product that provider is mounted once at
+ * the root (`src/client/providers.tsx`), so wrapping here restores the shape
+ * the component actually ships in rather than propping up a bare mount.
+ *
+ * The announcements themselves are driven for real at the bottom of this file:
+ * the wrapper is what makes that possible, because it puts the polite region
+ * in the same container the assertions read from.
+ */
+function Field({ onSubmit }: { onSubmit: (text: string) => void }) {
+  return (
+    <AnnouncerProvider>
+      <AddInput onSubmit={onSubmit} />
+    </AnnouncerProvider>
+  );
+}
 
 let container: HTMLDivElement;
 let root: Root;
@@ -116,7 +140,7 @@ const NO_SUBMIT: (text: string) => void = () => {};
 
 async function mount(onSubmit: (text: string) => void = NO_SUBMIT): Promise<HTMLInputElement> {
   await act(async () => {
-    root.render(<AddInput onSubmit={onSubmit} />);
+    root.render(<Field onSubmit={onSubmit} />);
   });
   const field = container.querySelector("input");
   expect(field, "the input did not render").not.toBeNull();
@@ -169,12 +193,12 @@ async function hydrate(): Promise<{
   unmount: () => Promise<void>;
 }> {
   const host = document.createElement("div");
-  host.innerHTML = renderToString(<AddInput onSubmit={NO_SUBMIT} />);
+  host.innerHTML = renderToString(<Field onSubmit={NO_SUBMIT} />);
   document.body.append(host);
 
   let hydrated: Root | undefined;
   await act(async () => {
-    hydrated = hydrateRoot(host, <AddInput onSubmit={NO_SUBMIT} />);
+    hydrated = hydrateRoot(host, <Field onSubmit={NO_SUBMIT} />);
   });
 
   const field = host.querySelector("input");
@@ -542,5 +566,81 @@ describe("stillness arrives as a marker, never as a branched class", () => {
     // derives the suppression from it, so a class string that differed would
     // mean the decision had been branched in the component (AR-28).
     expect(moving.className).toBe(still);
+  });
+});
+
+
+// --- The counter, out loud (Story 6.2, decision 3) ---------------------------
+//
+// `deferred-work.md` recorded that the counter and the 500-character stop were
+// invisible to assistive technology. These drive the field for real and read
+// the polite region, rather than scanning the component's source: the bug that
+// only a behavioural test catches is an utterance that reports the wrong
+// number, and a regex over `announce(...)` cannot see a number.
+
+/** The one polite region the wrapper mounts, as a screen reader would hear it. */
+function politeText(): string {
+  const regions = [...container.querySelectorAll("[aria-live]")].filter(
+    (element) => element.getAttribute("aria-live") === "polite",
+  );
+  expect(regions, "expected exactly one polite region").toHaveLength(1);
+  return regions[0]?.textContent?.trim() ?? "";
+}
+
+describe("the character ceiling reaches assistive technology (decision 3)", () => {
+  beforeEach(() => stubCapabilities({ pointer: false, reduced: false }));
+
+  it("says nothing at all below the counter's threshold", async () => {
+    const field = await mount();
+    await type(field, "a".repeat(COUNTER_APPEARS_AT - 1));
+    expect(politeText()).toBe("");
+  });
+
+  it("reports the real remainder when the counter appears", async () => {
+    const field = await mount();
+    await type(field, "a".repeat(COUNTER_APPEARS_AT));
+    expect(politeText()).toBe(
+      `${TODO_TEXT_MAX_LENGTH - COUNTER_APPEARS_AT} characters left.`,
+    );
+  });
+
+  it("reports the remainder that is actually left, not the threshold's", async () => {
+    // The bug a source scan cannot see. A paste — or `restore` re-seating a
+    // long draft after a refused add — crosses the threshold without passing
+    // through it, so a fixed "50 characters left." would contradict the
+    // numeral rendered beside it.
+    const field = await mount();
+    await type(field, "a".repeat(480));
+    expect(politeText()).toBe("20 characters left.");
+  });
+
+  it("stays silent between the two thresholds", async () => {
+    // AD-12 gives the product one polite region, and the entry that recorded
+    // this gap named the cost of announcing every keystroke past 450.
+    const field = await mount();
+    await type(field, "a".repeat(COUNTER_APPEARS_AT));
+    const atThreshold = politeText();
+
+    await type(field, "a".repeat(499));
+
+    expect(politeText()).toBe(atThreshold);
+  });
+
+  it("announces the ceiling when the stop is reached", async () => {
+    const field = await mount();
+    await type(field, "a".repeat(TODO_TEXT_MAX_LENGTH));
+    expect(politeText()).toBe("Character limit reached.");
+  });
+
+  it("re-arms, so a user editing at the ceiling hears it each time", async () => {
+    const field = await mount();
+    await type(field, "a".repeat(TODO_TEXT_MAX_LENGTH));
+    expect(politeText()).toBe("Character limit reached.");
+
+    // Back below the threshold and up again.
+    await type(field, "a".repeat(10));
+    await type(field, "a".repeat(TODO_TEXT_MAX_LENGTH));
+
+    expect(politeText()).toBe("Character limit reached.");
   });
 });

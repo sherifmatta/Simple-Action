@@ -1034,3 +1034,47 @@
     background-color: rgba(36, 36, 58, 0.32);
   }
 }
+
+/* ---------------------------------------------------------------------------
+   UX-DR21 — a focused control never lands underneath the sticky block.
+
+   EXPERIENCE.md:198: tabbing down a long list must not put the focused
+   control behind the block that is pinned over it. The browser already knows
+   how to leave room — `scroll-padding` on the scrolling box and
+   `scroll-margin` on the target — and both need the block's height, which is
+   not a constant: the error banner region joins the block only when something
+   fails, and the filter tabs wrap at the narrowest viewport.
+
+   So the number arrives from `src/client/device/sticky-block-offset.ts`,
+   which measures the rendered block and writes `--sticky-block-height` onto
+   `document.documentElement`. Both declarations below read it back with a
+   `0px` fallback, and the fallback is the load-bearing half: if the hook
+   never runs — server render, a browser without `ResizeObserver`, a crash in
+   the client bundle — these resolve to the behaviour the product had before
+   this story rather than to `scroll-padding-top: var(--undefined)`, which
+   would make the declaration invalid and take the whole rule with it.
+
+   These are the first plain selectors in this file, which is otherwise all
+   `@theme` and `@utility`. That is deliberate rather than untidy: a runtime
+   measurement is not a design token, and `app/globals.test.ts:170,180,190`
+   assert the token counts exactly, so an `@theme` entry would fail a done
+   story's completeness guard — correctly.
+   --------------------------------------------------------------------------- */
+
+:root {
+  /* The page body is the only scrolling element in the product
+     (epic-6-context: "there is no nested scroll region"), so the viewport's
+     scrolling box is the one that needs the padding, and `:root` is where the
+     propagated `scroll-padding` is read from. */
+  scroll-padding-top: var(--sticky-block-height, 0px);
+}
+
+@utility scroll-clear-sticky {
+  /* The other half of the pair, and it is not redundant with the padding
+     above. `scroll-padding` covers scrolls the browser performs into the
+     viewport; `scroll-margin` is carried by the *target* and is what governs
+     `scrollIntoView` and sequential-focus navigation onto that element
+     specifically. A row's checkbox and its delete control are the two
+     focusable descendants UX-DR21 names, and they carry this. */
+  scroll-margin-top: var(--sticky-block-height, 0px);
+}

@@ -77,6 +77,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 
+import { useStickyBlockOffset } from "@/client/device/sticky-block-offset";
 import { useReducedMotion } from "@/client/motion/motion";
 import type { Todo } from "@/shared/contract/todo";
 import { matchesFilterView } from "@/client/todos/filter-view";
@@ -155,6 +156,16 @@ export function TodoList() {
   // component branches on a duration and no `className` here is computed.
   const still = useReducedMotion();
 
+  // Publish the sticky block's measured height so a focused control below the
+  // fold never lands underneath it (UX-DR21, EXPERIENCE.md:198). The call is
+  // here rather than in the block because the block is a Server Component with
+  // its JSX tag list pinned, so it can hold neither a ref nor a hook — and
+  // this component is the client one mounted beside it for the whole session,
+  // which already resolves elements by id a few lines down. It returns
+  // nothing and renders nothing; everything it does is a custom property that
+  // `app/globals.css` reads back.
+  useStickyBlockOffset();
+
   // Which Todo the confirmation is asking about, and the only state this
   // component holds. One dialog for the whole list rather than one per row —
   // "one dialog, one level deep, nothing stacks on top of it" is a property of
@@ -176,6 +187,13 @@ export function TodoList() {
   const visible = data?.filter(
     (todo) => matchesFilterView(todo, view) || isDeparting(todo.id),
   );
+
+  // A list that arrived and has nothing in this view — which is a different
+  // state from one that has not arrived, and the distinction is the whole
+  // reason `listLanded` exists. One name for it, used twice below: it decides
+  // whether the empty panel renders, and whether the list region still says
+  // "Todo List, 0 items" alongside it (Story 6.2, decision 2).
+  const resolvedEmpty = listLanded && visible?.length === 0;
 
   // The row the dialog is asking about, derived rather than stored — see the
   // note on the state above. `null` closes the dialog, which is also the right
@@ -329,9 +347,31 @@ export function TodoList() {
         nothing — the skeletons are `aria-hidden` and carry no text, so both
         read as an empty list. Story 2.5 deferred this here, as the story that
         owns what the region announces.
+
+        `aria-hidden` on the resolved-empty case is Story 6.2's decision 2.
+        `deferred-work.md` recorded that an empty list reaches assistive
+        technology twice — "Todo List, list, 0 items" from this named region,
+        and then the empty state's polite announcement saying the same thing
+        in words the design actually wrote. Both were individually required
+        and together they are a duplicate, so one goes.
+
+        The one that goes is this region's exposure, and only in the one state
+        where it is redundant. The empty state's announcement is what a screen
+        reader receives without having to navigate anywhere, it is the copy
+        DESIGN.md specifies, and it is Story 2.6 AC17's requirement — so
+        removing *it* would have traded a duplicate for a regression.
+
+        The condition is the same expression that renders the panel, lifted to
+        a name so the two cannot drift: exposure goes exactly when the panel
+        arrives. Nothing is hidden while loading — `aria-busy` still has a
+        region to sit on, because a list that has not landed is not an empty
+        one — and nothing is hidden once a row exists. The element itself
+        never leaves the DOM, so Story 2.5 AC11's "skeletons have something to
+        mount into" is untouched.
       */}
       <ul
         aria-busy={loading ? true : undefined}
+        aria-hidden={resolvedEmpty ? true : undefined}
         aria-label="Todo List"
         data-still={still ? true : undefined}
         className="flex flex-col gap-row-gap"
@@ -372,7 +412,7 @@ export function TodoList() {
         the *filtered* list's, not the whole list's: a list with four Completed
         Todos and no Active one is empty in the Active view and says so.
       */}
-      {listLanded && visible?.length === 0 ? <EmptyState variant={view} /> : null}
+      {resolvedEmpty ? <EmptyState variant={view} /> : null}
       {/*
         One dialog for the whole list, a sibling of the region rather than a
         child of it — a `<dialog>` is not valid inside a `<ul>`, and it must

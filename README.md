@@ -217,13 +217,22 @@ npx playwright install chromium   # once
 npm run test:e2e
 ```
 
-Playwright drives the four user journeys, the four forced failure paths and the three race
-cases through a real browser. It builds and starts the app itself — the end-to-end suite runs
-against a **production build** (`npm run build && npm start`), never `next dev`, because `next
-dev` compiles routes on demand and turns the first request of every journey into a wait that no
-assertion timeout makes honest. Two projects run, both **Chromium**: a `pointer` one and a
-`touch` one, which is what makes autofocus, hover-reveal and the swipe gesture testable as the
-device properties they are. There is deliberately no WebKit or Firefox project — the Client
+Playwright drives the four user journeys, the four forced failure paths, the three race cases
+and the accessibility audit through a real browser. It builds and starts the app itself — the
+end-to-end suite runs against a **production build** (`npm run build && npm start`), never
+`next dev`, because `next dev` compiles routes on demand and turns the first request of every
+journey into a wait that no assertion timeout makes honest. Three projects run, all
+**Chromium**: a `pointer` one and a `touch` one, which is what makes autofocus, hover-reveal
+and the swipe gesture testable as the device properties they are, and a `narrow` one at
+**320x568**.
+
+`narrow` is not a device. 320 CSS px is WCAG 1.4.10's reflow threshold, and no document in this
+project names a smallest supported viewport — so the criterion's own number is the one that
+binds. It runs only `audit-responsive.spec.ts`, because re-running journeys that are not about
+width at a third size would treble the suite's wall-clock to re-prove nothing; the skips you
+see reported are that gating and nothing else. It is also where the 500-character ceiling is
+checked, since a Pixel 5 is 393px and would prove the wrap on a screen 73px wider than the
+criterion is about. There is deliberately no WebKit or Firefox project — the Client
 Identity cookie is `Secure`, and Chromium is the engine that stores a `Secure` cookie delivered
 over `http://localhost`; the others may drop it and answer every request with a `401` that
 looks like a defect and is not.

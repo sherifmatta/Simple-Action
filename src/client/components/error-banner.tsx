@@ -44,6 +44,8 @@ import { useErrorSlot } from "@/client/feedback/error-slot";
 import { identityExpired } from "@/client/todos/todo-list-query";
 import { useTodos } from "@/client/todos/use-todos";
 
+import { ADD_INPUT_ID } from "./add-input";
+
 export function ErrorBannerRegion() {
   const {
     error: slot,
@@ -100,6 +102,50 @@ export function ErrorBannerRegion() {
   // difference is that a re-request is in flight: it is about to answer, and
   // the answer is what decides. A `create` retry starts no read, so that
   // path is untouched.
+  // Where focus goes when `Retry` unmounts the control that was just
+  // activated (epics.md Story 6.2, decision 1; EXPERIENCE.md:202, "focus is
+  // never dropped to the document body").
+  //
+  // `retryCurrentError` clears the slot, and clearing the slot removes this
+  // banner — including the `<button>` the user is standing on. Nothing used to
+  // move focus, so the browser dropped it to `document.body`: a keyboard user
+  // lost their place and a screen-reader user was returned to the top of the
+  // document, at the exact moment the region swapped back to skeletons.
+  // `deferred-work.md` recorded this against Story 6.2's focus audit, noting
+  // that the banner is the only control in the region so there is nothing
+  // adjacent for focus to fall to.
+  //
+  // The add input is the destination, and it is not a new invention: it is the
+  // answer `focus-after-delete.ts` already reaches for when a delete empties
+  // the list, which is the same question — "this control is going away and
+  // there is no neighbour". That module is not called here, because its
+  // subject is a list of Todos and a deleted id; what is reused is its
+  // conclusion and, below, its explicitness about the fallback.
+  //
+  // Focus moves *before* the retry rather than after it. `retryCurrentError`
+  // clears the slot synchronously, so by the time it returns this component
+  // has been asked to re-render without the button; moving first means focus
+  // leaves a live element rather than one mid-removal.
+  function handleRetry(): void {
+    // Explicit, not an optional call that swallows a miss. `?.focus()` on an
+    // element that is not there does nothing and says nothing, and the next
+    // line then unmounts the button the user is standing on — which lands
+    // focus on `document.body`, the one outcome EXPERIENCE.md:202 forbids and
+    // the whole reason this function exists. `focus-after-delete.ts`'s call
+    // site makes the same distinction for the same reason.
+    //
+    // The input is a sibling of this region inside the sticky block, so it is
+    // always mounted when a banner is showing. Moving focus first and only
+    // retrying if it landed keeps that an invariant rather than an assumption:
+    // if the input is ever not there, the banner stays and the user keeps a
+    // control, instead of losing both it and their place.
+    const input = document.getElementById(ADD_INPUT_ID);
+    if (input === null) return;
+
+    input.focus();
+    retryCurrentError();
+  }
+
   useEffect(() => {
     if (readFailure !== null) {
       if (slot !== null || isFetching) return;
@@ -190,7 +236,7 @@ export function ErrorBannerRegion() {
           */}
           <button
             type="button"
-            onClick={retryCurrentError}
+            onClick={handleRetry}
             className="ml-auto flex min-h-touch-target-min flex-none items-center justify-center rounded-full border-danger-text px-4 text-button-label text-danger-text retry-pill"
           >
             {RETRY_LABEL}

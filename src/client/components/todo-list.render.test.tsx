@@ -671,6 +671,64 @@ describe("the resolved states, in a real DOM (Story 2.6)", () => {
     expect(liveRegion("assertive")).toBe("");
   });
 
+  it("conveys the empty list exactly once (Story 6.2, decision 2)", async () => {
+    // `deferred-work.md` recorded the duplicate: the named list region says
+    // "Todo List, list, 0 items" and the empty state then announces the same
+    // fact in the copy DESIGN.md wrote. Both were individually required, so
+    // the fix had to choose, and it kept the one a screen reader receives
+    // without navigating — the announcement.
+    //
+    // This is the assertion that pins it. The region is still in the DOM, so
+    // skeletons keep somewhere to mount (Story 2.5 AC11); what changed is
+    // that it stops being exposed in the one state where it is a duplicate.
+    stubMotionPreference(false);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(() => Promise.resolve(Response.json([]))),
+    );
+
+    await mountCard();
+
+    const region = container.querySelector("ul");
+    expect(region).not.toBeNull();
+    expect(region?.getAttribute("aria-hidden")).toBe("true");
+    // The accessible name is still declared — it is the exposure that is
+    // withdrawn, not the region's identity, which returns with the first row.
+    expect(region?.getAttribute("aria-label")).toBe("Todo List");
+    // And the fact reaches the user exactly once, through the announcement.
+    expect(liveRegion("polite")).toBe(
+      "Nothing here yet. Type above to add your first Todo.",
+    );
+  });
+
+  it("exposes the region again as soon as it holds a row (decision 2)", async () => {
+    // The other half, and the one that would catch an over-broad fix: hiding
+    // the region unconditionally would silence the list for every user who
+    // has Todos.
+    stubMotionPreference(false);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(() =>
+        Promise.resolve(
+          Response.json([
+            {
+              id: "01920000-0000-7000-8000-00000000000a",
+              text: "Buy milk",
+              completed: false,
+              createdAt: new Date().toISOString(),
+            },
+          ]),
+        ),
+      ),
+    );
+
+    await mountCard();
+
+    const region = container.querySelector("ul");
+    expect(region?.hasAttribute("aria-hidden")).toBe(false);
+    expect(region?.querySelectorAll("li")).toHaveLength(1);
+  });
+
   it("shows the banner and announces it assertively when the read fails (AC3, AC18)", async () => {
     stubMotionPreference(false);
     vi.stubGlobal(
@@ -693,6 +751,50 @@ describe("the resolved states, in a real DOM (Story 2.6)", () => {
     // AC15): the contents are unknown, not known-empty.
     expect(container.querySelectorAll(".skeleton-row")).toHaveLength(0);
     expect(container.textContent).not.toContain("Nothing here yet.");
+  });
+
+  it("moves focus to the add input when Retry unmounts itself (Story 6.2, decision 1)", async () => {
+    // `deferred-work.md` recorded that `retryCurrentError` clears the slot,
+    // which removes the `<button>` that was just activated, and nothing moved
+    // focus — so a keyboard or screen-reader user was returned to
+    // `document.body` at the moment the region swapped back to skeletons.
+    // EXPERIENCE.md:202 forbids exactly that.
+    //
+    // Driven rather than scanned: the ordering assertion in
+    // `error-banner.test.ts` proves focus is moved *before* the retry, and
+    // this proves where it lands.
+    stubMotionPreference(false);
+    let pending: (value: Response) => void = () => {};
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn<typeof fetch>()
+        .mockImplementationOnce(() =>
+          Promise.resolve(
+            Response.json({ error: { kind: "load", message: "x" } }, { status: 500 }),
+          ),
+        )
+        .mockImplementationOnce(
+          () => new Promise<Response>((resolve) => (pending = resolve)),
+        ),
+    );
+
+    await mountCard();
+    const retry = container.querySelector("button");
+    expect(retry?.textContent).toBe("Retry");
+
+    // Stand on the control, the way a keyboard user would before pressing it.
+    retry?.focus();
+    expect(document.activeElement).toBe(retry);
+
+    await act(async () => retry?.click());
+
+    // The button is gone, and focus went somewhere deliberate rather than to
+    // the body.
+    expect(document.activeElement).not.toBe(document.body);
+    expect((document.activeElement as HTMLElement)?.id).toBe(ADD_INPUT_ID);
+
+    await act(async () => pending(Response.json([])));
   });
 
   it("returns to skeletons on Retry and resolves to the empty state (AC5, AC16)", async () => {

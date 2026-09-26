@@ -347,13 +347,34 @@ describe("the ceiling stops typing and changes nothing else (AC4)", () => {
     expect(literals).toEqual([String(COUNTER_APPEARS_AT)]);
   });
 
-  it("is keyed on nothing, so nothing can change at exactly 500", () => {
-    // The ceiling appears in this file only as `maxLength`. No comparison
-    // against it, no class chosen by it, no branch on it — a colour change,
-    // a weight change or a shake at the ceiling would have to be one of
-    // those.
-    expect(addInputCode).not.toMatch(/TODO_TEXT_MAX_LENGTH\s*[<>=]/);
-    expect(addInputCode).not.toMatch(/[<>=]=?\s*TODO_TEXT_MAX_LENGTH/);
+  it("changes nothing visible at exactly 500 (AC4)", () => {
+    // What AC4 buys is that the *interface* does not react at the ceiling —
+    // no colour, no weight, no error, no shake. This used to be held by
+    // banning every comparison against `TODO_TEXT_MAX_LENGTH`, on the
+    // reasoning that a visual change would have to be one; Story 6.2's
+    // decision 3 gave the ceiling an announcement, which is a comparison that
+    // changes nothing visible, so the ban is now stated against what it was
+    // always standing in for.
+    //
+    // No class and no style is chosen by the ceiling. Every `className` in
+    // this file is a literal string, so nothing rendered can vary with it —
+    // which is a stronger claim than the old regex made, and the one AC4
+    // actually asks for.
+    const computedClass = addInputCode.match(/className=\{(?!")/);
+    expect(computedClass).toBeNull();
+    expect(addInputCode).not.toMatch(/TODO_TEXT_MAX_LENGTH[^)\n]*\?/);
+  });
+
+  it("keys exactly one thing on the ceiling, and it is what is said (decision 3)", () => {
+    // The counter and the stop were silent to assistive technology —
+    // `deferred-work.md`'s entry, routed to this story's audit. The fix is an
+    // utterance, so the ceiling is compared against exactly once, inside the
+    // stage function that decides which of the two thresholds was crossed.
+    const comparisons = [
+      ...addInputCode.matchAll(/[<>]=?\s*TODO_TEXT_MAX_LENGTH/g),
+    ];
+    expect(comparisons).toHaveLength(1);
+    expect(addInputCode).toMatch(/function counterStage\(length: number\)/);
   });
 });
 
@@ -371,8 +392,29 @@ describe("the counter is a bare numeral that fades in at 450 (AC5)", () => {
   it("counts down rather than up, and renders nothing but the number", () => {
     // `format: bare-numeral` — no unit, no label, no `of 500`. The whole of
     // the counter's markup is one expression.
+    //
+    // The wording ban is scoped to the JSX rather than to the file. Story
+    // 6.2's decision 3 put words in this module — "50 characters left." is
+    // what the counter says to a screen reader — and those words are
+    // deliberately *not* what the counter renders. Scanning the whole file
+    // would now fail on the fix for the very gap the bare numeral created.
     expect(addInputSource).toContain("{TODO_TEXT_MAX_LENGTH - text.length}");
-    expect(addInputCode).not.toMatch(/\bleft\b|\bremaining\b|characters|\/ *500|of 500/i);
+
+    const markup = addInputCode.slice(addInputCode.indexOf("return ("));
+    expect(markup).not.toMatch(/\bleft\b|\bremaining\b|characters|\/ *500|of 500/i);
+  });
+
+  it("routes the counter's voice through announce(), not a live region", () => {
+    // What a source scan is actually good for here. *That* the two thresholds
+    // are announced, each once, with the real remainder, is driven for real in
+    // `add-input.render.test.tsx` — including the paste that crosses 450
+    // without passing through it, which no regex over this file could see.
+    //
+    // What remains this file's to assert is the rule the whole product shares:
+    // one `announce()`, and never a literal `aria-live` attribute, which
+    // `announcer.test.ts` bans tree-wide.
+    expect(addInputCode).toMatch(/announce\(counterAnnouncement\(stage, text\.length\), "polite"\)/);
+    expect(addInputCode).not.toMatch(/aria-live/);
   });
 
   it("is absent below the threshold rather than present and empty", () => {

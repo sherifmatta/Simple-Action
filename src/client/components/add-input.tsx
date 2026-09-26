@@ -60,6 +60,7 @@ import {
 import { flushSync } from "react-dom";
 
 import { usePointerCapability } from "@/client/device/pointer";
+import { useAnnounce } from "@/client/feedback/announcer";
 import { useReducedMotion } from "@/client/motion/motion";
 import {
   isValidTodoText,
@@ -103,6 +104,47 @@ export const ENTER_HINT_LABEL = "Enter";
  * any text with a trailing space.
  */
 export const COUNTER_APPEARS_AT = 450;
+
+/**
+ * What the counter and the ceiling say to someone who cannot see them
+ * (epics.md Story 6.2, decision 3).
+ *
+ * `deferred-work.md` recorded the gap: the `<input>` carries no
+ * `aria-describedby` pointing at the counter and the counter is not a live
+ * region, so a screen-reader user typing past 450 got no warning and, at the
+ * ceiling, only silence as keystrokes stopped being accepted. AC4's "nothing
+ * about the interface changes at 500" is a commitment about what is *seen*;
+ * it never asked for the stop to be unannounced.
+ *
+ * Two utterances, not a running count. The entry that recorded this named the
+ * cost of the obvious fix — "a counter that announced on every keystroke past
+ * 450 would flood the polite one", AD-12 giving the product exactly one polite
+ * region — so what is announced is the two *thresholds*, each once, latched by
+ * the stage below. Typing 451…499 says nothing.
+ *
+ * What is *said* at the first threshold still reports the real remainder, so
+ * the utterance and the numeral beside it never disagree.
+ */
+function counterAnnouncement(stage: "approaching" | "full", length: number): string {
+  // The remainder is computed from the length at the moment of the crossing,
+  // not from the threshold. `TODO_TEXT_MAX_LENGTH - COUNTER_APPEARS_AT` would
+  // be a fixed "50 characters left." — correct only for someone who typed
+  // their way to exactly 450. A paste, or `restore` re-seating a 480-character
+  // draft after a refused add, enters the same stage with 20 left, and the
+  // numeral on screen would then contradict what was said.
+  return stage === "full"
+    ? "Character limit reached."
+    : `${TODO_TEXT_MAX_LENGTH - length} characters left.`;
+}
+
+/** Which side of the two thresholds the text is on. */
+type CounterStage = "quiet" | "approaching" | "full";
+
+function counterStage(length: number): CounterStage {
+  if (length >= TODO_TEXT_MAX_LENGTH) return "full";
+  if (length >= COUNTER_APPEARS_AT) return "approaching";
+  return "quiet";
+}
 
 /**
  * What the field's owner may do to the text in it (Story 3.4 AC2, AC4, AC5).
@@ -155,6 +197,7 @@ export function AddInput({
   const field = useRef<HTMLInputElement>(null);
   const autofocused = useRef(false);
   const pointer = usePointerCapability();
+  const announce = useAnnounce();
   const still = useReducedMotion();
 
   // AC6 — the caret starts in the field on a pointer device and does not on a
@@ -176,6 +219,43 @@ export function AddInput({
     autofocused.current = true;
     if (pointer === "fine") field.current?.focus();
   }, [pointer]);
+
+  // The counter, out loud (decision 3).
+  //
+  // Announced on a *change of stage* rather than on a change of length, which
+  // is what keeps the one polite region (AD-12) from being flooded: crossing
+  // 450 says how many characters are left, reaching 500 says the limit is
+  // reached, and the 49 keystrokes in between say nothing at all.
+  //
+  // The previous stage is a ref rather than state, because nothing renders
+  // from it — this is a side effect keyed on a derived value, and putting it
+  // in state would add a commit per threshold for no visible change.
+  //
+  // Deleting back below a threshold re-arms it: the stage changes downward,
+  // nothing is announced for the downward move, and the next upward crossing
+  // is a new stage change. That is the behaviour a user editing at the
+  // ceiling wants — they hear the limit each time they hit it, not once per
+  // session.
+  //
+  // Polite, not assertive. The ceiling is not an error: AC4's "nothing about
+  // the interface changes at 500" is intact, and nothing is raised into the
+  // error slot. `announcer.test.ts` walks the whole tree and fails any file
+  // that declares a literal `aria-live` attribute, so this goes through
+  // `announce()` like every other utterance in the product.
+  const stage = counterStage(text.length);
+  const lastStage = useRef<CounterStage>(stage);
+  useEffect(() => {
+    const previous = lastStage.current;
+    lastStage.current = stage;
+    if (stage === previous || stage === "quiet") return;
+    announce(counterAnnouncement(stage, text.length), "polite");
+    // `text.length` is deliberately not a dependency: the effect must run on a
+    // change of *stage*, and adding the length would re-run it on every
+    // keystroke past 450 — which the early return would swallow, but only by
+    // accident. The length is read at the moment the stage changes, which is
+    // exactly when it is wanted.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [announce, stage]);
 
   // The handle, built once (AC2, AC4, AC5).
   //

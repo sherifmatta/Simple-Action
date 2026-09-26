@@ -282,11 +282,44 @@ describe("a failed read reaches the slot, with the right closure (AC5, AC6)", ()
 describe("Retry goes through the slot, not around it (AC7, AC8)", () => {
   it("wires the control to the slot's own retry", () => {
     // That pressing it re-requests the list is `todo-list.render.test.tsx`'s,
-    // which counts the fetches. Here: the control exists and this file has no
-    // handler of its own to have wired it to.
+    // which counts the fetches. Here: the control exists, and the one thing
+    // it does besides placing focus is call the slot's own function.
+    //
+    // Story 6.2 put a named handler between the control and
+    // `retryCurrentError` so that focus can be moved before the button
+    // unmounts itself (decision 1, EXPERIENCE.md:202). The assertion follows
+    // the indirection rather than pinning the old literal binding: what it is
+    // protecting is that this file still has no retry logic of its own, and
+    // the test below is what holds that line.
     occupy("load");
     expect(render()).toContain("Retry");
-    expect(bannerCode).toMatch(/onClick=\{retryCurrentError\}/);
+    expect(bannerCode).toMatch(/onClick=\{handleRetry\}/);
+    expect(bannerCode).toMatch(/function handleRetry\(\): void \{/);
+    expect(bannerCode).toMatch(/retryCurrentError\(\);/);
+  });
+
+  it("moves focus to the add input before the control unmounts (decision 1)", () => {
+    // The gap `deferred-work.md` routed here: `retryCurrentError` clears the
+    // slot, which unmounts the `<button>` that was just activated, and
+    // nothing moved focus — so it fell to `document.body`, the one outcome
+    // EXPERIENCE.md:202 forbids. The banner is the only control in the
+    // region, so there is no neighbour; the add input is the destination
+    // `focus-after-delete.ts` already chooses for the same question.
+    //
+    // Order matters and is asserted: focus first, then the retry that removes
+    // the element focus is standing on.
+    const focusCall = bannerCode.indexOf("input.focus();");
+    const retryCall = bannerCode.indexOf("retryCurrentError();");
+    expect(focusCall).toBeGreaterThan(-1);
+    expect(retryCall).toBeGreaterThan(focusCall);
+
+    // Resolved explicitly rather than through an optional call: `?.focus()`
+    // on a missing element does nothing silently and the retry would then
+    // unmount the button anyway, dropping focus to `document.body` — the
+    // exact failure this decision closes.
+    expect(bannerCode).toMatch(/const input = document\.getElementById\(ADD_INPUT_ID\);/);
+    expect(bannerCode).toMatch(/if \(input === null\) return;/);
+    expect(bannerCode).not.toMatch(/ADD_INPUT_ID\)\?\.focus\(\)/);
   });
 
   it("invokes no closure itself, and hand-rolls no retry of its own", () => {

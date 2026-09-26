@@ -39,8 +39,29 @@ test("AC3 — a reload brings back the identical list, and the Filter View back 
 }) => {
   await page.goto("/");
   await seed(page, ["renew passport", "pay rent", "send invoice"]);
+
+  // Wait for the server to acknowledge the toggle before reloading.
+  //
+  // `toBeChecked()` below passes on the *optimistic* state — the checkbox
+  // flips on the click, before the PATCH is sent, which is the whole point of
+  // Story 4.2. So asserting it and reloading proves only that the optimistic
+  // write happened, and whether the reload sees the change depends on whether
+  // the request happened to land first. It usually did; under a loaded
+  // machine it does not, and this test failed on exactly that race once a
+  // third Playwright project was added (Story 6.2).
+  //
+  // What AC3 is about is what the *server* kept, so the response is what to
+  // wait for. Subscribed before the click, because a response cannot be
+  // awaited after it has already arrived.
+  const saved = page.waitForResponse(
+    (response) =>
+      response.request().method() === "PATCH" &&
+      response.url().includes("/api/todos/") &&
+      response.ok(),
+  );
   await checkbox(page, "pay rent").click();
   await expect(checkbox(page, "pay rent")).toBeChecked();
+  await saved;
 
   const before = await rowTexts(page);
 

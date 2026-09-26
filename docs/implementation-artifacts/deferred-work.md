@@ -603,3 +603,44 @@ the entries above.
   is still rendered and the branch cannot be driven from here. Story 5.3 is the
   first story in which a row actually leaves between the answer and the call,
   and is the natural owner of a test for it.
+
+- source_spec: `docs/implementation-artifacts/spec-6-2-audit-focus-reach-contrast-and-targets.md`
+  summary: The filter tabs are a `tablist` with no `tabpanel` and no roving `tabindex` — recorded, not fixed, as the spec's defect decision directs.
+  evidence: Re-affirmed by measurement rather than by reading. `e2e/audit-focus.spec.ts`'s tab-order test observes the real focus order as input → Retry → All 2 → Active 2 → Completed 0 → checkbox → delete, so each tab is its own tab stop rather than one stop with arrow-key navigation inside it, which is what a roving `tabindex` would produce. That is a defensible keyboard experience and it is not what the `tablist` role promises. Fixing it means either adding a `tabpanel` relationship to the list region or dropping the composite role, both of which change how the control is announced and belong to an interaction-design story rather than to an audit's diff.
+
+- source_spec: `docs/implementation-artifacts/spec-6-2-audit-focus-reach-contrast-and-targets.md`
+  summary: Under reduced motion a departure's announcement is still replaced before a screen reader is likely to have read it — recorded, not fixed.
+  evidence: Unchanged by this story and re-deferred deliberately. The fix is a queue in the announcer, which changes every announcement in the product; `announcement.ts` models a single slot on purpose. Story 6.2's audit added a second polite utterance (the character counter, decision 3), which shares that single slot — the two cannot collide, because the counter speaks only while the user is typing at the ceiling and a departure follows a toggle, but the slot is now carrying more traffic than when the entry was written. Natural owner is still the announcer.
+
+- source_spec: `docs/implementation-artifacts/spec-6-2-audit-focus-reach-contrast-and-targets.md`
+  summary: `epic-6-context.md` states that "the error banner region's occupancy changes the block's height". Measurement says it never does, at any supported width.
+  evidence: `e2e/audit-focus.spec.ts`'s AC4 test measures the sticky block in five states — at rest and with the banner open at 1280, 640, 393 and 320px — and records 202.9px in all five. The sweep runs on `pointer` only: it drives `setViewportSize()`, which does not compose with the Pixel 5 project's mobile viewport emulation, so an earlier figure taken there is not evidence and is not quoted here. `banner-region` reserves `touch-target-min + 2*spacing-4 + 2px` = 78px whether occupied or empty (`app/globals.css:398`), and the 44px `Retry` pill is the tallest thing in that row, so even a message wrapped to two lines at 320px fits inside the reservation. The planning assumption was wrong and the product is right — DESIGN.md:426's "appearing does not shift the list". Recorded because the live re-measurement is therefore load-bearing only for viewport changes (AC10) today, and because the assumption should not be re-derived by the next reader of the epic context.
+
+- source_spec: `docs/implementation-artifacts/spec-6-2-audit-focus-reach-contrast-and-targets.md`
+  summary: `e2e/persistence.spec.ts`'s AC3 asserted an optimistic state and then reloaded, so whether it passed depended on whether the PATCH happened to land first.
+  evidence: Fixed in this story rather than deferred, because it is a test that did not establish what it claimed. The test clicked the checkbox, asserted `toBeChecked()` — which passes on the optimistic flip, before the request is sent (Story 4.2) — and reloaded. AC3 is about what the *server* kept, so the reload was racing the write. It passed consistently until this story added a third Playwright project and the extra contention changed the timing; it then failed reproducibly under a full-suite run and passed in isolation. The test now subscribes to the PATCH response before the click and awaits it. Recorded because the same shape — assert optimistic, then reload or re-read — is worth looking for elsewhere in the suite.
+
+- source_spec: `docs/implementation-artifacts/spec-6-2-audit-focus-reach-contrast-and-targets.md`
+  summary: A modal `<dialog>`'s tab cycle passes through the browser's own UI, where `document.activeElement` reports `body` — so "focus never leaves the dialog subtree" is not a testable form of the trap requirement.
+  evidence: Measured while writing AC19. Tabbing repeatedly inside the open delete dialog reports `body` at two of every six stops in headless Chromium, with no page control ever taking focus. That is the user agent wrapping, not a leak, and asserting the stricter form would be measuring the browser rather than the product. The test now asserts the thing 2.1.2 and 2.4.3 actually care about — that no control *behind* the dialog becomes reachable. Recorded so the weaker-looking assertion is not "tightened" back into a flaky one.
+
+## Closed by Story 6.2's audit
+
+Each entry below was recorded earlier as reasoned-but-unobserved and is now
+measured in a real browser. The measurement that closed it is named; nothing
+here was closed by re-reading the code that raised it.
+
+- closes: "Story 2.3's `position: sticky` claim is read off CSS Overflow 3 §3.3, never observed."
+  measurement: `e2e/audit-responsive.spec.ts` AC6 scrolls a 12-row list to three positions on both the 393px `touch` project and the 320px `narrow` one, and reads the block's bounding box at each. It rests at its natural offset below the card's top padding and pins to `y = 0` once scrolled, under the `<body>` `overflow-x-hidden` that the entry flagged as the risk. The reading of the specification was correct.
+
+- closes: "Whether 500 characters actually wrap inside a 320px viewport is read off the flex min-content rules, not observed (DESIGN.md:340's Poppins tension)."
+  measurement: `e2e/audit-responsive.spec.ts` AC8, in the `narrow` project: a Todo of exactly 500 characters renders as a row **595.4px tall — 28 lines at 14.5px/21.025px** — with `text-overflow: clip`, no `-webkit-line-clamp`, `white-space` not `nowrap`, and `scrollWidth - clientWidth === 0`. It wraps, the row grows to hold it, and it does not push the page sideways. No truncation lever was needed.
+
+- closes: "Whether the checkbox's hit area actually measures 44x44 on a phone is read back from the declarations, not measured."
+  measurement: `e2e/audit-focus.spec.ts` AC18 walks every visible interactive element on the list *and* inside the open delete dialog, and measures the reachable area — the element's border box unioned with its `::after` overlay, and with the `input-add` wrapper for the field. Every control clears 44px in both dimensions. The overlay approach DESIGN.md:354 specifies ("padded out to 44px without changing the mark") does deliver the reach; the raw border boxes are 21x21 for the checkbox and 17x17 for the delete control, which is the mark and not the target.
+
+- closes: "The sticky block's measured height and `scroll-padding-top` (UX-DR21, WCAG 2.4.11) — re-affirmed twice, never built."
+  measurement: Built in this story and measured. `e2e/audit-focus.spec.ts` AC3/AC5 focuses row controls below the fold at three scroll positions in all three Filter Views and compares both bounding boxes: the control's top edge is at or below the block's bottom edge in all nine combinations, and for both the checkbox and the delete control. `scroll-padding-top` on the root and `scroll-margin-top` on both row descendants each resolve to the block's measured height.
+
+- closes: "Keyboard activation of the checkbox is argued from HTML §Button's activation behaviour, because jsdom dispatches no click for Enter or Space."
+  measurement: Partially closed, and named as partial rather than claimed. The existing e2e suite drives the checkbox by real clicks and the focus audit drives real `Tab` presses and reads `document.activeElement`, so focus reaching the control is observed. Activation by Enter/Space specifically is still not asserted in a browser; that remains open and is the smaller half of the original entry.

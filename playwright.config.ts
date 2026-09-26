@@ -53,12 +53,50 @@ export default defineConfig({
       // autofocuses and the delete control is revealed by hover.
       name: "pointer",
       use: { ...devices["Desktop Chrome"] },
+      // The responsive audit is about narrow viewports and drives its own
+      // sizes; running it at a laptop's default as well would measure the
+      // same widths twice and report the second run as if it were evidence.
+      testIgnore: /audit-responsive\.spec\.ts/,
     },
     {
       // A phone: touch events, a coarse pointer, no autofocus, and the swipe
       // as the only pointer-driven route to the delete control.
       name: "touch",
       use: { ...devices["Pixel 5"] },
+    },
+    {
+      // The reflow floor (Story 6.2 AC7, AC8).
+      //
+      // 320 CSS px is not a device — it is WCAG 1.4.10's threshold, and AC7
+      // is that criterion written in product language: content must reflow to
+      // 320px without a horizontal scrollbar. No document in this project
+      // names a smallest supported viewport, so the criterion's own number is
+      // the one that binds.
+      //
+      // The `touch` project above cannot stand in for it. A Pixel 5 is 393px
+      // wide, so running the reflow and long-text criteria there would prove
+      // them on a screen 73px wider than the one they are about — and 320px
+      // is exactly where the filter tabs and a 500-character Todo are most
+      // likely to break.
+      //
+      // Chromium with touch, like the other two: the identity cookie is
+      // `secure`, which rules the other engines out of this suite entirely.
+      name: "narrow",
+      use: {
+        ...devices["Desktop Chrome"],
+        viewport: { width: 320, height: 568 },
+        // Touch without `isMobile`. The capability is what the product reads
+        // (`pointer.ts` asks `(pointer: fine)`), and `isMobile` additionally
+        // turns on a mobile viewport emulation that makes
+        // `setViewportSize()` — which the width sweep below depends on —
+        // behave inconsistently.
+        isMobile: false,
+        hasTouch: true,
+      },
+      // Only the responsive audit. The rest of the suite already runs on two
+      // projects, and re-running all of it at 320px would treble the suite's
+      // wall-clock to re-prove journeys that are not about width.
+      testMatch: /audit-responsive\.spec\.ts/,
     },
   ],
   // A production build, as Next.js's own Playwright guide recommends
