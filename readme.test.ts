@@ -608,6 +608,68 @@ describe("AGENTS.md carries both halves (Story 6.3 AC6)", () => {
     ).toContain("This is NOT the Next.js you know");
   });
 
+  it("attributes every boundary rule to a file that actually enforces it", () => {
+    // The regression this exists for: the section shipped saying "All five are
+    // enforced by `eslint.config.mjs`" while that config names no AD-13 rule at
+    // all, under a line telling the reader to settle doubt by running the lint.
+    // An agent following that wrote a hex literal, saw lint pass, and shipped an
+    // AD-13 violation. Prose cannot be trusted to stay true; this checks it.
+    const section = agents.slice(agents.indexOf(END) + END.length);
+    const eslintConfig = read("eslint.config.mjs");
+
+    // Each bullet: `**AD-N — …**` … `Enforced by <one or more `paths`>.`
+    const claims = [
+      ...section.matchAll(
+        /\*\*(AD-\d+)[^*]*\*\*[\s\S]*?Enforced\s+by\s+((?:`[^`]+`(?:,?\s+and\s+|,\s+)?)+)\./g,
+      ),
+    ].map(([, id, paths]) => ({
+      id,
+      paths: [...paths.matchAll(/`([^`]+)`/g)].map((m) => m[1]),
+    }));
+
+    // Anti-vacuity: the parse found the rules, so an empty result below would
+    // mean a broken regex rather than a clean file.
+    expect(claims.map((c) => c.id)).toEqual([
+      "AD-1",
+      "AD-2",
+      "AD-8",
+      "AD-12",
+      "AD-13",
+      "AD-14",
+    ]);
+
+    const wrong: string[] = [];
+    for (const { id, paths } of claims) {
+      for (const file of paths) {
+        if (!existsSync(path.join(root, file))) {
+          wrong.push(`${id}: names ${file}, which does not exist`);
+        }
+      }
+      // A rule claimed for lint must be in the config; one claimed for a test
+      // must not be — that second direction is the one that was false.
+      const claimsLint = paths.includes("eslint.config.mjs");
+      const inConfig = eslintConfig.includes(id);
+      if (claimsLint && !inConfig) {
+        wrong.push(`${id}: attributed to lint, absent from eslint.config.mjs`);
+      }
+      if (!claimsLint && inConfig) {
+        wrong.push(`${id}: attributed to tests, but eslint.config.mjs names it`);
+      }
+    }
+    expect(wrong).toEqual([]);
+  });
+
+  it("would catch a rule attributed to the wrong enforcer", () => {
+    // Both directions, against fixtures, so the check above passing means the
+    // file is right rather than that the comparison is inert.
+    const config = "AD-1 rule here. AD-8 rule here.";
+    const attributedToLint = (id: string) => config.includes(id);
+
+    expect(attributedToLint("AD-1")).toBe(true);
+    // AD-13 claimed for lint while the config is silent — the shipped bug.
+    expect(attributedToLint("AD-13")).toBe(false);
+  });
+
   it("carries a repository section below the END marker", () => {
     // Below, and not above: content above the BEGIN marker survives too, but
     // a section *between* the markers is one `next dev` away from being

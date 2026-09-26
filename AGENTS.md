@@ -20,33 +20,42 @@ it writes a line, with a pointer for the rest.
 
 ## The boundaries
 
-All five are enforced by `eslint.config.mjs`, so **`npm run lint` is the check** — not a
-reviewer's memory, and not this file. If you are unsure whether something is allowed, write it
-and run the lint.
+Most are enforced by `eslint.config.mjs`, so `npm run lint` fails rather than a reviewer
+having to remember. **Two are not** — they are enforced by the test suite instead, which is
+why `npm run lint` is not the whole check. Each rule below names the file that enforces it.
+If you are unsure whether something is allowed, write it and run **both** `npm run lint` and
+`npm test`.
 
 - **AD-1 — one client/server seam.** Every client–server interaction goes through a route
   handler under `app/api/`. No Server Actions (`"use server"`) anywhere, and no component calls
-  `fetch` directly.
+  `fetch` directly. Enforced by `eslint.config.mjs`.
 - **AD-2 — one database module.** Only `src/server/repository/` may import the Drizzle client,
-  and every repository function takes `ownerId` first. The server never imports from client
-  code.
-- **AD-8 — one list read.** One query key for the Todo List, read in one place.
+  and the server never imports from client code. Every repository function takes `ownerId`
+  first — that half is a convention the repository's own tests pin, not a lint rule. Enforced
+  by `eslint.config.mjs` and `src/server/repository/todos.test.ts`.
+- **AD-8 — one list read.** One query key for the Todo List, read in one place. Enforced by
+  `eslint.config.mjs`.
 - **AD-12 — one announcer.** Announcements go through the single `announce()` function; no
-  component declares its own `aria-live`.
+  component declares its own `aria-live`. Enforced by `eslint.config.mjs`.
 - **AD-13 — tokens live in one block.** Design tokens are transcribed exactly once, into the
   `@theme` block in `app/globals.css`. A colour or size that is not in there gets added there
-  before it is used — no hex literals and no arbitrary-value classes elsewhere.
+  before it is used — no hex literals and no arbitrary-value classes elsewhere. **No lint rule
+  covers this**, so a hex literal passes `npm run lint` and fails `npm test`. Enforced by
+  `app/globals.test.ts` and `src/client/components/todo-card.test.ts`.
+- **AD-14 — migrations are generated and committed, never pushed.** Edit
+  `src/server/db/schema.ts`, run `npm run db:generate`, and commit the SQL and the journal
+  entry together. `npm run db:push` is a local convenience and appears in no deploy path. **No
+  lint rule covers this either**: the drift check re-runs the generator on every test run and
+  fails if the committed migrations no longer match the schema. Enforced by
+  `src/server/db/schema.test.ts`.
 
 `eslint.config.mjs` also pins the dependency graph between the four source directories, so an
 import that crosses a layer fails the lint rather than a review.
 
-## Schema changes
-
-AD-14: migrations are **generated and committed, never pushed**. Edit
-`src/server/db/schema.ts`, run `npm run db:generate`, commit the SQL and the journal entry
-together. `npm run db:push` is a local convenience and appears in no deploy path;
-`src/server/db/schema.test.ts` re-runs the generator on every test run and fails if the
-committed migrations have drifted from the schema.
+`readme.test.ts` checks the attributions above against the tree: a rule this file assigns to
+lint must actually appear in `eslint.config.mjs`, and one it assigns to a test must not. That
+is what stops this section from drifting back into claiming a guarantee the config does not
+give.
 
 ## Before you claim it works
 
