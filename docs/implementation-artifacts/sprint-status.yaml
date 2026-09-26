@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 09-21-2026 12:00
-last_updated: 09-26-2026 08:45
+last_updated: 09-26-2026 09:37
 project: Simple Action
 project_key: NOKEY
 tracking_system: file-system
@@ -76,8 +76,89 @@ development_status:
   5-3-remove-before-the-server-answers-restore-if-refused: done
   epic-5-retrospective: optional
 
-  epic-6: in-progress
+  epic-6: done
   6-1-verify-the-product-end-to-end-under-failure-and-under-race: done
   6-2-audit-the-assembled-product-focus-reach-contrast-and-targets: done
   6-3-re-verify-the-readme-and-write-the-deploy-runbook: done
-  epic-6-retrospective: optional
+  epic-6-retrospective: done
+action_items:
+  - id: "epic-6-retro-item-1-correct-agents-md-ad-1-ad-2-ad-8-ad-12-a"
+    epic: 6
+    action: "Correct AGENTS.md: AD-1/AD-2/AD-8/AD-12 and the dependency graph are
+      lint-enforced, AD-13 and AD-14 are test-enforced; add a guard asserting every
+      AD id the section attributes to lint appears in eslint.config.mjs"
+    owner: "Dev"
+    status: open
+    ref: "docs/implementation-artifacts/epic-6-retro-2026-09-26.md"
+  - id: "epic-6-retro-item-2-close-ac6-green-ci-run-add-a-database_ur"
+    epic: 6
+    action: "Close AC6-green-ci-run: add a DATABASE_URL repository secret pointing
+      at a dedicated Neon CI branch (never production), push, and attach the green
+      run"
+    owner: "Lead"
+    status: open
+    ref: "docs/implementation-artifacts/epic-6-retro-2026-09-26.md"
+  - id: "epic-6-retro-item-3-time-npm-run-db-migrate-on-a-fresh-clone"
+    epic: 6
+    action: "Time npm run db:migrate on a fresh clone against a branch with no migrations
+      applied, and complete the README NFR-6 table third row and both totals"
+    owner: "Lead"
+    status: open
+    ref: "docs/implementation-artifacts/epic-6-retro-2026-09-26.md"
+  - id: "epic-6-retro-item-4-add-an-e2e-block-to-eslint-config-mjs-so"
+    epic: 6
+    action: "Add an e2e/ block to eslint.config.mjs so AD-1 fetch wall and the client/server
+      import walls reach the new spec tree"
+    owner: "Dev"
+    status: open
+    ref: "docs/implementation-artifacts/epic-6-retro-2026-09-26.md"
+  - id: "epic-6-retro-item-5-repair-the-ledger-record-closures-for-de"
+    epic: 6
+    action: "Repair the ledger: record closures for deferred-work.md entries 232,
+      236 and 284 that Story 6.2 fixed in code, and re-state Story 6.2 five closure
+      summaries verbatim"
+    owner: "Dev"
+    status: open
+    ref: "docs/implementation-artifacts/epic-6-retro-2026-09-26.md"
+  - id: "epic-6-retro-item-6-correct-epic-6-context-md-banner-occupan"
+    epic: 6
+    action: "Correct epic-6-context.md banner-occupancy premise, refuted by measurement
+      at 202.9px in all five states"
+    owner: "Dev"
+    status: open
+    ref: "docs/implementation-artifacts/epic-6-retro-2026-09-26.md"
+  - id: "epic-6-retro-item-7-migrate-the-seven-duplicated-source-tree"
+    epic: 6
+    action: "Migrate the seven duplicated source-tree walks onto src/test-support
+      and align their SKIPPED_DIRECTORIES so e2e/ is treated consistently"
+    owner: "Dev"
+    status: open
+    ref: "docs/implementation-artifacts/epic-6-retro-2026-09-26.md"
+  - id: "epic-6-retro-item-8-decide-whether-retry-silently-doing-noth"
+    epic: 6
+    action: "Decide whether Retry silently doing nothing when the add input is absent
+      is intended, then document or remove the early return"
+    owner: "Lead"
+    status: open
+    ref: "docs/implementation-artifacts/epic-6-retro-2026-09-26.md"
+  - id: "epic-6-retro-item-9-move-the-three-orphan-whole-repo-scan-te"
+    epic: 6
+    action: "Move the three orphan whole-repo scan test files out of src/client/components
+      to the root-level precedent"
+    owner: "Dev"
+    status: open
+    ref: "docs/implementation-artifacts/epic-6-retro-2026-09-26.md"
+  - id: "epic-6-retro-item-10-remove-the-stale-visualviewport-comment"
+    epic: 6
+    action: "Remove the stale visualViewport comment in e2e/audit-responsive.spec.ts
+      describing a listener that was removed"
+    owner: "Dev"
+    status: open
+    ref: "docs/implementation-artifacts/epic-6-retro-2026-09-26.md"
+  - id: "epic-6-retro-item-11-resolve-audit-vocabulary-spec-ts-invisib"
+    epic: 6
+    action: "Resolve audit-vocabulary.spec.ts invisible exclusion from the narrow
+      project: collect it there or state AC5 product half is pointer/touch only"
+    owner: "Dev"
+    status: open
+    ref: "docs/implementation-artifacts/epic-6-retro-2026-09-26.md"
