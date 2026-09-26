@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 09-21-2026 12:00
-last_updated: 09-26-2026 09:55
+last_updated: 09-26-2026 10:10
 project: Simple Action
 project_key: NOKEY
 tracking_system: file-system
@@ -96,7 +96,7 @@ action_items:
       at a dedicated Neon CI branch (never production), push, and attach the green
       run"
     owner: "Lead"
-    status: open
+    status: done
     ref: "docs/implementation-artifacts/epic-6-retro-2026-09-26.md"
   - id: "epic-6-retro-item-3-time-npm-run-db-migrate-on-a-fresh-clone"
     epic: 6

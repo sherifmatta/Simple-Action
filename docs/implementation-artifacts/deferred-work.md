@@ -708,3 +708,32 @@ entry above was read and checked against the current source. The result:
   that undercounts its own subject.
 
 Read the triage for the "what's left" list. Keep appending here for the record.
+
+## Closed by: the first green CI run (2026-09-26)
+
+The two CI entries above were closed by `spec-6-3` on the workflow *existing*, and both
+closures said in as many words that this was "about the workflow existing, not about it
+having run". That distinction can now be retired.
+
+- closes: "Nothing runs `npm test` automatically — no CI workflow, no git hooks, and `build` (what Vercel runs) skips the suite." (`spec-1-1-scaffold-app-layer-boundaries.md`) — **the running half**
+  evidence: Run #4 against `436db06` concluded success —
+  https://github.com/sherifmatta/Simple-Action/actions/runs/36247297413 — job `verify`, 233s,
+  every step passing: checkout, `setup-node` from `.nvmrc`, `npm ci`, Chromium install, Lint,
+  Typecheck, Unit and integration tests, End-to-end tests. The Playwright-report upload is
+  `skipped` because it is gated `if: failure()`. `npm test` now runs automatically on every
+  push and pull request, which is the thing the entry asked for and the earlier closure could
+  not yet demonstrate.
+
+- closes: "Nothing still runs `npm test` automatically — the CI gate routed to this story by Story 1.4's entry is re-deferred, now with a concrete owner and a secret to hand it." (`docs/implementation-artifacts/spec-1-8-ship-the-readme-and-the-first-deploy.md`) — **the running half**
+  evidence: Same run. The secret this entry named — "a concrete owner and a secret to hand it"
+  — was added as a GitHub Actions repository secret pointing at a dedicated Neon CI branch.
+  Worth recording because it cost three red runs to learn: `secrets.DATABASE_URL` and a Vercel
+  environment variable are different stores, and the Vercel/Neon integration does not populate
+  the first. Runs #1–#3 (`d34eb47`, `09b1c13`, `d20bff4`) each failed at the `npm test` step
+  with the end-to-end step skipped behind it — the repository tests throwing at module load,
+  which is the failure `src/server/repository/client.ts` is built to produce rather than
+  skipping silently.
+
+Story 6.1's frontmatter deferral `AC6-green-ci-run` is closed by the same evidence. The gap
+that remains is a different one, recorded in `DEPLOY-RUNBOOK.md` §5: nothing blocks a *deploy*
+on CI being green, because Vercel builds from the same push independently.

@@ -182,19 +182,29 @@ is not something a redeploy can reconcile.
 from `secrets.DATABASE_URL`. It deliberately runs **no** migration — it is a verification job,
 not a deploy.
 
-Two gaps, stated rather than assumed:
+What is true of it, stated rather than assumed:
 
-- **The workflow has never been observed green.** It was delivered by Story 6.1, whose spec
-  records `AC6-green-ci-run` as an open deferral: the exact command sequence was run locally on
-  that commit and passed, but no GitHub Actions run has happened, because the work was not
-  pushed and the `DATABASE_URL` repository secret does not exist yet. Creating that secret is a
-  human step no workflow in this repository can perform. Point it at a **dedicated Neon CI
-  branch** — the repository tests write rows and the end-to-end suite creates Todos through the
-  UI — and never at production.
-- **A green CI run and a successful deploy are different events.** CI runs the suite and no
-  migration; the deploy runs a migration and no suite. Nothing today blocks a deploy on CI.
-  Until that is wired, the suite is a thing a human runs, and the deploy's only gates are lint
-  and typecheck.
+- **The workflow is green, as of 2026-09-26.** Run #4 against `436db06` concluded success
+  ([run 36247297413](https://github.com/sherifmatta/Simple-Action/actions/runs/36247297413)),
+  job `verify`, 233s, with every step passing — install, Chromium, lint, typecheck, `npm test`
+  and `npm run test:e2e`. That closes Story 6.1's `AC6-green-ci-run` deferral, which had been
+  open since the workflow was written.
+- **`DATABASE_URL` in CI is a GitHub Actions secret, not a Vercel environment variable.** They
+  are different stores and only the first reaches this workflow: `ci.yml` reads
+  `${{ secrets.DATABASE_URL }}`, which Vercel's environment — including one the Neon
+  integration populates — does not supply. The three pushes before the secret existed
+  (`d34eb47`, `09b1c13`, `d20bff4`) each failed at the `npm test` step for exactly that reason,
+  with the end-to-end step skipped behind it. If CI starts failing there again, check that
+  store first.
+- **Point the secret at a dedicated Neon CI branch** — never production, and not the shared
+  preview branch either. The repository tests write rows and the end-to-end suite creates Todos
+  through the UI, so CI needs a branch it is free to dirty.
+- **A green CI run and a successful deploy are still different events**, and this is the one
+  real gap left. CI runs the suite and no migration; the deploy runs a migration and no suite.
+  **Nothing blocks a deploy on CI being green** — Vercel builds from the same push
+  independently, so a red suite does not stop a release. The deploy's own gates remain `lint`
+  and `typecheck`, chained into `npm run build`. Wiring the deploy to wait on CI is the
+  remaining piece of work here.
 
 ---
 

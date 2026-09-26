@@ -31,6 +31,23 @@ deferred:
     settles_it: >-
       Add a `DATABASE_URL` repository secret pointing at a dedicated Neon CI
       branch (never production), push, and attach the green run.
+    closed: '2026-09-26'
+    closed_by: >-
+      Settled exactly as `settles_it` asked, and attached rather than claimed.
+      The `DATABASE_URL` repository secret was added on
+      `sherifmatta/Simple-Action` and the work pushed; run #4 against
+      `436db06` concluded **success** --
+      https://github.com/sherifmatta/Simple-Action/actions/runs/36247297413
+      (job `verify`, 233s). Every step ran: checkout, setup-node from
+      `.nvmrc`, `npm ci`, Chromium install, Lint, Typecheck, Unit and
+      integration tests, End-to-end tests -- all `success`. The report upload
+      is `skipped` because it is gated `if: failure()`, which is correct. The
+      three earlier pushes failed as predicted: runs #1-#3 (`d34eb47`,
+      `09b1c13`, `d20bff4`) each failed at step 8, Unit and integration tests,
+      with the end-to-end step skipped -- the repository tests throwing at
+      module load with no secret present, which is the failure mode
+      `src/server/repository/client.ts` exists to produce. AC6 is now
+      demonstrated, not anticipated.
   - id: 'AC13-matrix-direction'
     what: >-
       The I/O matrix writes AC13's pair as "delete fails, then a load fails →
