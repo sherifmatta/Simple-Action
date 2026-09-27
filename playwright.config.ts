@@ -63,6 +63,11 @@ export default defineConfig({
       // as the only pointer-driven route to the delete control.
       name: "touch",
       use: { ...devices["Pixel 5"] },
+      // `api.spec.ts` speaks HTTP and nothing else. A request has no pointer
+      // capability, so running it here as well would send the same request
+      // twice and report the second one as if it were evidence — the same
+      // argument the `pointer` project makes about the responsive audit above.
+      testIgnore: /api\.spec\.ts/,
     },
     {
       // The reflow floor (Story 6.2 AC7, AC8).
