@@ -1,3 +1,4 @@
+import { AxeBuilder } from "@axe-core/playwright";
 import { expect, test, type Locator, type Page, type Request } from "@playwright/test";
 
 // The vocabulary every end-to-end spec speaks. One module, for two reasons.
@@ -34,6 +35,13 @@ import { expect, test, type Locator, type Page, type Request } from "@playwright
 // `.spec.ts` from its minting scan; this module is not a spec file and is
 // excused by nothing. It declares no shape the contract already owns, names no
 // query key, and imports nothing from `src/`.
+
+// One later addition breaks the "imports nothing" rule above, and does so
+// knowingly. The conformance scan at the foot of this file imports
+// `@axe-core/playwright`, because the rules it applies are the standard's and
+// not this repository's — the one thing in the whole suite that is better
+// borrowed than written. It still imports nothing from `src/`, declares no
+// shape the contract owns, and names no query key.
 
 /** The product's own strings, asserted by equality and never paraphrased. */
 export const LOAD_FAILED = "Couldn't load your Todos.";
@@ -637,4 +645,127 @@ export function interactiveElements(page: Page): Locator {
   return page.locator(
     "button, a[href], input, select, textarea, [tabindex]:not([tabindex='-1'])",
   );
+}
+
+// --- The conformance scan (WCAG AA) -----------------------------------------
+
+/**
+ * The tag set the scan asserts against.
+ *
+ * All four WCAG tags the engine offers below `wcag22`, and the set is not
+ * abbreviated: conformance at AA requires every level-A criterion too, so
+ * dropping `wcag21a` would leave the scan claiming 2.1 AA while skipping
+ * 2.1's only level-A rule. That rule is `label-content-name-mismatch` (SC
+ * 2.5.3 Label in Name), and it is live here rather than theoretical — a row's
+ * checkbox takes its name from the Todo's text by `aria-labelledby` and the
+ * delete control is named `Delete {text}`, which is exactly the shape the
+ * criterion is about.
+ *
+ * Deliberately not `best-practice`: those rules are axe's own house style
+ * rather than the standard, and a suite that fails on them stops being
+ * evidence of conformance and starts being evidence of taste.
+ */
+export const WCAG_AA_TAGS = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"] as const;
+
+/** Whatever `analyze()` reports, without importing axe-core's types directly. */
+type AxeOutcome = Awaited<ReturnType<AxeBuilder["analyze"]>>;
+type Violations = AxeOutcome["violations"];
+
+/**
+ * A scan's two answers: what failed, and what the engine could not decide.
+ *
+ * `incomplete` is carried rather than dropped because `color-contrast` is the
+ * rule that lands there most often — against a background the engine cannot
+ * resolve, or an element caught mid-transition, both of which this product
+ * has. A suite that reports only `violations` would call a page conformant on
+ * the strength of questions nobody answered.
+ */
+export type ScanOutcome = {
+  violations: Violations;
+  incomplete: Violations;
+};
+
+/**
+ * Run axe over the whole page as it currently stands.
+ *
+ * The whole page, not a subtree: several of the rules that matter here are
+ * about relationships between elements — a label and its control, a role and
+ * its required parent, an id referenced from somewhere else — and a scan
+ * scoped to one region reports those as failures of the region rather than of
+ * the page.
+ *
+ * `disabled` exists for the one case the spec permits: a violation whose only
+ * resolution is a design-token change (AD-13), recorded in `deferred-work.md`
+ * and excluded here by id with a comment naming that entry. Never reach for
+ * it to quiet a rule that has a real fix.
+ */
+export async function scanPage(
+  page: Page,
+  disabled: readonly string[] = [],
+): Promise<ScanOutcome> {
+  const builder = new AxeBuilder({ page }).withTags([...WCAG_AA_TAGS]);
+  if (disabled.length > 0) builder.disableRules([...disabled]);
+  const results = await builder.analyze();
+  return { violations: results.violations, incomplete: results.incomplete };
+}
+
+/**
+ * One line per offending node, rather than per rule.
+ *
+ * A rule that fails on four rows is four things to look at, and a message
+ * that says "color-contrast (4 nodes)" makes the reader go and find them.
+ * `failureSummary` is axe's own "fix any of the following" text and `helpUrl`
+ * is the rule's explanation, so the failure is actionable without opening the
+ * HTML report or looking the rule up.
+ *
+ * The selector is flattened rather than joined: in a frame-nested result an
+ * entry is itself an array, and `join` on the outer list alone would splice a
+ * stray comma into the middle of a selector. No frames today; this is the
+ * shared vocabulary module, and the next reader should not have to notice.
+ */
+export function describeViolations(where: string, violations: Violations): string[] {
+  return violations.flatMap((violation) =>
+    violation.nodes.map((node) => {
+      const target = [node.target].flat(2).join(" >>> ");
+      const summary = node.failureSummary?.replace(/\s*\n\s*/g, " ") ?? "";
+      return (
+        `${where}: ${violation.id} [${violation.impact ?? "unrated"}] ` +
+        `at ${target} — ${violation.help}` +
+        `${summary === "" ? "" : ` (${summary})`} — ${violation.helpUrl}`
+      );
+    }),
+  );
+}
+
+/**
+ * The page conforms, and the failure says where and why.
+ *
+ * Compared as an array of strings rather than asserted on a count: an empty
+ * expectation printed against a populated actual is the diff that tells the
+ * reader everything, and a count tells them a number.
+ *
+ * What the engine could not decide is attached to the test as an annotation
+ * rather than asserted on. An `incomplete` result is not a failure and must
+ * not turn the suite red on a background axe happened not to resolve, but it
+ * is also not nothing: it is the list of questions this run did not answer,
+ * and it belongs in the report where a reader of a green run can still see it.
+ */
+export async function expectNoViolations(
+  page: Page,
+  where: string,
+  disabled: readonly string[] = [],
+): Promise<void> {
+  const { violations, incomplete } = await scanPage(page, disabled);
+
+  if (incomplete.length > 0) {
+    test.info().annotations.push({
+      type: "axe-incomplete",
+      description: describeViolations(where, incomplete).join("; "),
+    });
+  }
+
+  expect(
+    describeViolations(where, violations),
+    `WCAG AA violations ${where}`,
+  ).toEqual([]);
 }

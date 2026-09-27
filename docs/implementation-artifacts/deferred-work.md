@@ -737,3 +737,19 @@ having run". That distinction can now be retired.
 Story 6.1's frontmatter deferral `AC6-green-ci-run` is closed by the same evidence. The gap
 that remains is a different one, recorded in `DEPLOY-RUNBOOK.md` §5: nothing blocks a *deploy*
 on CI being green, because Vercel builds from the same push independently.
+
+- source_spec: `spec-automate-the-accessibility-audit.md`
+  summary: A row mid-departure is the one visual state the conformance scan never sees, and it is the state most likely to fail `color-contrast`.
+  evidence: `src/client/components/todo-row.tsx:245,252` render `data-departing` and `data-deleting` rows at reduced opacity over the card, which is the classic contrast case. The scan cannot hold that moment: the departure is `DEPARTURE_HOLD_MS` then `COLLAPSE_MS` (`src/client/motion/motion.ts`), axe takes longer than that to analyze a page, and this suite forbids `waitForTimeout`. Freezing it needs a product-side hook — there is no `data-still` today — which is larger than this spec and is a product change made for a test, so it wants its own decision.
+
+- source_spec: `spec-automate-the-accessibility-audit.md`
+  summary: `scanPage`'s `disabled` argument may only be used for an AD-13 token deferral, and nothing but prose enforces that.
+  evidence: AGENTS.md attributes every boundary rule to either `eslint.config.mjs` or a named test, and this repository already runs whole-tree scans for banned patterns, vocabulary and design tokens. The new rule is held by a docstring in `e2e/support/app.ts` and a paragraph in the spec's frozen Intent. A scan asserting that any non-empty second argument to `scanPage` sits alongside a `deferred-work.md` reference would match the house style. Not built here because the argument has no call site yet, so the test would currently be guarding nothing.
+
+- source_spec: `spec-automate-the-accessibility-audit.md`
+  summary: `e2e/audit-accessibility.spec.ts` never runs at the 320px reflow floor, and the config does not say so.
+  evidence: `playwright.config.ts`'s `narrow` project sets `testMatch: /audit-responsive\.spec\.ts/`, so every other spec is excluded by silence rather than by statement. `sprint-status.yaml:158` already carries `epic-6-retro-item-11` for exactly this problem with `audit-vocabulary.spec.ts`; this is a second instance of it, and the two should be settled together rather than one file at a time. Whether a reflowed 320px layout is a materially different composition for `color-contrast` is the open question — the tokens are the same, the stacking is not.
+
+- source_spec: `spec-automate-the-accessibility-audit.md`
+  summary: axe cannot decide `color-contrast` on a Todo's text, so the product's primary content is the one thing the conformance scan does not actually prove.
+  evidence: Measured, not suspected — eight `incomplete` results across the All, Active, Completed and banner-occupied states, every one reading "Element's background color could not be determined due to a pseudo element". The pseudo elements are the transparent 44px hit-area overlays on the checkbox and the delete control (`app/globals.css:908`), which DESIGN.md:354 requires and which overlap the text span's box without painting anything. Not fixed here: the overlays are the product working as designed, and editing them to satisfy an analyzer changes the product for the tool. The gap is narrower than it looks — `app/globals.contrast.test.ts` already computes the very pairs in question (`text-primary` on `card`/`row-active`, and `text-completed` on `row-complete` at 4.69:1) against the 4.5:1 floor — so what is missing is composed-in-the-browser proof, not the ratio. Closing it properly means giving axe a resolvable background for that span, or asserting the composed pair from the running page the way `audit-focus.spec.ts` asserts geometry.

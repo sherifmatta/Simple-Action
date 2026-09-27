@@ -259,7 +259,10 @@ npm run test:e2e
 ```
 
 Playwright drives the four user journeys, the four forced failure paths, the three race cases
-and the accessibility audit through a real browser. It builds and starts the app itself — the
+and the accessibility audit through a real browser. The audit has two halves: the hand-written
+criteria Story 6.2 measured, and a conformance scan — `@axe-core/playwright` runs axe against
+WCAG 2.1 AA in every state the suite can reach, and a violation fails the run like any other
+assertion. It builds and starts the app itself — the
 end-to-end suite runs against a **production build** (`npm run build && npm start`), never
 `next dev`, because `next dev` compiles routes on demand and turns the first request of every
 journey into a wait that no assertion timeout makes honest. Three projects run, all
