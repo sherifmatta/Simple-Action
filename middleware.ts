@@ -39,6 +39,80 @@ function isApiRequest(pathname: string): boolean {
   return pathname === "/api" || pathname.startsWith("/api/");
 }
 
+// The methods that change state, and the subset of them that carries a body.
+// `DELETE` is in the first and not the second: `delete-todo.ts` sends no
+// `content-type` because it sends nothing to describe.
+const MUTATING_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+const BODIED_METHODS = new Set(["POST", "PUT", "PATCH"]);
+
+// Whether a mutating request came from somewhere that is not this origin.
+//
+// `SameSite=Lax` on the identity cookie already withholds it from a *cross-site*
+// form POST, so `evil.com` gets a `401` here and never reaches a handler. What
+// it does not cover is same-site cross-origin: `SameSite` treats every host
+// sharing the registrable domain as same-site, so a page on a sibling subdomain
+// can post a form whose `text/plain` body is valid JSON, and the cookie rides
+// along. That is the gap this closes, and it makes the cookie attribute no
+// longer the only wall.
+//
+// Absent headers pass. `Sec-Fetch-Site` is sent by every current browser, so a
+// request without it is not a browser navigation — it is a server-side client
+// or a test runner, neither of which a CSRF attacker controls a victim's
+// credentials through. Refusing those would break the API for its legitimate
+// non-browser callers while stopping nothing.
+function isCrossOriginRequest(request: NextRequest): boolean {
+  const site = request.headers.get("sec-fetch-site");
+  if (site) return site !== "same-origin";
+
+  // Fallback for a browser too old to send `Sec-Fetch-Site`. Compared against
+  // the `Host` header rather than `nextUrl.origin`, because a proxy in front of
+  // the app can rewrite the scheme and leave the two disagreeing on a request
+  // that is in fact same-origin.
+  const origin = request.headers.get("origin");
+  if (!origin) return false;
+
+  try {
+    return new URL(origin).host !== request.headers.get("host");
+  } catch {
+    // An `Origin` that is not a URL is not one this app served.
+    return true;
+  }
+}
+
+// The refusal a state-changing API request earns before it reaches a handler,
+// or `undefined` when it has earned none.
+//
+// Both checks are here rather than in the two route files for the reason AD-1
+// gives every other shared rule: middleware already fronts every path under
+// `app/api/`, so one place covers POST, PATCH and DELETE and no future handler
+// has to remember.
+function refuseUnsafeApiRequest(request: NextRequest): Response | undefined {
+  const method = request.method.toUpperCase();
+  if (!MUTATING_METHODS.has(method)) return undefined;
+
+  if (isCrossOriginRequest(request)) {
+    return privateToTheCaller(
+      requestFailedResponse(request.method, 403, "This request came from another origin."),
+    );
+  }
+
+  // `request.json()` parses whatever arrives regardless of the declared type,
+  // which is what lets an HTML form — the only cross-origin shape that can
+  // carry a body without a preflight — deliver a JSON payload at all.
+  if (BODIED_METHODS.has(method)) {
+    const contentType = request.headers.get("content-type") ?? "";
+    // The header may carry parameters (`application/json; charset=utf-8`), so
+    // this is a prefix test and not an equality.
+    if (!/^application\/json\s*(;|$)/i.test(contentType.trim())) {
+      return privateToTheCaller(
+        requestFailedResponse(request.method, 415, "This endpoint accepts application/json."),
+      );
+    }
+  }
+
+  return undefined;
+}
+
 // The identity store is unreachable, so we cannot tell whether this request has
 // an identity. `401` would be a lie — it asserts the caller has none — so the
 // failure is reported as one, enveloped (AD-10) and classified by the operation
@@ -61,7 +135,15 @@ export async function middleware(request: NextRequest) {
 
     if (api) {
       // Never mints — not even when the identity is absent (AC4).
-      return identity ? NextResponse.next() : unauthorizedIdentityResponse(request.method);
+      if (!identity) return unauthorizedIdentityResponse(request.method);
+
+      // Ordered after the `401` deliberately. AC4 makes "no identity" the
+      // answer for *every* method under `app/api/`, and it is the more
+      // fundamental refusal — a caller with no identity is told that, not that
+      // its media type was wrong. Nothing is lost defensively: a CSRF request
+      // carries the victim's cookie by definition, so it resolves an identity
+      // and reaches these checks anyway.
+      return refuseUnsafeApiRequest(request) ?? NextResponse.next();
     }
 
     // A cookie that resolves to a row is left alone: no new token, no new row

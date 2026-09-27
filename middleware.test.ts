@@ -39,13 +39,20 @@ const identityRow = (id: string, tokenHash: string) => ({
   createdAt: new Date("2026-09-21T00:00:00.000Z"),
 });
 
-const request = (pathname: string, { cookie, method = "GET" }: RequestOptions = {}) =>
+const request = (
+  pathname: string,
+  { cookie, method = "GET", headers = {} }: RequestOptions = {},
+) =>
   new NextRequest(`https://simple-action.test${pathname}`, {
     method,
-    headers: cookie === undefined ? {} : { cookie },
+    headers: { ...(cookie === undefined ? {} : { cookie }), ...headers },
   });
 
-type RequestOptions = { cookie?: string; method?: string };
+type RequestOptions = {
+  cookie?: string;
+  method?: string;
+  headers?: Record<string, string>;
+};
 
 /** The cookie the response asks the browser to store, parsed into its attributes. */
 function setCookie(response: Response): Record<string, string> | undefined {
@@ -278,6 +285,126 @@ describe("a request under app/api/ carrying a valid identity (AC4)", () => {
     expect(response.status).toBe(200);
     expect(repository.createClientIdentity).not.toHaveBeenCalled();
     expect(setCookie(response)).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A state-changing request is checked for where it came from and what it sent
+// ---------------------------------------------------------------------------
+
+describe("a state-changing request under app/api/, from an identified caller", () => {
+  const JSON_TYPE = { "content-type": "application/json" };
+  let cookie: string;
+
+  beforeEach(async () => {
+    const token = "d".repeat(64);
+    cookie = `${IDENTITY_COOKIE_NAME}=${token}`;
+    repository.findClientIdentityByTokenHash.mockResolvedValue(
+      identityRow("0199a0b1-0000-7000-8000-00000000000d", await hashIdentityToken(token)),
+    );
+  });
+
+  const send = (method: string, headers: Record<string, string> = {}) =>
+    middleware(request("/api/todos", { method, cookie, headers }));
+
+  describe("where it came from", () => {
+    it.each([
+      ["POST", "create"],
+      ["PATCH", "update"],
+      ["DELETE", "delete"],
+    ])("refuses a cross-site %s with 403 and the %s error kind", async (method, kind) => {
+      const response = await send(method, {
+        ...JSON_TYPE,
+        "sec-fetch-site": "cross-site",
+      });
+
+      expect(response.status).toBe(403);
+      await expect(response.json()).resolves.toEqual({
+        error: { kind, message: expect.any(String) },
+      });
+    });
+
+    it("refuses same-site cross-origin — the gap SameSite=Lax leaves open", async () => {
+      // `SameSite` treats a sibling subdomain as same-site, so the cookie is
+      // sent. This is the case the attribute does not cover and this check does.
+      const response = await send("POST", { ...JSON_TYPE, "sec-fetch-site": "same-site" });
+
+      expect(response.status).toBe(403);
+    });
+
+    it("allows same-origin", async () => {
+      const response = await send("POST", { ...JSON_TYPE, "sec-fetch-site": "same-origin" });
+
+      expect(response.status).toBe(200);
+    });
+
+    it("falls back to Origin when the browser is too old to send Sec-Fetch-Site", async () => {
+      const cross = await send("POST", {
+        ...JSON_TYPE,
+        origin: "https://evil.test",
+        host: "simple-action.test",
+      });
+      expect(cross.status).toBe(403);
+
+      const same = await send("POST", {
+        ...JSON_TYPE,
+        origin: "https://simple-action.test",
+        host: "simple-action.test",
+      });
+      expect(same.status).toBe(200);
+    });
+
+    it("refuses an Origin that is not a URL at all", async () => {
+      const response = await send("POST", { ...JSON_TYPE, origin: "not a url" });
+
+      expect(response.status).toBe(403);
+    });
+
+    it("allows a request carrying neither header — not a browser, so not a CSRF vector", async () => {
+      // Playwright's API client and any server-side caller send neither. They
+      // carry no victim's ambient credentials, so refusing them would break
+      // legitimate callers and stop nothing. `e2e/api.spec.ts` depends on this.
+      const response = await send("POST", JSON_TYPE);
+
+      expect(response.status).toBe(200);
+    });
+
+    it("leaves a GET alone — it changes nothing", async () => {
+      const response = await send("GET", { "sec-fetch-site": "cross-site" });
+
+      expect(response.status).toBe(200);
+    });
+  });
+
+  describe("what it sent", () => {
+    it.each(["POST", "PATCH"])("refuses a bodied %s with no content-type", async (method) => {
+      expect((await send(method)).status).toBe(415);
+    });
+
+    it("refuses a form content-type — the shape a cross-origin POST can actually carry", async () => {
+      for (const type of ["text/plain", "application/x-www-form-urlencoded", "multipart/form-data"]) {
+        expect((await send("POST", { "content-type": type })).status, type).toBe(415);
+      }
+    });
+
+    it("accepts application/json with parameters on it", async () => {
+      const response = await send("POST", { "content-type": "application/json; charset=utf-8" });
+
+      expect(response.status).toBe(200);
+    });
+
+    it("asks nothing of DELETE, which sends no body to describe", async () => {
+      // `delete-todo.ts` deliberately sets no `content-type`.
+      expect((await send("DELETE")).status).toBe(200);
+    });
+  });
+
+  it("refuses without ever reaching the Todo handlers", async () => {
+    const response = await send("POST", { ...JSON_TYPE, "sec-fetch-site": "cross-site" });
+
+    expect(response.status).toBe(403);
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
+    expect(response.headers.get("vary") ?? "").toMatch(/\bCookie\b/i);
   });
 });
 
