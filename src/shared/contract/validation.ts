@@ -12,7 +12,21 @@
 // must not be derived from this predicate, which measures the trimmed length.
 export const TODO_TEXT_MAX_LENGTH = 500;
 
+// Postgres cannot store a NUL code point in a `text` value, so a text carrying
+// one is refused by the database rather than by this predicate — which turns a
+// caller error into a 500 on an endpoint whose honest answer is 400. The length
+// rule does not catch it: a NUL is an ordinary character to `trim` and `length`.
+//
+// Deliberately this and nothing wider. A `\p{Cc}` rule would also reject tab,
+// newline and carriage return, and this predicate gates the input component as
+// well as the route handler — so widening it would turn an ordinary multi-line
+// paste into a silent no-op, which is a product change and not this one's to
+// make.
+const UNSTORABLE_CODE_POINT = /\u0000/;
+
 export function isValidTodoText(text: string): boolean {
+  if (UNSTORABLE_CODE_POINT.test(text)) return false;
+
   const trimmed = text.trim();
   return trimmed.length > 0 && trimmed.length <= TODO_TEXT_MAX_LENGTH;
 }

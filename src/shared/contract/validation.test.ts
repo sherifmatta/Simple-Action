@@ -70,6 +70,24 @@ describe("isValidTodoText — rejects (AC5)", () => {
   it("rejects 501 characters wrapped in spaces — trimming does not save it (matrix row 'Fails even after trimming')", () => {
     expect(isValidTodoText(` ${repeat(TODO_TEXT_MAX_LENGTH + 1)} `)).toBe(false);
   });
+
+  it("rejects a NUL code point, which Postgres cannot store in a `text` column", () => {
+    // Without this the value passes the predicate, reaches the insert as a
+    // bound parameter, and is refused by the database — turning a caller error
+    // into a 500 where 400 is the honest answer. The length rule does not catch
+    // it: "a\u0000b" trims to three characters.
+    expect(isValidTodoText("a\u0000b")).toBe(false);
+    expect(isValidTodoText("\u0000")).toBe(false);
+  });
+
+  it("still accepts the whitespace a person can actually type", () => {
+    // The rule is deliberately NUL and nothing else. `isValidTodoText` also
+    // gates the input component (`add-input.tsx`), so a wider control-character
+    // rule would turn an ordinary multi-line paste into a silent no-op.
+    expect(isValidTodoText("line one\nline two")).toBe(true);
+    expect(isValidTodoText("a\tb")).toBe(true);
+    expect(isValidTodoText("a\r\nb")).toBe(true);
+  });
 });
 
 describe("isValidTodoText — the verdict is all it returns", () => {
