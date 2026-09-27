@@ -16,8 +16,26 @@ import { eq } from "drizzle-orm";
 import { clientIdentity } from "@/server/db/schema";
 import { db } from "./client";
 
-/** A stored Client Identity row, as the schema defines it. */
-export type ClientIdentity = typeof clientIdentity.$inferSelect;
+// The projection, named once. Every query in this module selects these columns
+// explicitly and never `select()`, so `token_hash` cannot reach a result object
+// at all — the column stays in `WHERE` clauses, which is the one place it
+// belongs. This mirrors `todos.ts`'s `wireColumns` and exists for the stronger
+// version of the same reason: `token_hash` is the SHA-256 of a live session
+// credential, and `resolveClientIdentity` hands whatever this module returns to
+// every route handler as `identity`. A bare `select()` puts that hash one
+// `Response.json(identity)` away from the wire.
+const identityColumns = {
+  id: clientIdentity.id,
+  createdAt: clientIdentity.createdAt,
+};
+
+/**
+ * A stored Client Identity, as it leaves this module — never its token hash.
+ *
+ * Derived from the schema rather than spelled out, so a new column appears here
+ * only when someone adds it to `identityColumns` deliberately.
+ */
+export type ClientIdentity = Pick<typeof clientIdentity.$inferSelect, "id" | "createdAt">;
 
 /**
  * The Client Identity carrying `tokenHash`, or `undefined` when no row does.
@@ -32,7 +50,7 @@ export async function findClientIdentityByTokenHash(
   tokenHash: string,
 ): Promise<ClientIdentity | undefined> {
   const rows = await db
-    .select()
+    .select(identityColumns)
     .from(clientIdentity)
     .where(eq(clientIdentity.tokenHash, tokenHash))
     .limit(1);
@@ -57,7 +75,7 @@ export async function createClientIdentity(
   const [created] = await db
     .insert(clientIdentity)
     .values({ id, tokenHash })
-    .returning();
+    .returning(identityColumns);
 
   return created;
 }

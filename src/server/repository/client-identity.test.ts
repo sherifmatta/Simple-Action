@@ -62,8 +62,10 @@ describe(`${REPOSITORY_DIRECTORY}/client-identity.ts — against the live branch
     const created = await createClientIdentity(id, tokenHash);
 
     expect(created.id).toBe(id);
-    expect(created.tokenHash).toBe(tokenHash);
     expect(created.createdAt).toBeInstanceOf(Date);
+    // The hash is proven stored by looking the row back up *by* it, rather
+    // than by reading it off the returned object — which no longer carries it.
+    expect((await findClientIdentityByTokenHash(tokenHash))?.id).toBe(id);
   });
 
   it("findClientIdentityByTokenHash returns the stored identity (matrix row 'Lookup hits')", async () => {
@@ -73,7 +75,22 @@ describe(`${REPOSITORY_DIRECTORY}/client-identity.ts — against the live branch
     const found = await findClientIdentityByTokenHash(tokenHash);
 
     expect(found?.id).toBe(id);
-    expect(found?.tokenHash).toBe(tokenHash);
+    expect(found?.createdAt).toBeInstanceOf(Date);
+  });
+
+  it("never returns the token hash, on either function", async () => {
+    // `token_hash` is the SHA-256 of a live session credential, and
+    // `resolveClientIdentity` hands whatever this module returns to every route
+    // handler as `identity`. Keeping the column out of the projection is what
+    // stops one `Response.json(identity)` from putting it on the wire, so the
+    // absence is pinned here rather than left to the reader of the query.
+    const { id, tokenHash } = freshIdentity();
+
+    const created = await createClientIdentity(id, tokenHash);
+    const found = await findClientIdentityByTokenHash(tokenHash);
+
+    expect(Object.keys(created).sort()).toEqual(["createdAt", "id"]);
+    expect(Object.keys(found!).sort()).toEqual(["createdAt", "id"]);
   });
 
   it("findClientIdentityByTokenHash returns undefined when no row carries the hash — a normal first visit, not a failure (matrix row 'Lookup misses')", async () => {
