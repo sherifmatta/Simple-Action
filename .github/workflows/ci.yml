@@ -3,6 +3,10 @@
 # locally, in the same order, against the checked-out commit — so a green run
 # here and a green run there mean the same thing.
 #
+# Vercel deploys only after the `verify` job passes on the commit it builds:
+# `vercel.json`'s `ignoreCommand` runs `scripts/wait-for-ci.mjs`, which waits
+# for this job by name. Renaming the job means updating `CHECK_NAME` there.
+#
 # `DATABASE_URL` must point at a Neon **branch**, never at production. The
 # repository tests write rows and the end-to-end suite creates Todos through
 # the UI; both are harmless against a branch and are not something to run

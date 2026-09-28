@@ -43,6 +43,7 @@ export default defineConfig(({ mode }) => {
         "src/**/*.test.tsx",
         "app/**/*.test.ts",
         "app/**/*.test.tsx",
+        "scripts/**/*.test.ts",
       ],
       env: DATABASE_URL ? { DATABASE_URL } : {},
       // Vitest's defaults are 5s per test and 10s per hook. A Neon branch that

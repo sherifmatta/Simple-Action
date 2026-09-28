@@ -391,13 +391,22 @@ describe("the environment surface is exactly two names (Story 6.3 AC4)", () => {
     // reads it as a boolean to decide retries, the reporter and whether to
     // reuse a running server. It carries no value anyone has to obtain, and
     // every CI provider sets it. `DATABASE_URL` is the one a developer must
-    // supply, which is the claim README.md § Quick start makes.
+    // supply, which is the claim README.md § Quick start makes. The three
+    // `VERCEL_GIT_*` names are `CI`'s kind: Vercel system variables that
+    // `scripts/wait-for-ci.mjs` reads to find the commit it gates, set by the
+    // platform on every git deploy and obtained by no one.
     const names = new Set(
       sources.flatMap(({ source }) =>
         [...source.matchAll(ENV_READ)].map(([, name]) => name),
       ),
     );
-    expect([...names].sort()).toEqual(["CI", "DATABASE_URL"]);
+    expect([...names].sort()).toEqual([
+      "CI",
+      "DATABASE_URL",
+      "VERCEL_GIT_COMMIT_SHA",
+      "VERCEL_GIT_REPO_OWNER",
+      "VERCEL_GIT_REPO_SLUG",
+    ]);
   });
 
   it("leaves no read out of reach of that enumeration", () => {

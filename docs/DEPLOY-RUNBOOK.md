@@ -12,21 +12,24 @@ against the tree rather than believed.
 
 ## 1. What a deploy actually runs
 
-`vercel.json` is one line, and it is the whole deploy contract:
+`vercel.json` is two keys, and it is the whole deploy contract:
 
 ```json
-{ "buildCommand": "npm run db:migrate && npm run build" }
+{
+  "buildCommand": "npm run db:migrate && npm run build",
+  "ignoreCommand": "node scripts/wait-for-ci.mjs"
+}
 ```
 
-`package.json` expands the second half to `npm run lint && npm run typecheck && next build`.
-So a deploy is, in order: **migrate → lint → typecheck → build**.
+`ignoreCommand` runs first and decides whether there is a build at all (§5). `package.json`
+expands the second half of `buildCommand` to `npm run lint && npm run typecheck && next build`.
+So a deploy is, in order: **wait for CI → migrate → lint → typecheck → build**.
 
 Two things that are not in that list, and both matter:
 
-- **The suite does not run.** Neither `npm test` nor `npm run test:e2e` appears in
-  `buildCommand` or in any script it chains to. A deploy can go out green with a failing test
-  suite. The gate that would catch it is `.github/workflows/ci.yml`, and §5 says what state
-  that is in.
+- **The suite does not run in the deploy.** Neither `npm test` nor `npm run test:e2e` appears in
+  `buildCommand` or in any script it chains to. The suite runs in `.github/workflows/ci.yml`,
+  and the deploy waits for it to pass on the same commit before building — §5.
 - **Nothing pushes a schema.** `buildCommand` contains no `push`, and
   `src/server/db/schema.test.ts` (the `push-script scope` block) asserts mechanically that
   `drizzle-kit push` appears in exactly one script — `db:push` — and that neither `build` nor
@@ -199,12 +202,28 @@ What is true of it, stated rather than assumed:
 - **Point the secret at a dedicated Neon CI branch** — never production, and not the shared
   preview branch either. The repository tests write rows and the end-to-end suite creates Todos
   through the UI, so CI needs a branch it is free to dirty.
-- **A green CI run and a successful deploy are still different events**, and this is the one
-  real gap left. CI runs the suite and no migration; the deploy runs a migration and no suite.
-  **Nothing blocks a deploy on CI being green** — Vercel builds from the same push
-  independently, so a red suite does not stop a release. The deploy's own gates remain `lint`
-  and `typecheck`, chained into `npm run build`. Wiring the deploy to wait on CI is the
-  remaining piece of work here.
+- **A deploy waits for CI to pass on the commit it builds.** CI runs the suite and no
+  migration; the deploy runs a migration and no suite. `vercel.json`'s `ignoreCommand` joins
+  them: `scripts/wait-for-ci.mjs` polls GitHub's check-runs API for the `verify` job on
+  `VERCEL_GIT_COMMIT_SHA` (a Vercel system variable) every 20 seconds, for up to 15 minutes.
+  Vercel's contract for that command is inverted from a shell's: **exit 0 skips the build, exit
+  1 builds**. The script exits 1 only when the newest `verify` run in every GitHub Actions suite
+  on that commit concluded `success`. A failure, a cancellation, a timeout, GitHub being
+  unreachable or a deploy with no git commit (a local `vercel` CLI deploy) all exit 0. The
+  deployment shows as skipped and **the previous deployment keeps serving**. The verdict is
+  tested in `scripts/wait-for-ci.test.ts`, which also pins that `vercel.json` calls the script
+  and that `ci.yml` still defines a job named `verify`. Renaming the job without updating
+  `CHECK_NAME` would block every deploy, which is the safe way to fail.
+- **Fixing a skipped deploy.** If CI failed, fix it and push. If CI passed but the deploy was
+  skipped anyway (it took longer than 15 minutes, or GitHub was down), click **Redeploy** on
+  that deployment in Vercel. The gate runs again and finds the finished run.
+- **The GitHub API is called without a token.** The repository is public, so no credential is
+  needed, and adding one would break the one-variable surface `readme.test.ts` pins. The cost:
+  GitHub allows 60 unauthenticated requests an hour per IP, and Vercel's build machines share
+  egress IPs. A build log full of `GitHub answered 403` is that limit. The gate fails closed —
+  the deploy is skipped, not shipped — and a **Redeploy** later clears it. If it becomes
+  routine, or the repository goes private, the fix is a read-only token sent from the script.
+  That is a deliberate change to the environment surface, not a quick patch.
 
 ---
 
@@ -221,7 +240,8 @@ different investigations.
 | --- | --- |
 | Build failed | The build log. Which of migrate / lint / typecheck / `next build` failed (§1). |
 | Build log fails on its first command | `DATABASE_URL` for that environment, then §2. |
-| Build was green, the app errors at runtime | The runtime log, not the build log. Then: is it a query error (§2, a missing migration) or a code error? The build only ran lint and typecheck, so a failing test suite ships (§5). |
+| Build was green, the app errors at runtime | The runtime log, not the build log. Then: is it a query error (§2, a missing migration) or a code error? CI passed on this commit, so the suite did not catch it (§5). |
+| Deployment shows as skipped / canceled | The build log's `wait-for-ci:` lines say why: CI failed, timed out, or GitHub was unreachable (§5). |
 | Runtime log says `Client Identity unavailable` | The database is unreachable from the deployed environment. Check that environment's `DATABASE_URL` and that the Neon branch still accepts it. README § Troubleshooting. |
 | "column does not exist" at runtime | A schema change shipped without a generated migration (§2). Check the build log — did `db:migrate` say it applied anything? |
 | Behaves differently from local, the diff explains nothing | Vercel's Node version project setting (§3). It is the one pin nothing in this repository can check. |

@@ -166,7 +166,9 @@ The application deploys to **Vercel** from this repository's default branch.
    environments could stop being identical in shape.
 
 **Every deploy after that** is a git push. A push to the default branch deploys to production;
-a pull request gets its own preview deployment.
+a pull request gets its own preview deployment. **Neither deploys unless CI passes on that
+commit.** `vercel.json`'s `ignoreCommand` waits for the `verify` job in
+`.github/workflows/ci.yml` and skips the build if it fails. The runbook's §5 has the details.
 
 **Migrations are applied by the deploy step.** `vercel.json` sets the build command to:
 
