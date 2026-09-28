@@ -107,6 +107,17 @@ export function deleteControl(page: Page, text: string): Locator {
   return page.getByRole("button", { name: `Delete ${text}` });
 }
 
+/**
+ * The span carrying a Todo's text.
+ *
+ * By the product's own id suffix (`rowTextId`), not a test hook — the same
+ * trade `stickyBlock()` makes above. This is the element axe cannot resolve a
+ * background for, so it is the one the contrast reading needs by name.
+ */
+export function todoText(page: Page, text: string): Locator {
+  return row(page, text).locator("span[id$='-text']");
+}
+
 export function skeletons(page: Page): Locator {
   return page.locator("li.skeleton-row");
 }
@@ -768,4 +779,269 @@ export async function expectNoViolations(
     describeViolations(where, violations),
     `WCAG AA violations ${where}`,
   ).toEqual([]);
+}
+
+// --- The pair axe cannot decide ---------------------------------------------
+
+/** WCAG 2.x, 1.4.3 — normal-size text. The same floor `globals.contrast.test.ts` uses. */
+export const TEXT_CONTRAST_FLOOR = 4.5;
+
+export type ContrastReading = {
+  /**
+   * The glyphs' colour as the browser actually paints them: `color` composited
+   * onto `background` if the text itself is not fully opaque. Text at partial
+   * alpha is a real way to fail 1.4.3, so this is deliberately not the bare
+   * declared value — a message naming this field is describing what is on
+   * screen, not what the stylesheet declares.
+   */
+  foreground: string;
+  /** What is actually behind it, after compositing the ancestor chain. */
+  background: string;
+  ratio: number;
+  /** Anything painting over the text's box. Empty is the claim; see below. */
+  painters: string[];
+};
+
+/**
+ * Read the composed contrast of a text node out of the running page.
+ *
+ * This exists because axe will not answer it. The 44px hit-area overlays are
+ * `::after` pseudo-elements that intersect this span's box — the checkbox's
+ * (`app/globals.css:280`) and the delete control's (`app/globals.css:908`) —
+ * and axe treats any intersecting pseudo-element as a background it cannot
+ * resolve, correctly, since it cannot know the overlay paints nothing. So the
+ * two things axe would have had to establish are established here separately:
+ *
+ *   - `painters` — every element and pseudo-element whose box intersects the
+ *     text's and which is not an ancestor of it, reported unless its
+ *     background is fully transparent and it carries no background image. The
+ *     assertion is that this list is empty, which is what makes the second
+ *     reading meaningful rather than a guess about z-order.
+ *   - `background` — the ancestor chain composited upward until it is opaque,
+ *     which is what the browser paints behind the glyphs once `painters` is
+ *     empty.
+ *
+ * The luminance arithmetic is WCAG's own and is duplicated from
+ * `app/globals.contrast.test.ts`, deliberately: that file reads hex literals
+ * out of the stylesheet in Node, this one reads `rgb()` triples out of a live
+ * browser, and the two have no runtime in common. The shared thing is a
+ * six-line formula from the specification, not this repository's logic.
+ */
+export async function readTextContrast(target: Locator): Promise<ContrastReading> {
+  return target.evaluate((element) => {
+    type Rgba = { r: number; g: number; b: number; a: number };
+
+    const parse = (value: string): Rgba => {
+      if (value === "transparent") return { r: 0, g: 0, b: 0, a: 0 };
+
+      // Chromium's `getComputedStyle` always resolves colours to this form —
+      // rejected rather than parsed loosely, because every design token here
+      // is a hex literal today and a future `oklch()`/`color-mix()` token
+      // would otherwise have its channels read positionally as if they were
+      // 0-255 RGB and silently produce a plausible-looking wrong ratio.
+      const match = value.match(/^rgba?\((\d+), ?(\d+), ?(\d+)(?:, ?([\d.]+))?\)$/);
+      if (match === null) {
+        throw new Error(`unrecognized computed colour syntax: ${value}`);
+      }
+      const [, r, g, b, a] = match;
+      return { r: Number(r), g: Number(g), b: Number(b), a: a === undefined ? 1 : Number(a) };
+    };
+
+    /** `over` painted onto `under`, the standard source-over composite. */
+    const composite = (over: Rgba, under: Rgba): Rgba => ({
+      r: over.r * over.a + under.r * (1 - over.a),
+      g: over.g * over.a + under.g * (1 - over.a),
+      b: over.b * over.a + under.b * (1 - over.a),
+      a: over.a + under.a * (1 - over.a),
+    });
+
+    const luminance = ({ r, g, b }: Rgba): number => {
+      const channel = (raw: number): number => {
+        const value = raw / 255;
+        return value <= 0.03928
+          ? value / 12.92
+          : Math.pow((value + 0.055) / 1.055, 2.4);
+      };
+      return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b);
+    };
+
+    const rect = element.getBoundingClientRect();
+    const intersects = (other: DOMRect): boolean =>
+      other.width > 0 &&
+      other.height > 0 &&
+      other.left < rect.right &&
+      other.right > rect.left &&
+      other.top < rect.bottom &&
+      other.bottom > rect.top;
+
+    /**
+     * A positioned pseudo-element's real box, or `null` if it cannot paint one.
+     *
+     * `other.getBoundingClientRect()` is the *host's* box, and this repository's
+     * own hit-area overlays (`checkbox-hit-area`, `delete-hit-area`,
+     * `app/globals.css:280`, `:908`) are `position: absolute` 44px squares
+     * `transform: translate(-50%, -50%)`-centred on a host that is itself only
+     * 17-21px — the pseudo's painted box is not the host's box and can extend
+     * well outside it. `top`/`left`/`width`/`height` are resolved to pixels by
+     * `getComputedStyle` once the element has layout, and a `translate()`'s
+     * percentage is resolved against the pseudo's own box at that same point,
+     * so the matrix `getComputedStyle` returns already carries it in pixels —
+     * nothing here is re-deriving a percentage.
+     */
+    const pseudoRect = (host: Element, pseudo: string): DOMRect | null => {
+      const style = getComputedStyle(host, pseudo);
+      if (style.position !== "absolute" && style.position !== "fixed") return null;
+
+      const hostRect = host.getBoundingClientRect();
+      const hostStyle = getComputedStyle(host);
+      const width = Number.parseFloat(style.width) || 0;
+      const height = Number.parseFloat(style.height) || 0;
+      const left =
+        hostRect.left +
+        (Number.parseFloat(hostStyle.borderLeftWidth) || 0) +
+        (Number.parseFloat(style.left) || 0);
+      const top =
+        hostRect.top +
+        (Number.parseFloat(hostStyle.borderTopWidth) || 0) +
+        (Number.parseFloat(style.top) || 0);
+
+      let dx = 0;
+      let dy = 0;
+      if (style.transform !== "none") {
+        const matrix = new DOMMatrixReadOnly(style.transform);
+        dx = matrix.m41;
+        dy = matrix.m42;
+      }
+
+      return new DOMRect(left + dx, top + dy, width, height);
+    };
+
+    // Anything that could be painting on top of the glyphs. Ancestors are
+    // excluded because they are the backdrop rather than an overlay, and they
+    // are composited below instead.
+    const painters: string[] = [];
+    for (const other of Array.from(document.body.querySelectorAll("*"))) {
+      if (other === element || other.contains(element)) continue;
+
+      // The host's own box and each pseudo's box are independent claims: a
+      // transformed 44px overlay can intersect the text while its 17px host
+      // does not, so gating the pseudo check on the host's box (as an earlier
+      // version of this scan did) misses precisely the shape this repository
+      // uses for every touch target.
+      const hostRect = other.getBoundingClientRect();
+      const candidates: Array<{ pseudo: string | null; rect: DOMRect }> = [];
+      if (intersects(hostRect)) candidates.push({ pseudo: null, rect: hostRect });
+
+      for (const pseudo of ["::before", "::after"]) {
+        const style = getComputedStyle(other, pseudo);
+        if (style.content === "none" || style.content === "") continue;
+        const rect = pseudoRect(other, pseudo);
+        if (rect !== null && intersects(rect)) candidates.push({ pseudo, rect });
+      }
+
+      for (const { pseudo } of candidates) {
+        const style = getComputedStyle(other, pseudo);
+        const paint = parse(style.backgroundColor);
+        const image = style.backgroundImage;
+        if (paint.a === 0 && (image === "none" || image === "")) continue;
+
+        // `Element.id` is `""`, never `null`, when the attribute is absent —
+        // `??` does not fall through an empty string, so `||` is what actually
+        // reaches the tag-name fallback.
+        const name =
+          other.getAttribute("aria-label") || other.id || other.tagName.toLowerCase();
+        painters.push(`${name}${pseudo ?? ""} paints ${style.backgroundColor}`);
+      }
+    }
+
+    // The backdrop: up the chain until it is opaque. `<html>` terminates it —
+    // `body` carries `bg-ground` (`app/layout.tsx`), an opaque background, so a
+    // chain that reaches it without resolving is a real defect rather than a
+    // transparent product by design, and is thrown rather than silently
+    // treated as opaque black.
+    let backdrop: Rgba = { r: 0, g: 0, b: 0, a: 0 };
+    let node: Element | null = element.parentElement;
+    while (node !== null && backdrop.a < 1) {
+      const style = getComputedStyle(node);
+      const layer = parse(style.backgroundColor);
+      // An ancestor's own opacity dims everything painted through it, and a
+      // background image is a claim this reading cannot verify at all — both
+      // are checked here for the same reason the painter loop above checks
+      // `backgroundImage`: silence would report a backdrop that is not what
+      // the browser actually composites.
+      if (style.backgroundImage !== "none" && style.backgroundImage !== "") {
+        throw new Error(
+          `an ancestor of the text has a background-image (${style.backgroundImage}); ` +
+            "this reading only composites solid colours",
+        );
+      }
+      const opacity = Number.parseFloat(style.opacity);
+      const dimmed = { ...layer, a: layer.a * (Number.isNaN(opacity) ? 1 : opacity) };
+      backdrop = composite(backdrop, dimmed);
+      node = node.parentElement;
+    }
+
+    if (backdrop.a < 1) {
+      throw new Error(
+        "the backdrop never reached full opacity walking up from the text — " +
+          `stopped at alpha ${backdrop.a.toFixed(2)}`,
+      );
+    }
+
+    const foreground = parse(getComputedStyle(element).color);
+    // The glyphs themselves are composited onto the backdrop too — text at
+    // less than full alpha is a real way to fail this criterion.
+    const painted = composite(foreground, backdrop);
+
+    const one = luminance(painted);
+    const two = luminance(backdrop);
+    const [lighter, darker] = one > two ? [one, two] : [two, one];
+
+    const show = ({ r, g, b, a }: Rgba): string =>
+      `rgba(${Math.round(r)}, ${Math.round(g)}, ${Math.round(b)}, ${a.toFixed(2)})`;
+
+    return {
+      foreground: show(painted),
+      background: show(backdrop),
+      ratio: (lighter + 0.05) / (darker + 0.05),
+      painters,
+    };
+  });
+}
+
+/**
+ * The text clears WCAG 1.4.3, and the reading that proves it is in the report.
+ *
+ * Both halves are asserted, in order: an uncovered box first, because a ratio
+ * measured against a backdrop something is painting over is a number about
+ * the wrong two colours.
+ */
+export async function expectTextContrast(
+  target: Locator,
+  what: string,
+): Promise<void> {
+  const reading = await readTextContrast(target);
+
+  // Pushed before either assertion below: on the failure this suite most
+  // wants the numbers for — something painting over the text — is exactly the
+  // assertion that throws first, and an annotation added after a throw never
+  // lands in the report.
+  test.info().annotations.push({
+    type: "contrast",
+    description:
+      `${what}: ${reading.foreground} on ${reading.background} ` +
+      `= ${reading.ratio.toFixed(2)}:1` +
+      (reading.painters.length === 0 ? "" : ` (painters: ${reading.painters.join(", ")})`),
+  });
+
+  expect(
+    reading.painters,
+    `${what}: something is painting over the text, so the backdrop above is not what is behind it`,
+  ).toEqual([]);
+
+  expect(
+    reading.ratio,
+    `${what}: ${reading.foreground} on ${reading.background} is ` +
+      `${reading.ratio.toFixed(2)}:1, below WCAG 1.4.3's ${TEXT_CONTRAST_FLOOR}:1`,
+  ).toBeGreaterThanOrEqual(TEXT_CONTRAST_FLOOR);
 }

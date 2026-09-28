@@ -7,15 +7,18 @@ import {
   describeViolations,
   emptyPanel,
   expectNoViolations,
+  expectTextContrast,
   failNext,
   filterTab,
   holdOpen,
   openDeleteDialog,
+  readTextContrast,
   retryControl,
   rows,
   scanPage,
   seed,
   skeletons,
+  todoText,
   ADD_FAILED,
   FIRST_RUN_LINE,
   ITEM_ROUTE,
@@ -23,6 +26,7 @@ import {
   LOAD_FAILED,
   NOTHING_ACTIVE,
   NOTHING_COMPLETED,
+  TEXT_CONTRAST_FLOOR,
 } from "./support/app";
 
 // The conformance scan (WCAG 2.1 AA, via axe-core).
@@ -36,14 +40,27 @@ import {
 // contrast pair the tokens permit but the composition breaks. Nobody writes
 // a bespoke test for those; an engine finds them or nothing does.
 //
-// So this file adds no new criteria of its own. It walks the product through
-// the states the suite can already reach and asks axe the same question at
-// each one, because a rule engine pointed at a single screen proves only that
-// one screen. The states are the ones with distinct markup: first run, a
-// populated list, each filter view, the two empty views, the error banner
-// occupied, the confirmation dialog open, and the list mid-load.
+// So most of this file adds no new criteria of its own. It walks the product
+// through the states the suite can already reach and asks axe the same
+// question at each one, because a rule engine pointed at a single screen
+// proves only that one screen. The states are the ones with distinct markup:
+// first run, a populated list, each filter view, the two empty views, a
+// refused list read, a refused add, the error banner occupied, the
+// confirmation dialog open, and the list mid-load.
 //
-// What this file may NOT do is quiet a rule. `scanPage`'s `disabled` argument
+// One block below is the exception, and axe is the reason it exists. `color-
+// contrast` comes back `incomplete` — not a violation, a "could not decide" —
+// on a Todo's text in every state that has rows: the 44px hit-area overlays
+// (`app/globals.css:280`, `:908`) are pseudo-elements that intersect the
+// text's box, and axe cannot know they paint nothing. That is a real gap in
+// what this file otherwise proves, so `readTextContrast` and
+// `expectTextContrast` (`e2e/support/app.ts`) establish the one thing axe
+// abstained on: what the browser actually composites behind that text, read
+// from the running page rather than borrowed from `app/globals.contrast.test.ts`,
+// which computes the same pairs from declared token values and cannot see
+// what paints over them.
+//
+// What this file may NOT do otherwise is quiet a rule. `scanPage`'s `disabled` argument
 // exists for exactly one case — a violation whose only fix is a design-token
 // change, which AD-13 puts in human hands — and every use of it must name the
 // `deferred-work.md` entry that records the measurement. It is unused today.
@@ -217,6 +234,129 @@ test.describe("the scan can actually fail (negative fixture)", () => {
     expect(
       reported.some((line) => line.includes("button-name")),
       `the scan passed a nameless button — it cannot fail, so the assertions above are vacuous: ${reported.join("; ")}`,
+    ).toBe(true);
+  });
+});
+
+test.describe("the contrast axe will not decide, decided here (WCAG 1.4.3)", () => {
+  // The gap this closes: `color-contrast` comes back `incomplete` on a Todo's
+  // text in every state that has rows, reading "background color could not be
+  // determined due to a pseudo element". The pseudo elements are the
+  // transparent 44px hit-area overlays (`app/globals.css:908`) that
+  // DESIGN.md:354 requires, and axe cannot know they paint nothing.
+  //
+  // `app/globals.contrast.test.ts` already computes these ratios from the hex
+  // values in the stylesheet. What it cannot say is that the browser paints
+  // what the stylesheet declares, which is exactly the half axe abstained on.
+
+  test("clears the floor for a Todo's text in both completion statuses", async ({
+    page,
+  }) => {
+    await page.goto("/");
+    await seed(page, ["Active text here", "Complete this one"]);
+
+    await checkbox(page, "Complete this one").click();
+    await expect(checkbox(page, "Complete this one")).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+
+    // Both, because they are different token pairs and the completed one is
+    // the tightest in the design system — 4.69:1 against a 4.5:1 floor.
+    await expectTextContrast(
+      todoText(page, "Active text here"),
+      "an Active row's text",
+    );
+    await expectTextContrast(
+      todoText(page, "Complete this one"),
+      "a Completed row's text",
+    );
+  });
+
+  test("keeps clearing it with the error banner occupying the block", async ({
+    page,
+  }) => {
+    // One of the four states axe abstained in, and the one where the card is
+    // most crowded.
+    await page.goto("/");
+    await seed(page, ["Fail against me"]);
+
+    await failNext(page, "PATCH", ITEM_ROUTE);
+    await checkbox(page, "Fail against me").click();
+    await expect(retryControl(page)).toBeVisible();
+
+    await expectTextContrast(
+      todoText(page, "Fail against me"),
+      "a row's text with the banner occupied",
+    );
+  });
+});
+
+test.describe("the contrast reading can fail both ways (negative fixtures)", () => {
+  // Both drive `expectTextContrast` itself, not the bare reader — the same
+  // argument `audit-focus.spec.ts`'s clearance fixture makes about
+  // `assertClearOfStickyBlock`. A fixture that only inspects
+  // `readTextContrast`'s return value leaves the assertion wrapper — the
+  // thing every real test in this file actually calls — unexercised.
+
+  test("catches a backdrop something is painting over", async ({ page }) => {
+    await page.goto("/");
+    await seed(page, ["Cover me"]);
+
+    const target = todoText(page, "Cover me");
+    await expectTextContrast(target, "before injection");
+
+    // An opaque sibling over the text's box, positioned from its own
+    // measured rect rather than a literal — the fixture has to cover the
+    // real element, wherever the layout puts it. Magenta only because it is
+    // not a colour this product declares anywhere, so a failure message
+    // naming it is unambiguous about where it came from.
+    await target.evaluate((element) => {
+      const rect = element.getBoundingClientRect();
+      const cover = document.createElement("div");
+      cover.id = "injected-cover";
+      cover.style.cssText =
+        `position: fixed; background: #ff00ff; z-index: 9999; ` +
+        `left: ${rect.left}px; top: ${rect.top}px; ` +
+        `width: ${rect.width}px; height: ${rect.height}px;`;
+      document.body.append(cover);
+    });
+
+    let failed = false;
+    try {
+      await expectTextContrast(target, "with an opaque overlay");
+    } catch {
+      failed = true;
+    }
+    expect(
+      failed,
+      "expectTextContrast passed a text node with an opaque overlay on top of it — it cannot fail this way, so every real test's painters assertion is vacuous",
+    ).toBe(true);
+  });
+
+  test("catches text that does not clear the floor", async ({ page }) => {
+    await page.goto("/");
+    await seed(page, ["Fade me"]);
+
+    const target = todoText(page, "Fade me");
+    await expectTextContrast(target, "before fading");
+
+    // A grey chosen to sit under the floor against the card, not one that
+    // happens to: `readTextContrast` confirms it below rather than assuming.
+    await target.evaluate((element) => {
+      (element as HTMLElement).style.color = "#949494";
+    });
+    expect((await readTextContrast(target)).ratio).toBeLessThan(TEXT_CONTRAST_FLOOR);
+
+    let failed = false;
+    try {
+      await expectTextContrast(target, "with faded text");
+    } catch {
+      failed = true;
+    }
+    expect(
+      failed,
+      "expectTextContrast passed text chosen to fail — it cannot fail this way, so every real test's ratio assertion is vacuous",
     ).toBe(true);
   });
 });
